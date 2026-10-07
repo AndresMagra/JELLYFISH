@@ -396,6 +396,8 @@ export interface PaymentSummary {
   /** Dinero que hay que devolver al cliente y aún no se ha devuelto. */
   refundPending: number;
   failureReason: string | null;
+  /** El cliente ya envió la referencia de su transferencia (sin exponer el detalle interno). */
+  proofSubmitted: boolean;
   createdAt: Date;
 }
 
@@ -432,6 +434,7 @@ async function hydrate(db: Db, order: OrderRow): Promise<OrderDTO> {
         refundedAmount: payments.refundedAmount,
         refundPending: payments.refundPending,
         failureReason: payments.failureReason,
+        raw: payments.raw,
         createdAt: payments.createdAt,
       })
       .from(payments)
@@ -442,7 +445,10 @@ async function hydrate(db: Db, order: OrderRow): Promise<OrderDTO> {
     ...order,
     code: formatOrderNumber(order.number),
     items,
-    payments: paymentRows,
+    payments: paymentRows.map(({ raw, ...p }) => ({
+      ...p,
+      proofSubmitted: !!(raw as { proof?: unknown } | null)?.proof,
+    })),
     timeline,
     next: nextStatuses(order.status),
   };

@@ -195,7 +195,10 @@ export async function registerPaymentRoutes(app: FastifyInstance) {
         );
         return `${base}/${kind}?${q.toString()}`;
       };
-      const pesos = (Number(Amount) / 100).toFixed(2);
+      const pesos = (Number(Amount) / 100).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
       return html(
         reply,
         200,

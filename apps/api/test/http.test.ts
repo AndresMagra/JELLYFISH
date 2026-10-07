@@ -665,3 +665,40 @@ describe('API HTTP', () => {
     });
   });
 });
+
+describe('CORS (panel admin web)', () => {
+  it('permite PATCH/PUT/DELETE y las cabeceras que usan las apps', async () => {
+    const w = await makeWorld();
+    const { app } = await makeApp(w);
+    const pre = await app.inject({
+      method: 'OPTIONS',
+      url: '/v1/me',
+      headers: {
+        origin: 'http://localhost:5173',
+        'access-control-request-method': 'PATCH',
+        'access-control-request-headers': 'authorization,content-type,idempotency-key',
+      },
+    });
+    expect(pre.statusCode).toBe(204);
+    expect(pre.headers['access-control-allow-methods']).toMatch(/PATCH/);
+    expect(pre.headers['access-control-allow-methods']).toMatch(/DELETE/);
+    expect(pre.headers['access-control-allow-headers']).toMatch(/Idempotency-Key/i);
+    await app.close();
+    await w.close();
+  });
+
+  it('con orígenes configurados, un sitio ajeno no recibe permiso', async () => {
+    const w = await makeWorld({ corsOrigins: ['https://admin.jellyfish.do'] });
+    const { app } = await makeApp(w);
+    const ask = (origin: string) =>
+      app.inject({ method: 'GET', url: '/health', headers: { origin } });
+    expect((await ask('https://admin.jellyfish.do')).headers['access-control-allow-origin']).toBe(
+      'https://admin.jellyfish.do',
+    );
+    expect(
+      (await ask('https://sitio-malicioso.example')).headers['access-control-allow-origin'],
+    ).toBeUndefined();
+    await app.close();
+    await w.close();
+  });
+});

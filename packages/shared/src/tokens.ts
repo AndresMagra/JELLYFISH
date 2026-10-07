@@ -38,7 +38,8 @@ export const themes = {
     primary: palette.ocean,
     onPrimary: palette.white,
     accent: palette.coral,
-    glow: palette.cyan,
+    // Cian oscuro: el cian brillante no se lee sobre fondo blanco (contraste ≥ 5:1).
+    glow: '#0E7490',
     border: '#DCE6F2',
   },
   dark: {

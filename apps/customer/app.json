@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "JELLYFISH",
+    "slug": "jellyfish",
+    "scheme": "jellyfish",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "backgroundColor": "#050B1F",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "do.jellyfish.app"
+    },
+    "android": {
+      "package": "do.jellyfish.app",
+      "backgroundColor": "#050B1F"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": ["expo-router", "expo-secure-store", "expo-font"],
+    "extra": {
+      "apiUrl": null
+    }
+  }
+}

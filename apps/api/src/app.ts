@@ -58,7 +58,12 @@ declare module 'fastify' {
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: deps.logger ?? false, bodyLimit: 2 * 1024 * 1024 });
 
-  await app.register(cors, { origin: true });
+  await app.register(cors, {
+    origin: deps.config.corsOrigins,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
+    maxAge: 600,
+  });
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
   await app.register(jwt, { secret: deps.config.jwtSecret, sign: { expiresIn: '30d' } });
 

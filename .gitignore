@@ -11,3 +11,6 @@ coverage/
 .DS_Store
 # datos locales de PGlite
 .pglite/
+tmp/
+apps/customer/dist/
+apps/customer/.expo/

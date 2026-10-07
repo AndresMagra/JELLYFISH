@@ -20,7 +20,8 @@ Comida congelada a domicilio en República Dominicana: carnes (res, cerdo, chivo
 ```bash
 npm install
 npm test                 # 190 pruebas (Vitest + PGlite, Postgres real en memoria)
-npm run typecheck
+npm run typecheck        # API + paquetes + app del cliente
+npm run e2e:customer     # recorre la app en Chromium contra el API real (capturas en tmp/e2e)
 npm run catalog:check    # valida un CSV de inventario sin tocar nada
 ```
 
@@ -63,3 +64,18 @@ Variables de entorno de pagos (ver `apps/api/src/config.ts`): `AZUL_MERCHANT_ID`
 ### ⚠️ AZUL: qué falta verificar antes de cobrar a clientes reales
 
 El orden de campos del hash, los endpoints y el formato de montos coinciden con una implementación pública de terceros, **no con la documentación oficial ni con el ambiente de pruebas de AZUL** (requiere afiliación). Primer paso al tener credenciales: una transacción de prueba en `pruebas.azul.com.do`; si AZUL rechaza el hash, probar `AZUL_HASH_ENCODING=utf16le`.
+
+## App del cliente
+
+```bash
+cp apps/customer/.env.example apps/customer/.env   # EXPO_PUBLIC_API_URL
+npm run start -w @jellyfish/customer               # Expo (QR para Expo Go, `w` para web)
+```
+
+- En el **emulador de Android** usa `http://10.0.2.2:3000`; en un **teléfono físico**, la IP de tu computadora.
+- Se puede navegar y llenar el carrito **sin cuenta**; el celular (OTP) se pide al pagar.
+- Tarjeta: se abre la página de pago de la pasarela en el navegador seguro del sistema y se vuelve con `jellyfish://`.
+- Modo claro/oscuro automático. Mientras no haya fotos reales, cada producto muestra un retrato con el ícono de su categoría.
+
+**Qué se verificó:** el recorrido completo (buscar → producto → carrito → login con OTP → dirección → pedido en efectivo → pedido con tarjeta pagado en la pasarela simulada → pedidos → perfil) corre en Chromium con 0 errores de consola (`npm run e2e:customer`).
+**Qué NO se ha verificado:** instalación en iPhone/Android, el navegador seguro nativo (`expo-web-browser`), teclado/`sms-otp`, almacenamiento seguro en Keychain/Keystore, notificaciones push, builds de EAS.

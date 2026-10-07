@@ -847,3 +847,24 @@ describe('AZUL (credenciales de prueba, sin red)', () => {
     expect((await paymentRow(e, after.payments[0].id)).providerRef).toBe('009988776655');
   });
 });
+
+describe('seña de que el cliente ya subió su comprobante', () => {
+  it('el pedido expone proofSubmitted sin revelar el contenido interno del pago', async () => {
+    const e = await setup();
+    const order = await placeOrder(e, 'transfer');
+    expect(order.payments[0].proofSubmitted).toBe(false);
+    const after = json(
+      await e.app.inject({
+        method: 'POST',
+        url: `/v1/orders/${order.id}/transfer-proof`,
+        headers: e.customer,
+        payload: { reference: 'BHD-554433' },
+      }),
+    );
+    expect(after.payments[0].proofSubmitted).toBe(true);
+    expect(JSON.stringify(after.payments[0])).not.toContain('BHD-554433');
+    expect(after.payments[0]).not.toHaveProperty('raw');
+    await e.app.close();
+    await e.w.close();
+  });
+});

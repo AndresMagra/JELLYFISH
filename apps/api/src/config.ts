@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { AzulConfig } from '@jellyfish/payments';
+import { LIMITS } from '@jellyfish/shared';
 
 export interface DeliveryWindows {
   /** Primera hora de entrega (hora local de RD, 0-23). */
@@ -57,6 +58,11 @@ export interface Config {
   weightToleranceHighBps: number;
   windows: DeliveryWindows;
   payments: PaymentsConfig;
+  /**
+   * Orígenes web autorizados (panel admin). `true` = cualquiera (solo desarrollo).
+   * Las apps móviles nativas no usan CORS.
+   */
+  corsOrigins: string[] | true;
   /** República Dominicana no usa horario de verano: UTC-4 todo el año. */
   utcOffsetMinutes: number;
 }
@@ -74,13 +80,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     demo: env.JELLYFISH_DEMO === '1',
     payments: loadPaymentsConfig(env, production),
+    corsOrigins: env.CORS_ORIGINS
+      ? env.CORS_ORIGINS.split(',')
+          .map((o) => o.trim())
+          .filter(Boolean)
+      : production
+        ? []
+        : true,
     jwtSecret: jwtSecret || randomBytes(32).toString('hex'),
     otpPepper: otpPepper || randomBytes(16).toString('hex'),
     bootstrapAdminPhone: env.BOOTSTRAP_ADMIN_PHONE ?? null,
     reservationMinutesCard: 15,
     reservationMinutesTransfer: 120,
-    maxCentilbPerLine: 10_000,
-    maxUnitsPerLine: 20,
+    maxCentilbPerLine: LIMITS.maxCentilbPerLine,
+    maxUnitsPerLine: LIMITS.maxUnitsPerLine,
     authBufferBps: 1000,
     weightToleranceLowBps: 5000,
     weightToleranceHighBps: 15_000,

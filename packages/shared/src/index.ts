@@ -5,3 +5,6 @@ export * from './order-status';
 export * from './tokens';
 export * as es from './i18n/es-DO';
 export * from './phone';
+export * from './limits';
+export * from './quantity';
+export * from './api-types';
