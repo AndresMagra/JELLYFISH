@@ -4,7 +4,14 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { users } from '../db/schema';
 import { conflict, notFound } from '../errors';
-import { importCatalog, listCatalogAdmin, patchVariant } from '../services/catalog';
+import { inviteUser } from '../services/auth';
+import {
+  exportCatalogCsv,
+  importCatalog,
+  listCatalogAdmin,
+  patchVariant,
+} from '../services/catalog';
+import { adminSummary } from '../services/reports';
 import { adjustStock, lowStock } from '../services/inventory';
 import {
   assignDriver,
@@ -13,7 +20,8 @@ import {
   recordWeights,
   transitionOrder,
 } from '../services/orders';
-import { createZone, listZones } from '../services/zones';
+import { createZone, listZones, updateZone } from '../services/zones';
+import { collectCash } from '../services/payments';
 import { parse, positiveInt, uuid } from './validate';
 
 const statusSchema = z.enum(ORDER_STATUSES);
@@ -23,6 +31,9 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   const staff = { preHandler: app.requireRole('admin', 'staff') };
   const adminOnly = { preHandler: app.requireRole('admin') };
   const idParams = z.object({ id: uuid });
+
+  // ── Resumen del día ──
+  app.get('/v1/admin/summary', staff, async () => adminSummary(app.orderCtx));
 
   // ── Pedidos ──
   app.get('/v1/admin/orders', staff, async (req) => {
@@ -103,6 +114,14 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     return patchVariant(deps.db, id, patch);
   });
 
+  app.get('/v1/admin/catalog/export', adminOnly, async (_req, reply) => {
+    const day = (deps.now ?? (() => new Date()))().toISOString().slice(0, 10);
+    return reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', `attachment; filename="jellyfish-catalogo-${day}.csv"`)
+      .send(await exportCatalogCsv(deps.db));
+  });
+
   // Acepta el CSV como cuerpo `text/csv` o como JSON { "csv": "…" }.
   app.post('/v1/admin/catalog/import', adminOnly, async (req) => {
     const q = parse(
@@ -161,6 +180,43 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     return reply.status(201).send(await createZone(deps.db, body));
   });
 
+  app.patch('/v1/admin/zones/:id', adminOnly, async (req) => {
+    const { id } = parse(idParams, req.params);
+    const patch = parse(
+      z.object({
+        name: z.string().trim().min(2).max(80).optional(),
+        areas: z.array(z.string().trim().min(2).max(80)).min(1).optional(),
+        feeCentavos: z.number().int().min(0).optional(),
+        minOrderCentavos: z.number().int().min(0).optional(),
+        freeOverCentavos: z.number().int().min(0).nullable().optional(),
+        active: z.boolean().optional(),
+      }),
+      req.body,
+    );
+    return updateZone(deps.db, id, patch);
+  });
+
+  // El personal puede registrar un cobro en efectivo (p. ej. si el repartidor no tiene la app a mano).
+  app.post('/v1/admin/orders/:id/collect-cash', staff, async (req) => {
+    const { id } = parse(idParams, req.params);
+    const { amount } = parse(z.object({ amount: positiveInt }), req.body);
+    return collectCash(
+      app.orderCtx,
+      id,
+      { id: req.session!.id, role: req.session!.role as 'admin' | 'staff' },
+      amount,
+    );
+  });
+
+  // El personal necesita ver los repartidores para asignarlos; el resto de usuarios es solo del admin.
+  app.get('/v1/admin/drivers', staff, async () =>
+    deps.db
+      .select({ id: users.id, phone: users.phone, name: users.name })
+      .from(users)
+      .where(eq(users.role, 'driver'))
+      .orderBy(asc(users.name)),
+  );
+
   // ── Personas ──
   app.get('/v1/admin/users', adminOnly, async (req) => {
     const { role } = parse(
@@ -173,6 +229,21 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       .where(role ? eq(users.role, role) : undefined)
       .orderBy(asc(users.createdAt))
       .limit(200);
+  });
+
+  app.post('/v1/admin/users', adminOnly, async (req, reply) => {
+    const body = parse(
+      z.object({
+        phone: z.string().min(7).max(30),
+        name: z.string().trim().max(80).optional(),
+        role: z.enum(['admin', 'staff', 'driver']),
+      }),
+      req.body,
+    );
+    const user = await inviteUser(deps.db, body);
+    return reply
+      .status(201)
+      .send({ id: user.id, phone: user.phone, name: user.name, role: user.role });
   });
 
   app.post('/v1/admin/users/:id/role', adminOnly, async (req) => {

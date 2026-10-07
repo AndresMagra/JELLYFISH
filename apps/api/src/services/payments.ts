@@ -496,7 +496,8 @@ export async function collectCash(
         status: 'captured',
         amount: due,
         capturedAmount: due,
-        collectedBy: actor.id,
+        // El efectivo lo tiene el repartidor asignado, aunque lo registre el personal por él.
+        collectedBy: order.driverId ?? actor.id,
         updatedAt: new Date(),
       })
       .where(eq(payments.id, payment.id));

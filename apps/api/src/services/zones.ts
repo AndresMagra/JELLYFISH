@@ -141,3 +141,26 @@ export async function assertSlotAvailable(
   if (slot.remaining <= 0) throw invalid('Esa franja de entrega ya está llena. Elige otra.');
   return slot;
 }
+
+export interface ZonePatch {
+  name?: string;
+  areas?: string[];
+  feeCentavos?: number;
+  minOrderCentavos?: number;
+  freeOverCentavos?: number | null;
+  active?: boolean;
+}
+
+export async function updateZone(db: Db, id: string, patch: ZonePatch): Promise<Zone> {
+  const set: Partial<typeof deliveryZones.$inferInsert> = {};
+  if (patch.name !== undefined) set.name = patch.name;
+  if (patch.areas !== undefined) set.areas = patch.areas.map(normalizeText);
+  if (patch.feeCentavos !== undefined) set.feeCentavos = patch.feeCentavos;
+  if (patch.minOrderCentavos !== undefined) set.minOrderCentavos = patch.minOrderCentavos;
+  if (patch.freeOverCentavos !== undefined) set.freeOverCentavos = patch.freeOverCentavos;
+  if (patch.active !== undefined) set.active = patch.active;
+  if (Object.keys(set).length === 0) return getZone(db, id);
+  const [row] = await db.update(deliveryZones).set(set).where(eq(deliveryZones.id, id)).returning();
+  if (!row) throw notFound('Zona de entrega');
+  return row;
+}

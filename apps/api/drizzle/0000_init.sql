@@ -149,6 +149,7 @@ CREATE TABLE "products" (
 	"description" text DEFAULT '' NOT NULL,
 	"cooking_tip" text DEFAULT '' NOT NULL,
 	"pricing_unit" text NOT NULL,
+	"synonyms" text[] DEFAULT ARRAY[]::text[] NOT NULL,
 	"search_text" text DEFAULT '' NOT NULL,
 	"active" boolean DEFAULT true NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

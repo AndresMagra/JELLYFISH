@@ -1,5 +1,5 @@
 {
-  "id": "51df990d-8570-47ac-b1b1-f5bad05151c4",
+  "id": "ba2ab0b9-3450-4f9a-a88d-563cdcc22c76",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1248,6 +1248,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "synonyms": {
+          "name": "synonyms",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "ARRAY[]::text[]"
         },
         "search_text": {
           "name": "search_text",

@@ -406,13 +406,15 @@ export interface OrderDTO extends Omit<OrderRow, 'number'> {
   code: string;
   items: OrderItemRow[];
   payments: PaymentSummary[];
+  /** Quién hizo el pedido (el repartidor y el personal necesitan contactarlo). */
+  customer: { id: string; name: string; phone: string };
   timeline: (typeof orderEvents.$inferSelect)[];
   /** Estados a los que se puede pasar desde el actual (para el panel admin y el repartidor). */
   next: readonly OrderStatus[];
 }
 
 async function hydrate(db: Db, order: OrderRow): Promise<OrderDTO> {
-  const [items, timeline, paymentRows] = await Promise.all([
+  const [items, timeline, paymentRows, customerRows] = await Promise.all([
     db
       .select()
       .from(orderItems)
@@ -440,11 +442,16 @@ async function hydrate(db: Db, order: OrderRow): Promise<OrderDTO> {
       .from(payments)
       .where(eq(payments.orderId, order.id))
       .orderBy(asc(payments.createdAt)),
+    db
+      .select({ id: users.id, name: users.name, phone: users.phone })
+      .from(users)
+      .where(eq(users.id, order.userId)),
   ]);
   return {
     ...order,
     code: formatOrderNumber(order.number),
     items,
+    customer: customerRows[0] ?? { id: order.userId, name: '', phone: '' },
     payments: paymentRows.map(({ raw, ...p }) => ({
       ...p,
       proofSubmitted: !!(raw as { proof?: unknown } | null)?.proof,

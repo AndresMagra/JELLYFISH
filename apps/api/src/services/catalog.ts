@@ -1,6 +1,7 @@
 import {
   type CatalogItem,
   type RowIssue,
+  catalogToCsv,
   groupProducts,
   parseCatalogCsv,
 } from '@jellyfish/catalog';
@@ -129,6 +130,7 @@ export async function importCatalog(
           description: group.description,
           cookingTip: group.cookingTip,
           pricingUnit: group.pricingUnit,
+          synonyms: [...new Set(group.variants.flatMap((v) => v.synonyms))],
           searchText: searchTextFor(group.variants, catName.get(group.category) ?? ''),
           updatedAt: new Date(),
         };
@@ -490,4 +492,42 @@ export async function seedDemoStock(db: Db): Promise<number> {
     });
   }
   return empty.length;
+}
+
+/**
+ * Exporta todo el catálogo en el mismo formato que acepta la importación. Sirve para editarlo en
+ * Excel y volver a subirlo sin perder nada (incluye existencias, costos, sinónimos y notas).
+ */
+export async function exportCatalogCsv(db: Db): Promise<string> {
+  const rows = await db
+    .select()
+    .from(variants)
+    .innerJoin(products, eq(products.id, variants.productId))
+    .orderBy(asc(products.categorySlug), asc(products.name), asc(variants.price));
+  const items: CatalogItem[] = rows.map(({ variants: v, products: p }) => ({
+    sku: v.sku,
+    group: p.group,
+    name: p.name,
+    variant: v.variant,
+    category: p.categorySlug,
+    subcategory: p.subcategory,
+    pricingUnit: v.pricingUnit,
+    stepCentilb: v.stepCentilb,
+    minCentilb: v.minCentilb,
+    pieceCentilb: v.pieceCentilb,
+    price: v.price,
+    priceSource: v.priceSource,
+    priceNote: v.priceNote,
+    cost: v.cost,
+    stock: v.onHand,
+    itbisBps: v.itbisBps,
+    variableWeight: v.variableWeight,
+    frozen: v.frozen,
+    synonyms: p.synonyms,
+    description: p.description,
+    cookingTip: p.cookingTip,
+    photo: v.photo,
+    active: v.active,
+  }));
+  return catalogToCsv(items);
 }

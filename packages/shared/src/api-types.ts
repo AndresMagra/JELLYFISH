@@ -192,10 +192,13 @@ export interface OrderDTO {
   finalItbis: number | null;
   reservationExpiresAt: string | null;
   cancelReason: string | null;
+  /** Repartidor asignado (null hasta que se asigna). */
+  driverId: string | null;
   createdAt: string;
   deliveredAt: string | null;
   items: OrderItemDTO[];
   payments: PaymentSummaryDTO[];
+  customer: { id: string; name: string; phone: string };
   timeline: OrderEventDTO[];
   next: OrderStatus[];
 }
@@ -223,4 +226,88 @@ export interface StartPaymentDTO {
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
+}
+
+// ───────────── Panel de administración ─────────────
+
+export interface AdminVariantDTO {
+  id: string;
+  sku: string;
+  variant: string;
+  pricingUnit: PricingUnit;
+  price: number;
+  priceSource: 'ancla' | 'estimado' | 'usuario';
+  priceNote: string;
+  cost: number | null;
+  itbisBps: number | null;
+  variableWeight: boolean;
+  frozen: boolean;
+  onHand: number;
+  reserved: number;
+  lowStockThreshold: number;
+  photo: string;
+  active: boolean;
+  productName: string;
+  productGroup: string;
+  category: string;
+  /** Por qué todavía no se puede mostrar a clientes (vacío = publicado). */
+  blockers: string[];
+}
+
+export interface AdminSummaryDTO {
+  generatedAt: string;
+  today: { orders: number; sales: number; delivered: number };
+  active: Record<
+    'pending_payment' | 'confirmed' | 'picking' | 'packed' | 'out_for_delivery' | 'delivery_failed',
+    number
+  >;
+  refunds: { count: number; amount: number };
+  transfersToVerify: number;
+  cashOutstanding: number;
+  catalog: { variants: number; blocked: number; outOfStock: number };
+}
+
+export interface ImportResultDTO {
+  ok: boolean;
+  dryRun: boolean;
+  productsCreated: number;
+  productsUpdated: number;
+  variantsCreated: number;
+  variantsUpdated: number;
+  keptConfirmedPrices: string[];
+  errors: { line: number; sku: string; field: string; message: string }[];
+  warnings: { line: number; sku: string; field: string; message: string }[];
+}
+
+export interface AdminPaymentDTO extends PaymentSummaryDTO {
+  orderId: string;
+  orderCode: string;
+  orderStatus: OrderStatus;
+}
+
+export interface CashRowDTO {
+  driverId: string;
+  name: string;
+  phone: string;
+  collected: number;
+  settled: number;
+  balance: number;
+  deliveries: number;
+}
+
+export interface ZoneDTO {
+  id: string;
+  name: string;
+  areas: string[];
+  feeCentavos: number;
+  minOrderCentavos: number;
+  freeOverCentavos: number | null;
+  active: boolean;
+}
+
+export interface TeamMemberDTO {
+  id: string;
+  phone: string;
+  name: string;
+  role: 'customer' | 'admin' | 'staff' | 'driver';
 }

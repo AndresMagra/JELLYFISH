@@ -22,6 +22,7 @@ npm install
 npm test                 # 190 pruebas (Vitest + PGlite, Postgres real en memoria)
 npm run typecheck        # API + paquetes + app del cliente
 npm run e2e:customer     # recorre la app en Chromium contra el API real (capturas en tmp/e2e)
+npm run e2e:admin        # recorre el panel (sin modo demo) hasta el cuadre de caja (tmp/e2e-admin)
 npm run catalog:check    # valida un CSV de inventario sin tocar nada
 ```
 
@@ -79,3 +80,16 @@ npm run start -w @jellyfish/customer               # Expo (QR para Expo Go, `w` 
 
 **Qué se verificó:** el recorrido completo (buscar → producto → carrito → login con OTP → dirección → pedido en efectivo → pedido con tarjeta pagado en la pasarela simulada → pedidos → perfil) corre en Chromium con 0 errores de consola (`npm run e2e:customer`).
 **Qué NO se ha verificado:** instalación en iPhone/Android, el navegador seguro nativo (`expo-web-browser`), teclado/`sms-otp`, almacenamiento seguro en Keychain/Keystore, notificaciones push, builds de EAS.
+
+## Panel de administración
+
+```bash
+cp apps/admin/.env.example apps/admin/.env     # VITE_API_URL
+npm run dev -w @jellyfish/admin                # http://localhost:5173
+```
+
+- Entra con tu celular (OTP). El **primer administrador** se define con `BOOTSTRAP_ADMIN_PHONE=809…` al arrancar el API; después agregas repartidores y personal desde **Equipo**.
+- **Catálogo y precios:** edita precio/ITBIS/costo en la tabla; un artículo se publica cuando su precio está confirmado y su ITBIS definido. **Importar CSV** primero revisa sin guardar y explica cada error (fila, SKU, campo); **Exportar CSV** baja todo en el mismo formato.
+- **Pedidos:** tablero que se actualiza solo; en el detalle se registran los pesos reales, se asigna repartidor, se cobra el efectivo y se cierra la entrega.
+- **Pagos y caja:** devoluciones pendientes, transferencias por verificar y el cuadre de efectivo por repartidor.
+- Producción: define `CORS_ORIGINS=https://tu-panel.example` en el API (por defecto, en producción, no acepta ningún origen web).

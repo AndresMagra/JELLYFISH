@@ -11,11 +11,12 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck -w @jellyfish/customer",
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck -w @jellyfish/customer && npm run typecheck -w @jellyfish/admin",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "catalog:check": "tsx scripts/catalog-check.ts",
-    "e2e:customer": "tsx scripts/e2e-customer.ts"
+    "e2e:customer": "tsx scripts/e2e-customer.ts",
+    "e2e:admin": "tsx scripts/e2e-admin.ts"
   },
   "engines": {
     "node": ">=20"

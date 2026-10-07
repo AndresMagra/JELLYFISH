@@ -96,6 +96,11 @@ export const products = pgTable(
     description: text('description').notNull().default(''),
     cookingTip: text('cooking_tip').notNull().default(''),
     pricingUnit: text('pricing_unit').$type<PricingUnit>().notNull(),
+    /** Sinónimos dominicanos ("pernil", "lomito"…): alimentan la búsqueda y se conservan al exportar. */
+    synonyms: text('synonyms')
+      .array()
+      .notNull()
+      .default(sql`ARRAY[]::text[]`),
     /** Texto normalizado (sin acentos, minúsculas) con nombre, variantes y sinónimos. */
     searchText: text('search_text').notNull().default(''),
     active: boolean('active').notNull().default(true),

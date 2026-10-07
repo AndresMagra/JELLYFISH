@@ -158,3 +158,25 @@ export async function deleteAccount(db: Db, userId: string): Promise<void> {
       .where(eq(users.id, userId));
   });
 }
+
+/**
+ * El administrador da de alta a una persona del equipo (repartidor, personal, otro admin) por su
+ * celular. Si ya tenía cuenta, solo cambia su rol. Entra después con su código OTP de siempre.
+ */
+export async function inviteUser(db: Db, input: { phone: string; name?: string; role: UserRole }) {
+  const phone = requirePhone(input.phone);
+  const [existing] = await db.select().from(users).where(eq(users.phone, phone));
+  if (existing) {
+    const [row] = await db
+      .update(users)
+      .set({ role: input.role, ...(input.name ? { name: input.name } : {}) })
+      .where(eq(users.id, existing.id))
+      .returning();
+    return row!;
+  }
+  const [row] = await db
+    .insert(users)
+    .values({ phone, name: input.name ?? '', role: input.role })
+    .returning();
+  return row!;
+}
