@@ -82,7 +82,10 @@ export interface QuoteLineDTO {
   itbisBps: number;
   variableWeight: boolean;
   quantity: number;
+  /** URL absoluta (las rutas locales ya vienen completas con la URL pública del API). */
   photo: string;
+  /** true = imagen ilustrativa: el carrito la rotula "Imagen ilustrativa". */
+  photoIllustrative: boolean;
   gross: number;
   discount: number;
   net: number;
@@ -103,6 +106,25 @@ export interface QuoteDTO {
   missingForFreeDelivery: number | null;
   demo: boolean;
   coverage: 'covered' | 'not_covered' | 'unknown';
+  /** Cupón aplicado; null si no se mandó código o no sirvió (ver `couponError`). */
+  coupon: QuoteCouponDTO | null;
+  /** Por qué no se aplicó el cupón, en español. Una cotización con cupón inválido NO falla. */
+  couponError?: string | null;
+}
+
+export type CouponKind = 'percent' | 'fixed' | 'free_delivery';
+
+export interface QuoteCouponDTO {
+  /** Código normalizado (mayúsculas, sin espacios). */
+  code: string;
+  kind: CouponKind;
+  /**
+   * Cuánto ahorra el cliente con el cupón (centavos): el descuento en productos
+   * (ya incluido en `QuoteDTO.discount`) o, en envío gratis, el envío que se perdona.
+   * Con envío gratis y sin dirección todavía vale 0.
+   */
+  discount: number;
+  description: string;
 }
 
 export interface AddressDTO {
@@ -186,7 +208,10 @@ export interface OrderDTO {
   slotEnd: string | null;
   notes: string;
   subtotal: number;
+  /** Descuento del cupón en productos al pedir (centavos). Con envío gratis es 0. */
   discount: number;
+  /** Cupón aplicado (código en mayúsculas); null si no usó ninguno. Se conserva aunque se cancele. */
+  couponCode: string | null;
   deliveryFee: number;
   itbis: number;
   total: number;
@@ -332,7 +357,10 @@ export interface AdminVariantDTO {
   onHand: number;
   reserved: number;
   lowStockThreshold: number;
+  /** Tal como está guardada (puede ser una ruta local `/photos/…`): es el valor que se edita. */
   photo: string;
+  /** true = imagen ilustrativa; false = foto real del producto. */
+  photoIllustrative: boolean;
   active: boolean;
   productName: string;
   productGroup: string;
@@ -352,6 +380,10 @@ export interface AdminSummaryDTO {
   transfersToVerify: number;
   cashOutstanding: number;
   catalog: { variants: number; blocked: number; outOfStock: number };
+  /** Lotes con saldo que vencen en 7 días o menos (sin contar los ya vencidos). */
+  expiringSoon: number;
+  /** Lotes con saldo que ya vencieron. */
+  expired: number;
 }
 
 export interface ImportResultDTO {
@@ -397,6 +429,135 @@ export interface TeamMemberDTO {
   phone: string;
   name: string;
   role: 'customer' | 'admin' | 'staff' | 'driver';
+}
+
+// ───────────── Lotes con vencimiento y bitácora de auditoría ─────────────
+
+export type StockLotStatus = 'expired' | 'expiring' | 'ok' | 'no_expiry';
+
+/** POST /v1/admin/inventory/lots. `quantity` en centilibras si el artículo es 'lb'; unidades si es 'unit'. */
+export interface ReceiveLotInput {
+  variantId: string;
+  lotCode: string;
+  /** AAAA-MM-DD */
+  expiresOn: string;
+  quantity: number;
+  unitCostCentavos?: number | null;
+  note?: string;
+}
+
+export interface StockLotDTO {
+  id: string;
+  variantId: string;
+  sku: string;
+  productName: string;
+  variantLabel: string;
+  pricingUnit: PricingUnit;
+  lotCode: string;
+  expiresOn: string | null;
+  /** Negativo = ya venció; 0 = vence hoy (todavía válido). */
+  daysLeft: number | null;
+  status: StockLotStatus;
+  qtyReceived: number;
+  qtyRemaining: number;
+  unitCostCentavos: number | null;
+  note: string;
+  receivedBy: string | null;
+  receivedAt: string;
+}
+
+export interface AuditEntryDTO {
+  id: string;
+  createdAt: string;
+  actorId: string | null;
+  actorName: string | null;
+  actorRole: string;
+  method: string;
+  /** Ruta con los ids reemplazados por `:id`. */
+  path: string;
+  /** Acción legible, p. ej. `orders.transition`. */
+  action: string;
+  entity: string;
+  entityId: string;
+  status: number;
+  summary: string;
+  /** Cuerpo de la petición sin secretos (códigos, PIN, tokens), con textos recortados. */
+  payload: Record<string, unknown> | null;
+  ip: string | null;
+}
+
+/** GET /v1/admin/audit: más recientes primero; pasa `nextCursor` como `before` para la página siguiente. */
+export interface AuditPageDTO {
+  items: AuditEntryDTO[];
+  nextCursor: string | null;
+}
+
+// ───────────── Cupones (panel de administración) ─────────────
+
+/** `paused` = desactivado a mano; `exhausted` = ya se usó `maxRedemptions` veces. */
+export type CouponStatus = 'active' | 'paused' | 'scheduled' | 'expired' | 'exhausted';
+
+export interface CouponDTO {
+  id: string;
+  /** Siempre en mayúsculas y sin espacios. */
+  code: string;
+  description: string;
+  kind: CouponKind;
+  /** percent: puntos básicos (1000 = 10 %); fixed: centavos; free_delivery: 0. */
+  value: number;
+  /** Subtotal mínimo en centavos (0 = sin mínimo). */
+  minSubtotal: number;
+  /** Tope del descuento en centavos; null = sin tope. */
+  maxDiscount: number | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  /** Usos totales permitidos; null = ilimitado. */
+  maxRedemptions: number | null;
+  perUserLimit: number;
+  active: boolean;
+  createdAt: string;
+  /** Pedidos que lo tienen aplicado hoy (los cancelados o vencidos sin pagar no cuentan). */
+  redemptions: number;
+  /** Suma de lo descontado (centavos); en envío gratis, del envío perdonado. */
+  discountTotal: number;
+  status: CouponStatus;
+  /** Con usos, `kind`, `value` y `maxDiscount` ya no se pueden cambiar. */
+  termsLocked: boolean;
+}
+
+/** POST /v1/admin/coupons. Los campos con valor por defecto se pueden omitir. */
+export interface CouponInput {
+  /** 3 a 20 caracteres A-Z, 0-9 o guion; se normaliza a mayúsculas sin espacios. */
+  code: string;
+  description?: string;
+  kind: CouponKind;
+  /** percent: 1 a 10000 puntos básicos; fixed: centavos > 0; free_delivery: omitir o 0. */
+  value?: number;
+  minSubtotal?: number;
+  maxDiscount?: number | null;
+  /** ISO 8601 con zona horaria (p. ej. 2026-10-15T04:00:00Z). */
+  startsAt?: string | null;
+  endsAt?: string | null;
+  maxRedemptions?: number | null;
+  /** Por defecto 1. */
+  perUserLimit?: number;
+  /** Por defecto true. */
+  active?: boolean;
+}
+
+/** PATCH /v1/admin/coupons/:id. Con usos, `kind`, `value` y `maxDiscount` se rechazan (409). */
+export type CouponPatch = Partial<Omit<CouponInput, 'code'>>;
+
+export interface CouponRedemptionDTO {
+  id: string;
+  orderId: string;
+  orderCode: string;
+  orderStatus: OrderStatus;
+  userId: string;
+  customerName: string;
+  /** Descuento realmente aplicado (centavos); tras pesar refleja el peso real. */
+  amount: number;
+  createdAt: string;
 }
 
 // ───────────── Notificaciones push ─────────────

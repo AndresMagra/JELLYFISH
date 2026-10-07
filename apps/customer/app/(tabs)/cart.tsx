@@ -81,7 +81,8 @@ export default function Cart() {
                 category={l.category}
                 photo={l.photo}
                 frozen={l.frozen}
-                style={{ width: 76, height: 76, borderRadius: 18 }}
+                radius={18}
+                style={{ width: 76, height: 76 }}
                 iconSize={28}
               />
               <View style={{ flex: 1, gap: 2 }}>
@@ -132,6 +133,15 @@ export default function Cart() {
             </View>
           </Card>
         ))}
+
+        {lines.some((l) => l.photoIllustrative !== false) ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Icon name="information-outline" size={14} color={colors.textMuted} />
+            <Text variant="caption" muted style={{ flex: 1 }}>
+              Imágenes ilustrativas: el producto real puede variar un poco.
+            </Text>
+          </View>
+        ) : null}
 
         {quote.error ? (
           <Card style={{ borderColor: palette.danger, flexDirection: 'row', gap: 10 }}>

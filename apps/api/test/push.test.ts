@@ -1,9 +1,13 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { type IncomingMessage, type ServerResponse, createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { Writable } from 'node:stream';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app';
-import type { Config } from '../src/config';
+import { type Config, loadConfig } from '../src/config';
 import { deviceTokens, orderEvents, orders, users, variants } from '../src/db/schema';
+import { runMaintenanceTick } from '../src/maintenance';
 import { MemoryOtpSender } from '../src/services/auth';
 import { createOrder, expireStaleOrders, transitionOrder } from '../src/services/orders';
 import {
@@ -23,6 +27,7 @@ import {
   newOrderNotification,
   notifyUsers,
 } from '../src/services/push';
+import { redactUrl } from '../src/services/http-util';
 import { fakeFetch, hang, json, recordingLogger } from './fake-fetch';
 import { ADDRESS, NOW, type World, makeWorld } from './helpers';
 
@@ -1099,6 +1104,33 @@ describe('avisos del ciclo del pedido (API)', () => {
     expect(e.sender.to(tok('admin'))).toHaveLength(0);
   });
 
+  it('la tarea periódica del servidor cancela la reserva vencida y avisa; un push caído no la rompe', async () => {
+    const order = await placeOrder(e, 'card');
+    e.clock.value = new Date(NOW.getTime() + 60 * 60_000); // pasó la reserva de 15 min
+
+    const tick = await runMaintenanceTick(e.app);
+    await settle(e);
+    expect(tick.cancelled).toBeGreaterThanOrEqual(1);
+
+    const [row] = await e.w.handle.db.select().from(orders).where(eq(orders.id, order.id));
+    expect(row!.status).toBe('cancelled');
+    const mine = e.sender
+      .to(tok('customer'))
+      .filter((m) => (m.data as { orderId: string }).orderId === order.id);
+    expect(mine.map((m) => m.title)).toEqual(['Pedido cancelado']);
+
+    // Con el transporte caído la tarea termina igual y la cancelación se aplica.
+    e.clock.value = NOW;
+    const second = await placeOrder(e, 'transfer');
+    e.clock.value = new Date(NOW.getTime() + 3 * 60 * 60_000);
+    e.sender.failure = new Error('Expo caído');
+    const failing = await runMaintenanceTick(e.app);
+    expect(failing.cancelled).toBeGreaterThanOrEqual(1);
+    await settle(e);
+    const [after] = await e.w.handle.db.select().from(orders).where(eq(orders.id, second.id));
+    expect(after!.status).toBe('cancelled');
+  });
+
   it('con PUSH_ENABLED apagado no se envía nada, pero los dispositivos se siguen registrando', async () => {
     const quiet = new FakePushSender();
     const off = await buildApp({
@@ -1356,5 +1388,323 @@ describe('PushService: solo se avisa de lo confirmado', () => {
       await svc.checkReceipts(Date.now() + 25 * 60 * 60_000);
       expect(svc.pendingReceipts).toBe(0);
     });
+  });
+});
+
+// ───────────────────────── configuración y cableado de producción ─────────────────────────
+
+describe('config: PUSH_ENABLED y EXPO_ACCESS_TOKEN', () => {
+  it('sin PUSH_ENABLED el push está activo, salvo en pruebas', () => {
+    expect(loadConfig({}).pushEnabled).toBe(true);
+    expect(loadConfig({ NODE_ENV: 'development' }).pushEnabled).toBe(true);
+    expect(loadConfig({ NODE_ENV: 'test' }).pushEnabled).toBe(false);
+  });
+
+  it('PUSH_ENABLED manda sobre el valor por defecto, en cualquier entorno', () => {
+    for (const on of ['1', 'true', 'TRUE', ' true ']) {
+      expect(loadConfig({ NODE_ENV: 'test', PUSH_ENABLED: on }).pushEnabled, on).toBe(true);
+    }
+    for (const off of ['0', 'false', 'False']) {
+      expect(loadConfig({ PUSH_ENABLED: off }).pushEnabled, off).toBe(false);
+    }
+  });
+
+  it('un valor ambiguo no se adivina: el arranque falla con un mensaje claro', () => {
+    expect(() => loadConfig({ PUSH_ENABLED: 'quizás' })).toThrow(/PUSH_ENABLED debe ser 1\/0/);
+  });
+
+  it('EXPO_ACCESS_TOKEN es opcional y se recorta; vacío cuenta como ausente', () => {
+    expect(loadConfig({}).expoAccessToken).toBeNull();
+    expect(loadConfig({ EXPO_ACCESS_TOKEN: '   ' }).expoAccessToken).toBeNull();
+    expect(loadConfig({ EXPO_ACCESS_TOKEN: '  abc123  ' }).expoAccessToken).toBe('abc123');
+  });
+});
+
+describe('registros de acceso: sin tokens', () => {
+  it('redactUrl oculta el token de la ruta y del query, y no toca el resto', () => {
+    expect(redactUrl('/v1/me/devices/ExponentPushToken%5Babcd1234%5D')).toBe(
+      '/v1/me/devices/:token',
+    );
+    expect(redactUrl('/v1/me/devices/ExponentPushToken[abcd1234]?x=1')).toBe(
+      '/v1/me/devices/:token?x=1',
+    );
+    expect(redactUrl('/v1/payments/p1/redirect?token=abc.def&lang=es')).toBe(
+      '/v1/payments/p1/redirect?token=:token&lang=es',
+    );
+    expect(redactUrl('/v1/orders?status=confirmed&limit=5')).toBe(
+      '/v1/orders?status=confirmed&limit=5',
+    );
+    expect(redactUrl('/v1/me/devices')).toBe('/v1/me/devices');
+  });
+
+  it('el log de la app no guarda el token de DELETE /v1/me/devices/:token', async () => {
+    const w = await makeWorld({ pushEnabled: true });
+    const lines: string[] = [];
+    const stream = new Writable({
+      write(chunk, _enc, done) {
+        lines.push(String(chunk));
+        done();
+      },
+    });
+    const app = await buildApp({
+      db: w.handle.db,
+      config: w.config,
+      otpSender: new MemoryOtpSender(),
+      pushSender: new FakePushSender(),
+      now: () => NOW,
+      logger: { stream },
+    });
+    try {
+      const headers = {
+        authorization: `Bearer ${app.jwt.sign({ sub: w.customerId, role: 'customer' })}`,
+      };
+      const token = tok('secretolog');
+      const reg = await app.inject({
+        method: 'POST',
+        url: '/v1/me/devices',
+        headers,
+        payload: { token, platform: 'ios' },
+      });
+      expect(reg.statusCode).toBe(200);
+      const del = await app.inject({
+        method: 'DELETE',
+        url: `/v1/me/devices/${encodeURIComponent(token)}`,
+        headers,
+      });
+      expect(del.statusCode).toBe(204);
+
+      const log = lines.join('');
+      // El registro existe y trae la ruta (sin el token)...
+      expect(log).toContain('"method":"DELETE"');
+      expect(log).toContain('/v1/me/devices/:token');
+      // ...pero el token no aparece de ninguna forma.
+      expect(log).not.toContain('secretolog');
+    } finally {
+      await app.close();
+      await w.close();
+    }
+  });
+});
+
+describe('sin transporte inyectado: Expo real con el token de la configuración', () => {
+  let w: World;
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  const registered = { customer: tok('cliente'), admin: tok('admin') };
+
+  beforeAll(async () => {
+    w = await makeWorld({
+      windows: ROOMY,
+      pushEnabled: true,
+      expoAccessToken: 'expo-token-prueba',
+    });
+    await w.handle.db.update(variants).set({ onHand: 10_000 });
+    await w.handle.db.insert(deviceTokens).values([
+      { userId: w.customerId, token: registered.customer, platform: 'ios' },
+      { userId: w.adminId, token: registered.admin, platform: 'android' },
+    ]);
+  });
+  afterAll(() => w.close());
+
+  beforeEach(() => {
+    fetchSpy = vi.fn(async (_url: string, init: RequestInit) => {
+      const batch = JSON.parse(init.body as string) as PushMessage[];
+      return json({ data: batch.map((_, i) => ({ status: 'ok', id: `id-${i}` })) });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function cashOrder(app: FastifyInstance) {
+    const cmb = await w.variant('CMB-1');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/orders',
+      headers: { authorization: `Bearer ${app.jwt.sign({ sub: w.customerId, role: 'customer' })}` },
+      payload: {
+        items: [{ variantId: cmb.id, quantity: 1 }],
+        address: ADDRESS,
+        slotStart: (await w.firstSlot()).toISOString(),
+        paymentMethod: 'cash',
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    await app.push.drain();
+  }
+
+  it('un pedido confirmado llega a Expo: URL oficial, Bearer y los dispositivos correctos', async () => {
+    const app = await buildApp({
+      db: w.handle.db,
+      config: w.config,
+      otpSender: new MemoryOtpSender(),
+      now: () => NOW,
+    });
+    try {
+      await cashOrder(app);
+
+      expect(fetchSpy).toHaveBeenCalled();
+      const sentTo: string[] = [];
+      for (const [url, init] of fetchSpy.mock.calls as [string, RequestInit][]) {
+        expect(url).toBe(EXPO_PUSH_URL);
+        expect(init.method).toBe('POST');
+        expect(init.headers).toMatchObject({ Authorization: 'Bearer expo-token-prueba' });
+        sentTo.push(...(JSON.parse(init.body as string) as PushMessage[]).map((m) => m.to));
+      }
+      expect(sentTo.sort()).toEqual([registered.admin, registered.customer].sort());
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('sin EXPO_ACCESS_TOKEN no manda cabecera Authorization', async () => {
+    const app = await buildApp({
+      db: w.handle.db,
+      config: { ...w.config, expoAccessToken: null },
+      otpSender: new MemoryOtpSender(),
+      now: () => NOW,
+    });
+    try {
+      await cashOrder(app);
+      expect(fetchSpy).toHaveBeenCalled();
+      for (const [, init] of fetchSpy.mock.calls as [string, RequestInit][]) {
+        expect(init.headers).not.toHaveProperty('Authorization');
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('si Expo no contesta, el pedido igual se crea y la respuesta no se retrasa', async () => {
+    // El `fetch` global queda colgado hasta que la prueba lo suelte: la API no debe esperarlo.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    vi.stubGlobal('fetch', async () => {
+      await gate;
+      throw new TypeError('fetch failed');
+    });
+    const app = await buildApp({
+      db: w.handle.db,
+      config: w.config,
+      otpSender: new MemoryOtpSender(),
+      now: () => NOW,
+    });
+    try {
+      const cmb = await w.variant('CMB-1');
+      const started = Date.now();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/orders',
+        headers: {
+          authorization: `Bearer ${app.jwt.sign({ sub: w.customerId, role: 'customer' })}`,
+        },
+        payload: {
+          items: [{ variantId: cmb.id, quantity: 1 }],
+          address: ADDRESS,
+          slotStart: (await w.firstSlot()).toISOString(),
+          paymentMethod: 'cash',
+        },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      expect(Date.now() - started).toBeLessThan(3_000);
+    } finally {
+      release();
+      await app.close();
+    }
+  });
+});
+
+describe('ExpoPushSender con sockets reales (servidor local)', () => {
+  const servers: { close: () => Promise<void> }[] = [];
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((s) => s.close()));
+  });
+
+  async function localServer(handler: (body: string, res: ServerResponse, n: number) => void) {
+    const seen: { headers: IncomingMessage['headers']; url?: string; body: string }[] = [];
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        seen.push({ headers: req.headers, url: req.url, body });
+        handler(body, res, seen.length);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const handle = {
+      seen,
+      base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      close: () =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections();
+          server.close(() => resolve());
+        }),
+    };
+    servers.push(handle);
+    return handle;
+  }
+
+  const viaLocal =
+    (base: string) =>
+    (url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+      fetch(String(url).replace('https://exp.host', base), init);
+
+  const m = (n: number): PushMessage => ({ to: tok(`real${n}`), title: `t${n}`, body: `b${n}` });
+
+  it('lo que sale por el cable: POST JSON con Bearer, y los tickets vuelven en orden', async () => {
+    const srv = await localServer((body, res) => {
+      const batch = JSON.parse(body) as PushMessage[];
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          data: batch.map((x, i) =>
+            i === 1
+              ? {
+                  status: 'error',
+                  message: 'no registrado',
+                  details: { error: 'DeviceNotRegistered' },
+                }
+              : { status: 'ok', id: `id-${x.title}` },
+          ),
+        }),
+      );
+    });
+    const sender = new ExpoPushSender({
+      accessToken: 'expo-token-prueba',
+      fetch: viaLocal(srv.base),
+      logger: recordingLogger().logger,
+    });
+    const tickets = await sender.send([m(1), m(2), m(3)]);
+
+    expect(srv.seen).toHaveLength(1);
+    expect(srv.seen[0]!.url).toBe('/--/api/v2/push/send');
+    expect(srv.seen[0]!.headers.authorization).toBe('Bearer expo-token-prueba');
+    expect(srv.seen[0]!.headers['content-type']).toBe('application/json');
+    expect(JSON.parse(srv.seen[0]!.body)).toEqual([m(1), m(2), m(3)]);
+    expect(tickets).toEqual([
+      { status: 'ok', id: 'id-t1' },
+      { status: 'error', error: 'DeviceNotRegistered', message: 'no registrado' },
+      { status: 'ok', id: 'id-t3' },
+    ]);
+  });
+
+  it('un servidor que no contesta se corta por plazo y devuelve tickets de error, sin lanzar', async () => {
+    const srv = await localServer(() => {
+      /* nunca responde */
+    });
+    const sender = new ExpoPushSender({
+      fetch: viaLocal(srv.base),
+      timeoutMs: 150,
+      sleep: async () => {},
+      logger: recordingLogger().logger,
+    });
+    const started = Date.now();
+    const tickets = await sender.send([m(1), m(2)]);
+
+    expect(tickets.map((t) => t.error)).toEqual(['TransportError', 'TransportError']);
+    expect(srv.seen).toHaveLength(2); // el original y su único reintento
+    expect(Date.now() - started).toBeGreaterThanOrEqual(280);
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 });

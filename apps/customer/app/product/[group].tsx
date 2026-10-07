@@ -20,7 +20,13 @@ import {
   useTheme,
 } from '@jellyfish/mobile-core';
 import { useProduct } from '../../src/api/hooks';
-import { ProductImage } from '../../src/components/ProductImage';
+import { FavoriteButton } from '../../src/components/FavoriteButton';
+import {
+  PHOTO_BLACK,
+  PHOTO_RATIO,
+  PhotoFrame,
+  ProductImage,
+} from '../../src/components/ProductImage';
 import { QuantityStepper } from '../../src/components/QuantityStepper';
 import { quantityOf, selectCount, useCart } from '../../src/store/cart';
 
@@ -77,40 +83,39 @@ export default function ProductScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={{ padding: spacing.lg, paddingTop: insets.top + spacing.sm }}>
-          <ProductImage
-            category={product.category}
-            photo={variant.photo}
-            frozen={false}
-            iconSize={96}
-            style={{ height: 270, borderRadius: 30 }}
-          />
-          <View
-            style={{
-              position: 'absolute',
-              top: insets.top + spacing.lg + 6,
-              left: spacing.lg + 10,
-            }}
-          >
-            <IconButton
-              icon="chevron-left"
-              label="Volver"
-              onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
-            />
-          </View>
-          <View
-            style={{
-              position: 'absolute',
-              top: insets.top + spacing.lg + 6,
-              right: spacing.lg + 10,
-            }}
-          >
-            <IconButton
-              icon="cart-outline"
-              label="Carrito"
-              badge={cartCount}
-              onPress={() => router.push('/cart')}
-            />
-          </View>
+          <PhotoFrame strong style={{ borderRadius: 30, backgroundColor: PHOTO_BLACK }}>
+            {/* Cada variante tiene su foto: al elegir otra opción la imagen cambia con una transición suave. */}
+            <ProductImage
+              category={product.category}
+              photo={variant.photo}
+              frozen={false}
+              illustrative={variant.photoIllustrative !== false}
+              label="full"
+              quality="full"
+              iconSize={96}
+              radius={30}
+              style={{ width: '100%', aspectRatio: PHOTO_RATIO }}
+            >
+              <View style={{ position: 'absolute', top: 10, left: 10 }}>
+                <IconButton
+                  icon="chevron-left"
+                  label="Volver"
+                  onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))}
+                />
+              </View>
+              <View
+                style={{ position: 'absolute', top: 10, right: 10, flexDirection: 'row', gap: 8 }}
+              >
+                <FavoriteButton group={product.group} name={product.name} tone="solid" size={44} />
+                <IconButton
+                  icon="cart-outline"
+                  label="Carrito"
+                  badge={cartCount}
+                  onPress={() => router.push('/cart')}
+                />
+              </View>
+            </ProductImage>
+          </PhotoFrame>
         </View>
 
         <View style={{ paddingHorizontal: spacing.lg, gap: spacing.md }}>

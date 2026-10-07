@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { type AddressSnapshot, addresses } from '../db/schema';
 import { invalid, notFound } from '../errors';
 import { createOrder, getOrder, listOrdersForUser, transitionOrder } from '../services/orders';
+import { couponCodeField } from './coupons';
 import { addressInputSchema, itemsSchema, parse, uuid } from './validate';
 
 export async function registerOrderRoutes(app: FastifyInstance) {
@@ -21,6 +22,7 @@ export async function registerOrderRoutes(app: FastifyInstance) {
           paymentMethod: z.enum(['card', 'cash', 'transfer']),
           notes: z.string().trim().max(500).optional(),
           substitutionPolicy: z.enum(['contact', 'substitute', 'refund']).optional(),
+          couponCode: couponCodeField,
         })
         .refine((b) => b.addressId || b.address, { message: 'Indica la dirección de entrega' }),
       req.body,
@@ -62,6 +64,7 @@ export async function registerOrderRoutes(app: FastifyInstance) {
       notes: body.notes,
       substitutionPolicy: body.substitutionPolicy,
       idempotencyKey: key,
+      couponCode: body.couponCode,
     });
     return reply.status(201).send(order);
   });

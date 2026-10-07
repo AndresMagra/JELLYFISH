@@ -3,16 +3,29 @@ import { fileURLToPath } from 'node:url';
 import { buildApp } from './app';
 import { loadConfig } from './config';
 import { createPgliteDb, createPostgresDb } from './db/client';
+import { runMaintenanceTick } from './maintenance';
+import { validateProductionEnv } from './plugins/security';
+import { createErrorReporter } from './plugins/sentry';
 import { importCatalog, seedDemoStock, syncCategories } from './services/catalog';
 import { type Logger, consoleLogger } from './services/http-util';
 import { createOtpSender } from './services/otp-senders';
-import { expireStaleOrders } from './services/orders';
 import { createZone, listZones } from './services/zones';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const catalogDir = `${root}data/catalog`;
 
 async function main() {
+  // En producción se revisa TODO de una vez (secretos, CORS, base, URL pública) antes de arrancar.
+  if (process.env.NODE_ENV === 'production') {
+    const check = validateProductionEnv(process.env);
+    for (const warning of check.warnings) console.warn(`Aviso de configuración: ${warning}`);
+    if (!check.ok) {
+      console.error(
+        `El API no puede arrancar en producción. Corrige la configuración:\n${check.errors.map((e) => `  - ${e}`).join('\n')}`,
+      );
+      process.exit(1);
+    }
+  }
   const config = loadConfig();
 
   // Valida el canal de OTP ANTES de abrir la base: en producción exige twilio o whatsapp con todas
@@ -63,16 +76,13 @@ async function main() {
     });
   }
 
-  const app = await buildApp({ db, config, otpSender, logger: true });
+  // Sin SENTRY_DSN no hace nada (y ni siquiera carga el SDK).
+  const errorReporter = await createErrorReporter(config, process.env, { logger: consoleLogger });
+  const app = await buildApp({ db, config, otpSender, logger: true, errorReporter });
   appLog = app.log;
-  const ctx = app.orderCtx;
   const timer = setInterval(() => {
-    // Dentro de `push.scope` las cancelaciones por reserva vencida también avisan al cliente.
-    app.push
-      .scope(() => expireStaleOrders(ctx))
-      .catch((e) => app.log.error(e, 'expireStaleOrders falló'));
-    // Expo reporta tokens muertos en los recibos, minutos después del envío.
-    app.push.checkReceipts().catch((e) => app.log.error(e, 'checkReceipts falló'));
+    // Reservas vencidas (con aviso push tras el commit) y recibos de Expo: ver maintenance.ts.
+    runMaintenanceTick(app).catch((e) => app.log.error(e, 'Tarea periódica falló'));
   }, 60_000);
 
   const port = Number(process.env.PORT ?? 3000);
@@ -85,6 +95,7 @@ async function main() {
   const shutdown = async () => {
     clearInterval(timer);
     await app.close();
+    await errorReporter.flush();
     await handle.close();
     process.exit(0);
   };

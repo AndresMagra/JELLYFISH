@@ -18,9 +18,11 @@ import {
   useSession,
   useTheme,
 } from '@jellyfish/mobile-core';
+import { resolveFavorites } from '@jellyfish/mobile-core';
 import { CategoryGlyph, categoryLook } from '../../src/components/CategoryIcon';
 import { ProductCard } from '../../src/components/ProductCard';
 import { selectCount, useCart } from '../../src/store/cart';
+import { useFavorites } from '../../src/store/favorites';
 
 const CARD_W = 158;
 
@@ -189,12 +191,51 @@ function Rail({ category, products }: { category: CategoryDTO; products: Product
   );
 }
 
+/** "Tus favoritos": los productos que marcó con el corazón (solo viven en este teléfono). */
+function FavoritesRail({ products }: { products: ProductDTO[] }) {
+  const { colors } = useTheme();
+  return (
+    <View testID="favorites-rail">
+      <SectionHeader
+        title="Tus favoritos"
+        action="Ver todos"
+        onAction={() => router.push('/favorites')}
+      />
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          marginTop: -6,
+          marginBottom: 10,
+        }}
+      >
+        <Icon name="cellphone" size={14} color={colors.textMuted} />
+        <Text variant="caption" muted>
+          Guardados en este teléfono
+        </Text>
+      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ gap: 12 }}
+      >
+        {products.slice(0, 10).map((p) => (
+          <ProductCard key={p.group} product={p} width={CARD_W} />
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
 export default function Home() {
   const { colors, palette, spacing } = useTheme();
   const cats = useCategories();
   const products = useProducts({ limit: 100 });
   const cartCount = useCart(selectCount);
   const name = useSession((s) => s.user?.name);
+  const favoriteGroups = useFavorites((s) => s.groups);
+  const favorites = resolveFavorites(favoriteGroups, products.data?.items ?? []);
 
   const byCategory = new Map<string, ProductDTO[]>();
   for (const p of products.data?.items ?? [])
@@ -271,6 +312,8 @@ export default function Home() {
       ) : null}
 
       <TrustRow />
+
+      {favorites.length > 0 ? <FavoritesRail products={favorites} /> : null}
 
       {products.isLoading ? (
         <View style={{ gap: 12, marginTop: spacing.xl }}>

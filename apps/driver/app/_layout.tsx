@@ -8,26 +8,54 @@ import { Sora_600SemiBold, Sora_700Bold, useFonts } from '@expo-google-fonts/sor
 import {
   ThemeProvider,
   configureApp,
+  configureNotificationHandling,
   queryClient,
+  usePushRegistration,
   useSession,
   useTheme,
 } from '@jellyfish/mobile-core';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { Stack } from 'expo-router';
+import { Stack, router, usePathname, useRootNavigationState } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { API_URL } from '../src/config';
+import { TrackingProvider } from '../src/tracking';
 
 configureApp({ apiUrl: API_URL });
 void SplashScreen.preventAutoHideAsync();
 
+/**
+ * Tocar una notificación de pedido abre esa entrega. Si la app estaba cerrada, espera a que la
+ * navegación esté lista; sin sesión no abre nada (primero hay que entrar).
+ */
+function NotificationRouter() {
+  const token = useSession((s) => s.token);
+  const ready = !!useRootNavigationState()?.key;
+  const pathname = usePathname();
+  const [pending, setPending] = useState<string | null>(null);
+
+  useEffect(() => configureNotificationHandling({ onOrderOpened: setPending }), []);
+
+  useEffect(() => {
+    if (!pending || !ready) return;
+    setPending(null);
+    if (!token || pathname === `/delivery/${pending}`) return;
+    router.push({ pathname: '/delivery/[id]', params: { id: pending } });
+  }, [pending, ready, token, pathname]);
+
+  return null;
+}
+
 function Shell() {
   const { colors, dark } = useTheme();
+  // Registra este teléfono para recibir avisos mientras haya sesión (y lo da de baja al salir).
+  usePushRegistration();
   return (
-    <>
+    <TrackingProvider>
       <StatusBar style={dark ? 'light' : 'dark'} />
+      <NotificationRouter />
       <Stack
         screenOptions={{
           headerShown: false,
@@ -35,7 +63,7 @@ function Shell() {
           animation: 'slide_from_right',
         }}
       />
-    </>
+    </TrackingProvider>
   );
 }
 

@@ -18,7 +18,9 @@ import { Redirect, router } from 'expo-router';
 import { FlatList, Pressable, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDeliveries } from '../src/api/hooks';
-import { amountDue } from '../src/due';
+import { amountDue, isPinLocked, sortDeliveries } from '../src/due';
+import { useDangerText } from '../src/colors';
+import { TrackingNotice } from '../src/tracking';
 
 const LABEL: Record<string, { text: string; tone: 'info' | 'warning' | 'danger' }> = {
   packed: { text: 'Listo para salir', tone: 'info' },
@@ -27,7 +29,8 @@ const LABEL: Record<string, { text: string; tone: 'info' | 'warning' | 'danger' 
 };
 
 function DeliveryCard({ order }: { order: OrderDTO }) {
-  const { colors } = useTheme();
+  const { colors, palette } = useTheme();
+  const dangerText = useDangerText();
   const due = amountDue(order);
   const slot = order.slotStart && order.slotEnd ? slotLabel(order.slotStart, order.slotEnd) : null;
   const status = LABEL[order.status] ?? { text: order.status, tone: 'info' as const };
@@ -77,6 +80,34 @@ function DeliveryCard({ order }: { order: OrderDTO }) {
         ) : (
           <Badge label="Ya está pagado" tone="success" />
         )}
+        {order.pinRequired ? (
+          <View
+            testID={`pin-flag-${order.code}`}
+            accessible
+            accessibilityLabel={
+              isPinLocked(order)
+                ? 'Entrega bloqueada: se acabaron los intentos del PIN'
+                : 'Esta entrega se cierra con el PIN del cliente'
+            }
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+          >
+            <Icon
+              name={isPinLocked(order) ? 'lock-alert-outline' : 'lock-outline'}
+              size={18}
+              color={isPinLocked(order) ? palette.danger : colors.glow}
+            />
+            <Text
+              variant="caption"
+              color={isPinLocked(order) ? dangerText : undefined}
+              muted={!isPinLocked(order)}
+              style={{ flex: 1 }}
+            >
+              {isPinLocked(order)
+                ? 'PIN bloqueado: avisa al administrador'
+                : 'PIN requerido: pídeselo al cliente al entregar'}
+            </Text>
+          </View>
+        ) : null}
       </Card>
     </Pressable>
   );
@@ -104,9 +135,7 @@ export default function Deliveries() {
     );
   }
 
-  const orders = [...(q.data ?? [])].sort((a, b) =>
-    (a.slotStart ?? '').localeCompare(b.slotStart ?? ''),
-  );
+  const orders = sortDeliveries(q.data ?? []);
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: colors.background }}
@@ -135,6 +164,12 @@ export default function Deliveries() {
           onPress={() => void useSession.getState().signOut()}
         />
       </View>
+
+      {orders.length > 0 ? (
+        <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
+          <TrackingNotice hasDeliveries />
+        </View>
+      ) : null}
 
       {q.isLoading ? (
         <View style={{ padding: spacing.lg, gap: 12 }}>

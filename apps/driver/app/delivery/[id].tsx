@@ -10,6 +10,7 @@ import {
   Icon,
   Text,
   errorMessage,
+  fonts,
   quantityLabel,
   slotLabel,
   success,
@@ -17,11 +18,24 @@ import {
 } from '@jellyfish/mobile-core';
 import * as Linking from 'expo-linking';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
-import { Modal, Pressable, ScrollView, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Pressable, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCollectCash, useDeliveries, useMove } from '../../src/api/hooks';
-import { amountDue, googleMapsUrl, wazeUrl, whatsappUrl } from '../../src/due';
+import { ADMIN_CONTACT_PHONE } from '../../src/config';
+import {
+  type DeliveryStep,
+  amountDue,
+  deliveryStep,
+  googleMapsUrl,
+  wazeUrl,
+  whatsappUrl,
+} from '../../src/due';
+import { PIN_MAX_ATTEMPTS, type PinFailure, attemptsText, classifyPinError } from '../../src/pin';
+import { PinSheet } from '../../src/PinSheet';
+import { Sheet } from '../../src/Sheet';
+import { useDangerText } from '../../src/colors';
+import { useTracking } from '../../src/tracking';
 
 const FAIL_REASONS = [
   'No contestó el teléfono',
@@ -70,16 +84,137 @@ function Action({
   );
 }
 
+type StepState = 'done' | 'current' | 'todo' | 'blocked';
+
+/** Los pasos para cerrar la entrega, siempre en el mismo orden: cobrar, PIN, entregado. */
+function StepsCard({ order, step }: { order: OrderDTO; step: DeliveryStep }) {
+  const { colors, palette } = useTheme();
+  const dangerText = useDangerText();
+  const due = amountDue(order);
+  const rows: { key: string; label: string; hint?: string; state: StepState }[] = [];
+
+  if (order.paymentMethod === 'cash') {
+    rows.push({
+      key: 'cash',
+      label: step === 'collect' ? `Cobrar ${formatDOP(due)} en efectivo` : 'Efectivo cobrado',
+      state: step === 'collect' ? 'current' : 'done',
+    });
+  }
+  if (order.pinRequired) {
+    const left = order.pinAttemptsLeft;
+    rows.push({
+      key: 'pin',
+      label: 'Pedirle el PIN al cliente',
+      hint:
+        step === 'locked'
+          ? 'Se acabaron los intentos: avisa al administrador.'
+          : left !== null && left < PIN_MAX_ATTEMPTS
+            ? attemptsText(left)
+            : 'Son 4 dígitos que el cliente ve en su app.',
+      state:
+        step === 'collect'
+          ? 'todo'
+          : step === 'pin'
+            ? 'current'
+            : step === 'locked'
+              ? 'blocked'
+              : 'done',
+    });
+  }
+  rows.push({
+    key: 'deliver',
+    label: 'Marcar como entregado',
+    state: step === 'deliver' ? 'current' : 'todo',
+  });
+
+  return (
+    <Card style={{ gap: 12 }}>
+      <Text variant="heading">Cómo cerrar esta entrega</Text>
+      {rows.map((r, i) => {
+        const tint =
+          r.state === 'done'
+            ? palette.success
+            : r.state === 'blocked'
+              ? palette.danger
+              : r.state === 'current'
+                ? colors.glow
+                : colors.textMuted;
+        return (
+          <View
+            key={r.key}
+            testID={`step-${r.key}`}
+            accessible
+            accessibilityLabel={`Paso ${i + 1}: ${r.label}${
+              r.state === 'done' ? ', hecho' : r.state === 'blocked' ? ', bloqueado' : ''
+            }`}
+            style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}
+          >
+            <View
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 16,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: r.state === 'todo' ? 'transparent' : tint + '26',
+                borderWidth: r.state === 'todo' ? 1.5 : 0,
+                borderColor: colors.border,
+              }}
+            >
+              {r.state === 'done' ? (
+                <Icon name="check" size={18} color={tint} />
+              ) : r.state === 'blocked' ? (
+                <Icon name="lock-alert-outline" size={18} color={tint} />
+              ) : (
+                <Text variant="caption" color={tint} style={{ fontFamily: fonts.bold }}>
+                  {i + 1}
+                </Text>
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text
+                variant={r.state === 'current' ? 'bodyStrong' : 'body'}
+                muted={r.state === 'todo' || r.state === 'done'}
+              >
+                {r.label}
+              </Text>
+              {r.hint && r.state !== 'done' ? (
+                <Text
+                  variant="caption"
+                  muted={r.state !== 'blocked'}
+                  color={r.state === 'blocked' ? dangerText : undefined}
+                >
+                  {r.hint}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        );
+      })}
+    </Card>
+  );
+}
+
 export default function Delivery() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { colors, palette, spacing } = useTheme();
+  const dangerText = useDangerText();
+  const scroll = useRef<ScrollView>(null);
   const q = useDeliveries();
   const move = useMove();
   const collect = useCollectCash();
+  const tracking = useTracking();
   const [failing, setFailing] = useState(false);
+  const [pinOpen, setPinOpen] = useState(false);
+  const [departing, setDeparting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const order: OrderDTO | undefined = q.data?.find((o) => o.id === id);
+
+  // Un aviso nuevo (p. ej. "primero cobra") se muestra arriba: que no quede fuera de pantalla.
+  useEffect(() => {
+    if (error) scroll.current?.scrollTo({ y: 0, animated: true });
+  }, [error]);
 
   if (!order) {
     return (
@@ -99,6 +234,7 @@ export default function Delivery() {
   }
 
   const due = amountDue(order);
+  const step = deliveryStep(order);
   const slot = order.slotStart && order.slotEnd ? slotLabel(order.slotStart, order.slotEnd) : null;
   const run = async (fn: () => Promise<unknown>, ok?: () => void) => {
     setError(null);
@@ -107,10 +243,43 @@ export default function Delivery() {
       success();
       ok?.();
     } catch (e) {
-      setError(errorMessage(e));
+      const failure = classifyPinError(e);
+      // El pedido exige PIN y la pantalla aún no lo sabía: se pide ahora.
+      if (failure.kind === 'required') setPinOpen(true);
+      else setError(failure.message || errorMessage(e));
     }
   };
-  const busy = move.isPending || collect.isPending;
+  const busy = move.isPending || collect.isPending || departing;
+
+  /** Sale a entregar. La primera vez explica y pide la ubicación; si no la dan, sale igual. */
+  const depart = async () => {
+    setDeparting(true);
+    try {
+      await tracking.askBeforeDeparture();
+      await run(() => move.mutateAsync({ id: order.id, to: 'out_for_delivery' }));
+    } finally {
+      setDeparting(false);
+    }
+  };
+
+  /** Manda el PIN. null = entregado; si no, el fallo para explicarlo en la hoja. */
+  const submitPin = async (pin: string): Promise<PinFailure | null> => {
+    try {
+      await move.mutateAsync({ id: order.id, to: 'delivered', pin });
+      success();
+      setPinOpen(false);
+      goToList();
+      return null;
+    } catch (e) {
+      const failure = classifyPinError(e);
+      if (failure.kind === 'cash_not_collected') {
+        // El orden manda: primero se cobra. Se cierra la hoja y se vuelve al paso de cobrar.
+        setPinOpen(false);
+        setError(failure.message);
+      }
+      return failure;
+    }
+  };
 
   return (
     <SafeAreaView
@@ -118,6 +287,7 @@ export default function Delivery() {
       edges={['top', 'left', 'right']}
     >
       <ScrollView
+        ref={scroll}
         contentContainerStyle={{
           padding: spacing.lg,
           gap: spacing.md,
@@ -126,6 +296,45 @@ export default function Delivery() {
         showsVerticalScrollIndicator={false}
       >
         <Header title={order.code} />
+
+        {error ? (
+          <Card style={{ borderColor: palette.danger }}>
+            <Text color={dangerText} variant="bodyStrong" testID="driver-error">
+              {error}
+            </Text>
+          </Card>
+        ) : null}
+
+        {step === 'locked' ? (
+          <Card style={{ borderColor: palette.danger, gap: 10 }}>
+            <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+              <Icon name="lock-alert-outline" size={24} color={palette.danger} />
+              <Text variant="heading" style={{ flex: 1 }}>
+                Entrega bloqueada por el PIN
+              </Text>
+            </View>
+            <Text testID="pin-locked-notice">
+              Se acabaron los {PIN_MAX_ATTEMPTS} intentos. Pídele al administrador que autorice la
+              entrega; no se puede cerrar desde aquí.
+            </Text>
+            {ADMIN_CONTACT_PHONE ? (
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <Action
+                  icon="phone"
+                  label="Llamar al administrador"
+                  url={`tel:+${ADMIN_CONTACT_PHONE}`}
+                  testID="admin-call"
+                />
+                <Action
+                  icon="whatsapp"
+                  label="WhatsApp"
+                  url={whatsappUrl(ADMIN_CONTACT_PHONE)}
+                  testID="admin-whatsapp"
+                />
+              </View>
+            ) : null}
+          </Card>
+        ) : null}
 
         <Card style={{ gap: 10 }}>
           <View
@@ -155,6 +364,18 @@ export default function Delivery() {
             />
           </View>
         </Card>
+
+        {order.status === 'out_for_delivery' ? <StepsCard order={order} step={step} /> : null}
+
+        {order.status !== 'out_for_delivery' && order.pinRequired ? (
+          <Card style={{ gap: 6, flexDirection: 'row', alignItems: 'center' }}>
+            <Icon name="lock-outline" size={22} color={colors.glow} />
+            <Text style={{ flex: 1 }}>
+              Esta entrega se cierra con el <Text variant="bodyStrong">PIN de 4 dígitos</Text> del
+              cliente. Se lo pides cuando estés frente a él.
+            </Text>
+          </Card>
+        ) : null}
 
         <Card style={{ gap: 10 }}>
           <Text variant="heading">Dónde entregar</Text>
@@ -231,14 +452,6 @@ export default function Delivery() {
             <Badge label="Ya está pagado: no cobres nada" tone="success" />
           )}
         </Card>
-
-        {error ? (
-          <Card style={{ borderColor: palette.danger }}>
-            <Text color={palette.danger} testID="driver-error">
-              {error}
-            </Text>
-          </Card>
-        ) : null}
       </ScrollView>
 
       <FooterBar>
@@ -248,12 +461,12 @@ export default function Delivery() {
             icon="truck-delivery"
             loading={busy}
             testID="act-out"
-            onPress={() => run(() => move.mutateAsync({ id: order.id, to: 'out_for_delivery' }))}
+            onPress={() => void depart()}
           />
         ) : null}
         {order.status === 'out_for_delivery' ? (
           <>
-            {due ? (
+            {step === 'collect' ? (
               <Button
                 title={`Ya cobré ${formatDOP(due)}`}
                 icon="cash"
@@ -261,7 +474,18 @@ export default function Delivery() {
                 testID="act-collect"
                 onPress={() => run(() => collect.mutateAsync({ id: order.id, amount: due }))}
               />
-            ) : (
+            ) : step === 'pin' ? (
+              <Button
+                title="Pedir PIN y entregar"
+                icon="lock-outline"
+                loading={busy}
+                testID="act-delivered"
+                onPress={() => {
+                  setError(null);
+                  setPinOpen(true);
+                }}
+              />
+            ) : step === 'deliver' ? (
               <Button
                 title="Entregado"
                 icon="check-circle"
@@ -271,7 +495,7 @@ export default function Delivery() {
                   run(() => move.mutateAsync({ id: order.id, to: 'delivered' }), goToList)
                 }
               />
-            )}
+            ) : null}
             <Button
               title="No pude entregar"
               variant="ghost"
@@ -283,44 +507,40 @@ export default function Delivery() {
         ) : null}
       </FooterBar>
 
-      <Modal
+      <PinSheet
+        visible={pinOpen}
+        code={order.code}
+        attemptsLeft={order.pinAttemptsLeft}
+        onClose={() => setPinOpen(false)}
+        onSubmit={submitPin}
+      />
+
+      <Sheet
         visible={failing}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setFailing(false)}
+        onClose={() => setFailing(false)}
+        label="Motivo de la entrega fallida"
+        testID="fail-sheet"
       >
-        <View style={{ flex: 1, backgroundColor: 'rgba(2,6,18,0.65)', justifyContent: 'flex-end' }}>
-          <View
-            style={{
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: 28,
-              borderTopRightRadius: 28,
-              padding: spacing.lg,
-              gap: 10,
-            }}
-          >
-            <Text variant="title">¿Qué pasó?</Text>
-            {FAIL_REASONS.map((r) => (
-              <Button
-                key={r}
-                title={r}
-                variant="secondary"
-                testID={`fail-${r.slice(0, 6)}`}
-                onPress={() =>
-                  run(
-                    () => move.mutateAsync({ id: order.id, to: 'delivery_failed', note: r }),
-                    () => {
-                      setFailing(false);
-                      goToList();
-                    },
-                  )
-                }
-              />
-            ))}
-            <Button title="Volver" variant="ghost" onPress={() => setFailing(false)} />
-          </View>
-        </View>
-      </Modal>
+        <Text variant="title">¿Qué pasó?</Text>
+        {FAIL_REASONS.map((r) => (
+          <Button
+            key={r}
+            title={r}
+            variant="secondary"
+            testID={`fail-${r.slice(0, 6)}`}
+            onPress={() =>
+              run(
+                () => move.mutateAsync({ id: order.id, to: 'delivery_failed', note: r }),
+                () => {
+                  setFailing(false);
+                  goToList();
+                },
+              )
+            }
+          />
+        ))}
+        <Button title="Volver" variant="ghost" onPress={() => setFailing(false)} />
+      </Sheet>
     </SafeAreaView>
   );
 }

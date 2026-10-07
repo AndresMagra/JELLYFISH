@@ -29,3 +29,6 @@ google-play-service-account*.json
 data/private/
 *.xlsx
 *.xls
+
+# Vista previa web (npm run preview:build): se genera, no se sube
+dist-preview/

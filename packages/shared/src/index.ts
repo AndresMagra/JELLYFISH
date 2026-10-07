@@ -9,4 +9,6 @@ export * from './limits';
 export * from './quantity';
 export * from './geo';
 export * from './photo';
+export * from './business';
+export * from './legal';
 export * from './api-types';

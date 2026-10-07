@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { isIP } from 'node:net';
 import type { AzulConfig } from '@jellyfish/payments';
 import { LIMITS } from '@jellyfish/shared';
 
@@ -71,6 +72,18 @@ export interface Config {
   corsOrigins: string[] | true;
   /** República Dominicana no usa horario de verano: UTC-4 todo el año. */
   utcOffsetMinutes: number;
+  /** Carpeta de las fotos del catálogo que sirve GET /photos/*. Sin definir: data/catalog/photos. */
+  photosDir?: string;
+  /** NODE_ENV=production: activa HSTS y las validaciones estrictas. */
+  production: boolean;
+  /**
+   * Detrás de un balanceador, la IP real viene en X-Forwarded-For. Alimenta el límite de peticiones
+   * y la bitácora de auditoría. `false` = no confiar en esa cabecera; un número = saltos (balanceadores)
+   * de confianza; una lista = IP/CIDR de los proxies de confianza. Ver `parseTrustProxy`.
+   */
+  trustProxy: boolean | number | string[];
+  /** DSN de Sentry; sin él no se envía nada. */
+  sentryDsn: string | null;
 }
 
 /** Vigencia del código OTP. Una sola fuente: el vencimiento y el mensaje al cliente salen de aquí. */
@@ -83,6 +96,46 @@ function parsePushEnabled(env: NodeJS.ProcessEnv): boolean {
   if (raw === '1' || raw === 'true') return true;
   if (raw === '0' || raw === 'false') return false;
   throw new Error('PUSH_ENABLED debe ser 1/0 o true/false');
+}
+
+const PROXY_KEYWORDS = new Set(['loopback', 'linklocal', 'uniquelocal']);
+
+/**
+ * TRUST_PROXY: cómo saber cuál es la IP real del cliente detrás de un balanceador.
+ *   (vacío) | 0 | false → no se confía en X-Forwarded-For (conexión directa).
+ *   1, 2, …             → número de balanceadores delante del API (lo recomendado: no se puede falsificar
+ *                          añadiendo saltos desde el cliente).
+ *   IP/CIDR separados por comas (o loopback, linklocal, uniquelocal) → solo esos proxies son de confianza.
+ *   true                → confía en toda la cadena: un cliente puede falsificar su IP. Evítalo.
+ */
+export function parseTrustProxy(raw: string | undefined): boolean | number | string[] {
+  const value = raw?.trim();
+  if (!value || value === '0' || value.toLowerCase() === 'false') return false;
+  if (value.toLowerCase() === 'true') return true;
+  if (/^\d+$/.test(value)) {
+    const hops = Number(value);
+    if (!Number.isSafeInteger(hops) || hops > 10) {
+      throw new Error('TRUST_PROXY: el número de balanceadores debe estar entre 1 y 10');
+    }
+    return hops;
+  }
+  const parts = value
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  for (const part of parts) {
+    const [addr = '', mask, ...rest] = part.split('/');
+    const family = isIP(addr);
+    const maskOk =
+      mask === undefined ||
+      (/^\d{1,3}$/.test(mask) && Number(mask) <= (family === 4 ? 32 : 128) && rest.length === 0);
+    if (!PROXY_KEYWORDS.has(part.toLowerCase()) && (family === 0 || !maskOk)) {
+      throw new Error(
+        'TRUST_PROXY inválido: usa un número de balanceadores (1), o IP/CIDR separados por comas (10.0.0.0/8)',
+      );
+    }
+  }
+  return parts;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -127,6 +180,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       daysAhead: 3,
     },
     utcOffsetMinutes: -240,
+    photosDir: env.PHOTOS_DIR?.trim() || undefined,
+    production,
+    trustProxy: parseTrustProxy(env.TRUST_PROXY),
+    sentryDsn: env.SENTRY_DSN?.trim() || null,
   };
 }
 

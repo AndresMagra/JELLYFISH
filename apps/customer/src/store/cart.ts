@@ -9,7 +9,7 @@ import {
 } from '@jellyfish/shared';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { plainStorage } from '@jellyfish/mobile-core';
+import { mergeReorderQuantity, plainStorage } from '@jellyfish/mobile-core';
 
 export interface CartLine extends QuantityRules {
   variantId: string;
@@ -26,11 +26,43 @@ export interface CartLine extends QuantityRules {
   /** Lo disponible cuando se agregó; el servidor valida de nuevo al cotizar. */
   available: number;
   photo: string;
+  /** false = foto real del producto. Carritos guardados antes de este campo se tratan como ilustrativos. */
+  photoIllustrative?: boolean;
+}
+
+/** Lo que "Pedir de nuevo" agrega: producto, variante y la cantidad ya validada. */
+export interface CartAddition {
+  product: ProductDTO;
+  variant: VariantDTO;
+  quantity: number;
+}
+
+function toLine(product: ProductDTO, v: VariantDTO, quantity: number): CartLine {
+  return {
+    variantId: v.id,
+    group: product.group,
+    name: product.name,
+    variant: v.variant,
+    category: product.category,
+    pricingUnit: v.pricingUnit,
+    stepCentilb: v.stepCentilb,
+    minCentilb: v.minCentilb,
+    unitPrice: v.price,
+    itbisBps: v.itbisBps,
+    variableWeight: v.variableWeight,
+    frozen: v.frozen,
+    quantity,
+    available: v.available,
+    photo: v.photo,
+    photoIllustrative: v.photoIllustrative,
+  };
 }
 
 interface CartState {
   lines: CartLine[];
   add: (product: ProductDTO, variant: VariantDTO) => void;
+  /** Pedir de nuevo: agrega varias líneas a la vez (sin duplicar si ya estaban). */
+  addMany: (items: CartAddition[]) => void;
   increment: (variantId: string) => void;
   decrement: (variantId: string) => void;
   remove: (variantId: string) => void;
@@ -56,24 +88,22 @@ export const useCart = create<CartState>()(
           }
           const quantity = stepUp(0, v, v.available);
           if (quantity === 0) return s; // no hay ni el mínimo disponible
-          const line: CartLine = {
-            variantId: v.id,
-            group: product.group,
-            name: product.name,
-            variant: v.variant,
-            category: product.category,
-            pricingUnit: v.pricingUnit,
-            stepCentilb: v.stepCentilb,
-            minCentilb: v.minCentilb,
-            unitPrice: v.price,
-            itbisBps: v.itbisBps,
-            variableWeight: v.variableWeight,
-            frozen: v.frozen,
-            quantity,
-            available: v.available,
-            photo: v.photo,
-          };
+          const line = toLine(product, v, quantity);
           return { lines: [...s.lines, line] };
+        }),
+
+      addMany: (items) =>
+        set((s) => {
+          let lines = s.lines;
+          for (const { product, variant: v, quantity } of items) {
+            const existing = lines.find((l) => l.variantId === v.id);
+            const next = mergeReorderQuantity(existing?.quantity, quantity, v, v.available);
+            if (next <= 0) continue;
+            lines = existing
+              ? lines.map((l) => (l.variantId === v.id ? { ...toLine(product, v, next) } : l))
+              : [...lines, toLine(product, v, next)];
+          }
+          return { lines };
         }),
 
       increment: (variantId) =>

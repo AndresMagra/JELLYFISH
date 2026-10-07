@@ -1,12 +1,13 @@
 import { type OrderDTO, type OrderStatus, es, formatDOP } from '@jellyfish/shared';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Platform, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Badge,
   Button,
   Card,
+  ConfirmSheet,
   Divider,
   ErrorState,
   Header,
@@ -28,6 +29,9 @@ import {
   useSubmitTransferProof,
   useTransferInfo,
 } from '../../src/api/hooks';
+import { PinCard } from '../../src/components/PinCard';
+import { ReorderButton } from '../../src/components/ReorderButton';
+import { TrackingCard } from '../../src/components/TrackingCard';
 import { openCardCheckout } from '../../src/lib/pay';
 
 const STEPS: { status: OrderStatus; label: string; icon: Parameters<typeof Icon>[0]['name'] }[] = [
@@ -241,6 +245,7 @@ export default function OrderScreen() {
   const { colors, palette, spacing } = useTheme();
   const { data: order, isLoading, isError, error, refetch } = useOrder(id);
   const cancel = useCancelOrder();
+  const [askingCancel, setAskingCancel] = useState(false);
 
   if (isLoading) {
     return (
@@ -273,21 +278,12 @@ export default function OrderScreen() {
   const finalMode = order.finalTotal !== null;
   const closed = order.status === 'cancelled' || order.status === 'refunded';
 
-  const askCancel = () => {
-    const run = () => cancel.mutate({ id: order.id, reason: 'Cancelado por el cliente' });
-    if (Platform.OS === 'web') {
-      if (globalThis.confirm?.('¿Cancelar este pedido?')) run();
-      return;
-    }
-    Alert.alert(
-      '¿Cancelar este pedido?',
-      'Liberaremos tus productos. Si ya pagaste, te devolveremos el dinero.',
-      [
-        { text: 'No, mantener', style: 'cancel' },
-        { text: 'Sí, cancelar', style: 'destructive', onPress: run },
-      ],
+  const doCancel = () =>
+    cancel.mutate(
+      { id: order.id, reason: 'Cancelado por el cliente' },
+      { onSettled: () => setAskingCancel(false) },
     );
-  };
+  const canReorder = order.status === 'delivered' || closed;
 
   return (
     <SafeAreaView
@@ -324,6 +320,12 @@ export default function OrderScreen() {
           ) : null}
         </Card>
 
+        {order.status === 'out_for_delivery' ? <TrackingCard orderId={order.id} /> : null}
+
+        {order.deliveryPin ? (
+          <PinCard pin={order.deliveryPin} attemptsLeft={order.pinAttemptsLeft} />
+        ) : null}
+
         <PaymentCard order={order} />
 
         <Card>
@@ -356,6 +358,14 @@ export default function OrderScreen() {
           ))}
           <Divider />
           <Row label="Subtotal" value={formatDOP(order.subtotal)} />
+          {order.discount > 0 ? (
+            <Row
+              label={`Descuento${order.couponCode ? ` · ${order.couponCode}` : ''}`}
+              value={`− ${formatDOP(order.discount)}`}
+            />
+          ) : order.couponCode ? (
+            <Row label="Cupón" value={order.couponCode} />
+          ) : null}
           <Row
             label="Envío"
             value={order.deliveryFee === 0 ? 'Gratis' : formatDOP(order.deliveryFee)}
@@ -385,7 +395,7 @@ export default function OrderScreen() {
         </Card>
 
         <Card style={{ gap: 8 }}>
-          <Text variant="heading">Seguimiento</Text>
+          <Text variant="heading">Historial del pedido</Text>
           {[...order.timeline].reverse().map((e) => (
             <View key={e.id} style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
               <View
@@ -404,10 +414,22 @@ export default function OrderScreen() {
             title="Cancelar pedido"
             variant="ghost"
             loading={cancel.isPending}
-            onPress={askCancel}
+            onPress={() => setAskingCancel(true)}
             testID="cancel-order"
           />
         ) : null}
+        <ConfirmSheet
+          visible={askingCancel}
+          destructive
+          title="¿Cancelar este pedido?"
+          message="Liberaremos tus productos. Si ya pagaste, te devolveremos el dinero."
+          confirmLabel="Sí, cancelar pedido"
+          cancelLabel="No, mantener"
+          loading={cancel.isPending}
+          onConfirm={doCancel}
+          onClose={() => setAskingCancel(false)}
+        />
+        {canReorder ? <ReorderButton orderId={order.id} variant="primary" /> : null}
         {cancel.isError ? <Text color={palette.danger}>{errorMessage(cancel.error)}</Text> : null}
         <Button title="Volver al inicio" variant="secondary" onPress={() => router.replace('/')} />
       </ScrollView>

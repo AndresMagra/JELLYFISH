@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getProduct, listCategories, listProducts } from '../services/catalog';
 import { findZone, listSlots } from '../services/zones';
 import { quoteOrder } from '../services/orders';
+import { couponCodeField, optionalSessionId } from './coupons';
 import { addressInputSchema, itemsSchema, parse } from './validate';
 
 export async function registerCatalogRoutes(app: FastifyInstance) {
@@ -23,12 +24,19 @@ export async function registerCatalogRoutes(app: FastifyInstance) {
       }),
       req.query,
     );
-    return { ...(await listProducts(deps.db, deps.config.demo, q)), demo: deps.config.demo };
+    const base = deps.config.payments.publicBaseUrl;
+    return { ...(await listProducts(deps.db, deps.config.demo, q, base)), demo: deps.config.demo };
   });
 
   app.get('/v1/products/:group', async (req) => {
     const { group } = parse(z.object({ group: z.string().min(1).max(80) }), req.params);
-    return { product: await getProduct(deps.db, deps.config.demo, group), demo: deps.config.demo };
+    const product = await getProduct(
+      deps.db,
+      deps.config.demo,
+      group,
+      deps.config.payments.publicBaseUrl,
+    );
+    return { product, demo: deps.config.demo };
   });
 
   // ¿Llegamos a mi sector? ¿Cuánto cuesta el envío?
@@ -59,11 +67,12 @@ export async function registerCatalogRoutes(app: FastifyInstance) {
   });
 
   // Cotización del carrito: el servidor recalcula todo (precios, ITBIS, envío).
-  app.post('/v1/quote', async (req) => {
+  app.post('/v1/quote', async (req, reply) => {
     const body = parse(
       z.object({
         items: itemsSchema,
         address: addressInputSchema.pick({ sector: true, city: true }).partial().optional(),
+        couponCode: couponCodeField,
       }),
       req.body,
     );
@@ -73,7 +82,11 @@ export async function registerCatalogRoutes(app: FastifyInstance) {
           city: body.address.city ?? '',
         })
       : null;
-    const quote = await quoteOrder(app.orderCtx, { items: body.items, zone });
+    // Un cupón inválido NO hace fallar la cotización: vuelve sin descuento y con `couponError`.
+    const coupon = body.couponCode
+      ? { code: body.couponCode, userId: await optionalSessionId(app, req, reply) }
+      : undefined;
+    const quote = await quoteOrder(app.orderCtx, { items: body.items, zone, coupon });
     return { ...quote, coverage: body.address ? (zone ? 'covered' : 'not_covered') : 'unknown' };
   });
 }

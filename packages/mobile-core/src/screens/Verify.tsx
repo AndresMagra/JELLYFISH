@@ -1,6 +1,6 @@
 import { formatDominicanPhone } from '@jellyfish/shared';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { KeyboardAvoidingView, Platform, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { errorMessage } from '../api';
@@ -12,7 +12,7 @@ import { fonts, Text, useTheme } from '../theme';
 
 const RESEND_SECONDS = 30;
 
-export function VerifyScreen() {
+export function VerifyScreen({ footer }: { footer?: ReactNode } = {}) {
   const { colors, palette, spacing, radii } = useTheme();
   const { phone, next } = useLocalSearchParams<{ phone: string; next?: string }>();
   const [code, setCode] = useState('');
@@ -153,6 +153,7 @@ export function VerifyScreen() {
               {errorMessage(resend.error)}
             </Text>
           ) : null}
+          {footer}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>

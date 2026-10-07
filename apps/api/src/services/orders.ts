@@ -1,6 +1,7 @@
 import {
   type OrderStatus,
   type PricedLineInput,
+  absolutePhotoUrl,
   assertTransition,
   authorizationAmount,
   computeOrderTotals,
@@ -13,6 +14,7 @@ import type { Config } from '../config';
 import type { Db } from '../db/client';
 import {
   type AddressSnapshot,
+  type CouponKind,
   type PaymentMethod,
   type PaymentStatus,
   type SubstitutionPolicy,
@@ -27,6 +29,17 @@ import {
 import { DomainError, conflict, forbidden, invalid, notFound } from '../errors';
 import { formatOrderNumber } from '../text';
 import { variantBlockers } from './catalog';
+import {
+  type CouponAttemptLimiter,
+  couponRejectionError,
+  describeCoupon,
+  evaluateCoupon,
+  finalDiscountForOrder,
+  isUniqueViolation,
+  recordFinalDiscount,
+  recordRedemption,
+  releaseRedemption,
+} from './coupons';
 import {
   type DeliveryGateInput,
   INTERNAL_VIEWER,
@@ -56,6 +69,8 @@ export interface OrderContext {
   config: Config;
   hooks?: OrderHooks;
   now?: () => Date;
+  /** Freno a quien prueba cupones al azar. Sin él (pruebas de servicio) no hay límite. */
+  couponLimiter?: CouponAttemptLimiter;
 }
 
 const nowOf = (ctx: OrderContext) => (ctx.now ?? (() => new Date()))();
@@ -79,6 +94,8 @@ export interface QuoteLine {
   variableWeight: boolean;
   quantity: number;
   photo: string;
+  /** true = imagen ilustrativa: el carrito la rotula "Imagen ilustrativa". */
+  photoIllustrative: boolean;
   gross: number;
   discount: number;
   net: number;
@@ -98,6 +115,17 @@ export interface Quote {
   missingForMinimum: number;
   missingForFreeDelivery: number | null;
   demo: boolean;
+  /** Cupón aplicado (null si no se pidió o no sirvió). */
+  coupon: { code: string; kind: CouponKind; discount: number; description: string } | null;
+  /** Por qué no se aplicó el cupón pedido; null si no hubo problema. */
+  couponError: string | null;
+}
+
+/** Cupón que acompaña a la cotización: `strict` = al crear el pedido (bloquea y rechaza). */
+export interface QuoteCouponInput {
+  code: string;
+  userId: string | null;
+  strict?: boolean;
 }
 
 function mergeItems(items: OrderItemInput[]): OrderItemInput[] {
@@ -108,7 +136,7 @@ function mergeItems(items: OrderItemInput[]): OrderItemInput[] {
 
 export async function quoteOrder(
   ctx: OrderContext,
-  input: { items: OrderItemInput[]; zone?: Zone | null },
+  input: { items: OrderItemInput[]; zone?: Zone | null; coupon?: QuoteCouponInput },
   db: Db = ctx.db,
 ): Promise<Quote> {
   const { config } = ctx;
@@ -187,7 +215,8 @@ export async function quoteOrder(
       itbisBps,
       variableWeight: v.variableWeight && v.pricingUnit === 'lb',
       quantity: q,
-      photo: v.photo,
+      photo: absolutePhotoUrl(v.photo, config.payments.publicBaseUrl),
+      photoIllustrative: v.photoIllustrative,
       gross: 0,
       discount: 0,
       net: 0,
@@ -198,10 +227,65 @@ export async function quoteOrder(
   const subtotal = priced.reduce((a, p) => a + lineGross(p), 0);
   const zone = input.zone ?? null;
   const delivery = zone ? deliveryPricing(zone, subtotal) : null;
-  const totals = computeOrderTotals(priced, { deliveryFee: delivery?.fee ?? 0 });
+
+  // El mínimo del pedido y el envío gratis por monto se miden sobre el subtotal ANTES del cupón.
+  let applied: Quote['coupon'] = null;
+  let couponError: string | null = null;
+  let discount = 0;
+  let deliveryFee = delivery?.fee ?? 0;
+  let waivedByCoupon = false;
+  let totals = computeOrderTotals(priced, { deliveryFee });
+
+  if (input.coupon) {
+    const res = await evaluateCoupon(db, {
+      rawCode: input.coupon.code,
+      userId: input.coupon.userId,
+      subtotal,
+      deliveryFee: delivery ? delivery.fee : null,
+      now: nowOf(ctx),
+      lock: input.coupon.strict,
+      limiter: ctx.couponLimiter,
+    });
+    if (!res.ok) {
+      if (input.coupon.strict) throw couponRejectionError(res);
+      couponError = res.message;
+    } else {
+      discount = res.discount;
+      waivedByCoupon = res.deliveryWaived > 0;
+      if (waivedByCoupon) deliveryFee = 0;
+      totals = computeOrderTotals(priced, { discount, deliveryFee });
+      // Un pedido de RD$ 0 no se puede cobrar (tarjeta, efectivo ni transferencia): con la zona
+      // conocida, un cupón que lo deje así no se aplica. Sin zona el envío aún no se suma.
+      if (zone && totals.total <= 0) {
+        const message = 'Este cupón cubre todo el pedido. Agrega más productos para poder pagar';
+        if (input.coupon.strict) {
+          throw couponRejectionError({ ok: false, reason: 'covers_all', message });
+        }
+        couponError = message;
+        discount = 0;
+        waivedByCoupon = false;
+        deliveryFee = delivery?.fee ?? 0;
+        totals = computeOrderTotals(priced, { deliveryFee });
+      } else {
+        applied = {
+          code: res.coupon.code,
+          kind: res.coupon.kind,
+          discount: res.coupon.kind === 'free_delivery' ? res.deliveryWaived : totals.discount,
+          description: describeCoupon(res.coupon),
+        };
+      }
+    }
+  }
+
   totals.lines.forEach((l, i) => {
     Object.assign(lines[i]!, { gross: l.gross, discount: l.discount, net: l.net, itbis: l.itbis });
   });
+
+  // El colchón de peso variable se calcula sobre el monto BRUTO de esas líneas: un descuento fijo
+  // no baja al crecer el peso, así que el colchón sobre el neto se quedaría corto al empacar.
+  const variableGross = totals.lines
+    .filter((l) => l.variableWeight)
+    .reduce((a, l) => a + l.gross, 0);
 
   return {
     lines,
@@ -210,12 +294,17 @@ export async function quoteOrder(
     deliveryFee: totals.deliveryFee,
     itbis: totals.itbis,
     total: totals.total,
-    authorizedAmount: authorizationAmount(totals, config.authBufferBps),
+    authorizedAmount: authorizationAmount(
+      { total: totals.total, variableWeightNet: variableGross },
+      config.authBufferBps,
+    ),
     zone: zone ? { id: zone.id, name: zone.name } : null,
-    freeDelivery: delivery?.free ?? false,
+    freeDelivery: (delivery?.free ?? false) || waivedByCoupon,
     missingForMinimum: delivery?.missingForMinimum ?? 0,
-    missingForFreeDelivery: delivery?.missingForFree ?? null,
+    missingForFreeDelivery: waivedByCoupon ? null : (delivery?.missingForFree ?? null),
     demo: config.demo,
+    coupon: applied,
+    couponError,
   };
 }
 
@@ -231,6 +320,8 @@ export interface CreateOrderInput {
   substitutionPolicy?: SubstitutionPolicy;
   /** Mismo valor ⇒ mismo pedido: el reintento devuelve el original en vez de duplicarlo. */
   idempotencyKey?: string;
+  /** Código de cupón tal como lo escribió la persona. Si no sirve, el pedido se RECHAZA. */
+  couponCode?: string | null;
 }
 
 async function findByIdempotencyKey(db: Db, userId: string, key: string) {
@@ -254,10 +345,10 @@ export async function createOrder(ctx: OrderContext, input: CreateOrderInput) {
     return await createOrderOnce(ctx, input, now, config);
   } catch (e) {
     // Dos reintentos simultáneos con la misma clave: gana uno, el otro devuelve el ganador.
-    if (
-      input.idempotencyKey &&
-      /orders_idem_uq|duplicate key/i.test(String((e as Error).message))
-    ) {
+    // Con cupón, el perdedor choca antes con el uso que el ganador acaba de tomar (coupon_invalid).
+    // (El índice único se detecta por SQLSTATE: el mensaje del driver trae el SQL, no el error.)
+    const raced = isUniqueViolation(e) || (e instanceof DomainError && e.code === 'coupon_invalid');
+    if (input.idempotencyKey && raced) {
       const existing = await findByIdempotencyKey(ctx.db, input.userId, input.idempotencyKey);
       if (existing) return getOrder(ctx, existing, { userId: input.userId });
     }
@@ -287,7 +378,19 @@ async function createOrderOnce(
     );
     const slot = await assertSlotAvailable(tx, config, input.slotStart, now);
 
-    const quote = await quoteOrder(ctx, { items: input.items, zone }, tx);
+    // Con cupón, la cotización bloquea su fila hasta el final de esta transacción: dos pedidos
+    // simultáneos hacen cola y los límites de uso se respetan.
+    const quote = await quoteOrder(
+      ctx,
+      {
+        items: input.items,
+        zone,
+        coupon: input.couponCode
+          ? { code: input.couponCode, userId: input.userId, strict: true }
+          : undefined,
+      },
+      tx,
+    );
     if (quote.missingForMinimum > 0) {
       throw new DomainError(
         'below_minimum',
@@ -329,6 +432,7 @@ async function createOrderOnce(
         idempotencyKey: input.idempotencyKey ?? null,
         subtotal: quote.subtotal,
         discount: quote.discount,
+        couponCode: quote.coupon?.code ?? null,
         deliveryFee: quote.deliveryFee,
         itbis: quote.itbis,
         total: quote.total,
@@ -354,6 +458,15 @@ async function createOrderOnce(
         lineTotal: l.net,
       })),
     );
+
+    if (quote.coupon) {
+      await recordRedemption(tx, {
+        code: quote.coupon.code,
+        userId: input.userId,
+        orderId: order!.id,
+        amount: quote.coupon.discount,
+      });
+    }
 
     // Orden estable por id: evita interbloqueos entre pedidos que comparten artículos.
     const toReserve = [...quote.lines].sort((a, b) => a.variantId.localeCompare(b.variantId));
@@ -697,17 +810,24 @@ export async function transitionOrderInTx(
       item: i,
       finalQuantity: i.finalQuantity ?? i.quantity,
     }));
-    const totals = computeOrderTotals(
-      finals.map(({ item, finalQuantity }) => ({
-        id: item.id,
-        pricingUnit: item.pricingUnit,
-        unitPrice: item.unitPrice,
-        itbisBps: item.itbisBps,
-        quantity: finalQuantity,
-        variableWeight: item.variableWeight,
-      })),
-      { discount: order.discount, deliveryFee: order.deliveryFee },
+    const finalLines = finals.map(({ item, finalQuantity }) => ({
+      id: item.id,
+      pricingUnit: item.pricingUnit,
+      unitPrice: item.unitPrice,
+      itbisBps: item.itbisBps,
+      quantity: finalQuantity,
+      variableWeight: item.variableWeight,
+    }));
+    // Cupón con peso real: el porcentaje se recalcula sobre el monto real; el fijo se mantiene.
+    const finalDiscount = await finalDiscountForOrder(
+      tx,
+      order,
+      finalLines.reduce((a, l) => a + lineGross(l), 0),
     );
+    const totals = computeOrderTotals(finalLines, {
+      discount: finalDiscount,
+      deliveryFee: order.deliveryFee,
+    });
     // El cliente solo autorizó hasta total + colchón: si el peso real lo supera, hay que ajustar.
     if (totals.total > order.authorizedAmount) {
       throw conflict(
@@ -725,6 +845,7 @@ export async function transitionOrderInTx(
     }
     patch.finalTotal = totals.total;
     patch.finalItbis = totals.itbis;
+    await recordFinalDiscount(tx, order, totals.discount);
 
     for (const { item, finalQuantity } of [...finals].sort((a, b) =>
       a.item.variantId.localeCompare(b.item.variantId),
@@ -760,6 +881,9 @@ export async function transitionOrderInTx(
     }
     // Desde delivery_failed el producto ya salió: no vuelve solo al inventario (cadena de frío).
     // El administrador decide con un ajuste manual.
+
+    // El cupón no se consumió: el uso se libera para los límites global y por persona.
+    await releaseRedemption(tx, orderId);
   }
 
   if (to === 'delivered') patch.deliveredAt = now;

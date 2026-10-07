@@ -17,6 +17,7 @@ import {
   useTheme,
 } from '@jellyfish/mobile-core';
 import { useCreateAddress, useZoneCheck } from '../src/api/hooks';
+import { LocationPicker, type PickedLocation } from '../src/components/LocationPicker';
 
 const LABELS = ['Casa', 'Trabajo', 'Otro'];
 
@@ -28,6 +29,7 @@ export default function NewAddress() {
   const [city, setCity] = useState('Santo Domingo');
   const [reference, setReference] = useState('');
   const [touched, setTouched] = useState(false);
+  const [location, setLocation] = useState<PickedLocation | null>(null);
   const create = useCreateAddress();
   const zone = useZoneCheck(sector, city);
 
@@ -47,6 +49,8 @@ export default function NewAddress() {
       reference: reference.trim(),
       sector: sector.trim(),
       city: city.trim(),
+      // Solo coordenadas: sector y calle los escribe la persona (la geocodificación no es confiable).
+      ...(location ? { latitude: location.latitude, longitude: location.longitude } : null),
     };
     try {
       await create.mutateAsync(input);
@@ -73,6 +77,8 @@ export default function NewAddress() {
               <Chip key={l} label={l} selected={label === l} onPress={() => setLabel(l)} />
             ))}
           </View>
+          <LocationPicker value={location} onChange={setLocation} />
+
           <TextField
             label="Calle y número"
             value={line1}

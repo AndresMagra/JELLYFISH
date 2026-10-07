@@ -12,7 +12,8 @@ import {
   patchVariant,
 } from '../services/catalog';
 import { adminSummary } from '../services/reports';
-import { adjustStock, lowStock } from '../services/inventory';
+import { lowStock } from '../services/inventory';
+import { adjustStockWithLots, reconcileLots } from '../services/lots';
 import {
   assignDriver,
   getOrder,
@@ -121,6 +122,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         active: z.boolean().optional(),
         lowStockThreshold: z.number().int().min(0).optional(),
         photo: z.string().max(300).optional(),
+        photoIllustrative: z.boolean().optional(),
       }),
       req.body,
     );
@@ -149,12 +151,15 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       typeof req.body === 'string'
         ? req.body
         : parse(z.object({ csv: z.string().min(1) }), req.body).csv;
-    return importCatalog(deps.db, csv, {
+    const result = await importCatalog(deps.db, csv, {
       dryRun: q.dryRun === '1',
       applyStockToExisting: q.applyStock === '1',
       overwriteConfirmed: q.overwriteConfirmed === '1',
       actorId: req.session!.id,
     });
+    // "Aplicar existencias" fija on_hand a un valor absoluto: los lotes no pueden quedar por encima.
+    if (q.dryRun === '0' && q.applyStock === '1') await reconcileLots(deps.db);
+    return result;
   });
 
   // ── Inventario ──
@@ -168,7 +173,8 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       }),
       req.body,
     );
-    return adjustStock(deps.db, body.variantId, body.type, body.delta, {
+    // Las bajas (merma, ajuste negativo) también descuentan de los lotes, primero en vencer primero.
+    return adjustStockWithLots(deps.db, body.variantId, body.type, body.delta, {
       actorId: req.session!.id,
       note: body.note,
     });

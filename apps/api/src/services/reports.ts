@@ -1,6 +1,7 @@
 import { and, count, eq, gte, inArray, ne, sql } from 'drizzle-orm';
 import { orders, payments, variants } from '../db/schema';
 import { listCatalogAdmin } from './catalog';
+import { expiryCounts } from './lots';
 import { cashReport } from './payments';
 import type { OrderContext } from './orders';
 
@@ -76,6 +77,7 @@ export async function adminSummary(ctx: OrderContext) {
   const cash = await cashReport(db);
   const catalog = await listCatalogAdmin(db, config.demo);
   const [variantCount] = await db.select({ n: count() }).from(variants);
+  const lots = await expiryCounts(db, now, config.utcOffsetMinutes);
 
   return {
     generatedAt: now,
@@ -89,5 +91,9 @@ export async function adminSummary(ctx: OrderContext) {
       blocked: catalog.filter((r) => r.blockers.length > 0).length,
       outOfStock: catalog.filter((r) => r.active && r.onHand - r.reserved <= 0).length,
     },
+    /** Lotes con saldo que vencen en 7 días o menos (sin contar los ya vencidos). */
+    expiringSoon: lots.expiringSoon,
+    /** Lotes con saldo que ya vencieron: hay que sacarlos del congelador. */
+    expired: lots.expired,
   };
 }

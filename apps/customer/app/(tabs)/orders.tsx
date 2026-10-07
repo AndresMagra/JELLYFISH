@@ -15,6 +15,7 @@ import {
   useTheme,
 } from '@jellyfish/mobile-core';
 import { useOrders } from '../../src/api/hooks';
+import { ReorderButton } from '../../src/components/ReorderButton';
 
 const TONE: Partial<Record<OrderStatus, 'success' | 'warning' | 'danger' | 'info'>> = {
   pending_payment: 'warning',
@@ -24,19 +25,26 @@ const TONE: Partial<Record<OrderStatus, 'success' | 'warning' | 'danger' | 'info
   delivery_failed: 'danger',
 };
 
+/** Pedidos que ya terminaron: se pueden volver a pedir. */
+const REORDERABLE: OrderStatus[] = ['delivered', 'cancelled', 'refunded'];
+
 function OrderRow({ order }: { order: OrderDTO }) {
   const summary =
     order.items
       .map((i) => i.name)
       .slice(0, 2)
       .join(', ') + (order.items.length > 2 ? ` y ${order.items.length - 2} más` : '');
+  const canReorder = REORDERABLE.includes(order.status);
   return (
-    <Pressable
-      onPress={() => router.push({ pathname: '/order/[id]', params: { id: order.id } })}
-      accessibilityRole="button"
-      accessibilityLabel={`Pedido ${order.code}`}
-    >
-      <Card style={{ gap: 8 }}>
+    <Card style={{ gap: 8 }}>
+      {/* El botón de pedir de nuevo va fuera del área que abre el pedido: así son dos botones distintos. */}
+      <Pressable
+        onPress={() => router.push({ pathname: '/order/[id]', params: { id: order.id } })}
+        accessibilityRole="button"
+        accessibilityLabel={`Pedido ${order.code}, ${es.orderStatusLabel[order.status]}`}
+        testID={`order-row-${order.code}`}
+        style={{ gap: 8 }}
+      >
         <View
           style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
         >
@@ -52,8 +60,11 @@ function OrderRow({ order }: { order: OrderDTO }) {
           </Text>
           <Text variant="bodyStrong">{formatDOP(order.finalTotal ?? order.total)}</Text>
         </View>
-      </Card>
-    </Pressable>
+      </Pressable>
+      {canReorder ? (
+        <ReorderButton orderId={order.id} small testID={`reorder-${order.code}`} />
+      ) : null}
+    </Card>
   );
 }
 

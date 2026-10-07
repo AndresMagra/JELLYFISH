@@ -38,6 +38,12 @@ const LOOKS: Record<string, CategoryLook> = {
     gradient: ['#5B3F8F', '#1F1442'],
     accent: '#C4A8FF',
   },
+  // "Otros: cordero, papas y más": verde menta, para que no se confunda con las carnes ni el mar.
+  otros: {
+    icon: { set: 'fa6', name: 'bowl-food' },
+    gradient: ['#1F7A5C', '#0A2E2A'],
+    accent: '#7CE7BD',
+  },
   combos: {
     icon: { set: 'mci', name: 'package-variant-closed' },
     gradient: ['#1A3470', '#0A1633'],

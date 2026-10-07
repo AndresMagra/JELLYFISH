@@ -4,11 +4,13 @@ Fuente de verdad del catálogo inicial. **Todo es reemplazable**: cuando tengas 
 
 ## Archivos
 
-| Archivo             | Para qué sirve                                                                            |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| `categories.json`   | Categorías y subcategorías (slugs usados por el CSV)                                      |
-| `products.seed.csv` | 112 artículos vendibles (98 productos) de carnes, aves, pescados, mariscos y combos de RD |
-| `template.csv`      | Plantilla con 3 filas de ejemplo para tu inventario                                       |
+| Archivo                | Para qué sirve                                                                            |
+| ---------------------- | ----------------------------------------------------------------------------------------- |
+| `categories.json`      | Categorías y subcategorías (slugs usados por el CSV)                                      |
+| `products.seed.csv`    | 112 artículos vendibles (98 productos) de carnes, aves, pescados, mariscos y combos de RD |
+| `template.csv`         | Plantilla con 3 filas de ejemplo para tu inventario                                       |
+| `photos.manifest.json` | Fotos generadas por SKU (URL, modelo, si pasó la revisión). Lo lee `npm run photos:apply` |
+| `photos/`              | Fotos ya descargadas (`<sku>.webp` y `<sku>.thumb.webp`), las sirve el API en `/photos/…` |
 
 ## Cómo se debe leer el precio
 
@@ -49,10 +51,25 @@ Nota: "Filete Dorada" figura así en la fuente. Puede ser dorado (mahi-mahi) o d
 | `congelado`                   | no          | Por defecto `si`                                                                 |
 | `sinonimos`                   | no          | Separados por `;` — alimentan la búsqueda                                        |
 | `descripcion`, `como_cocinar` | no          | Texto para la ficha                                                              |
-| `foto`                        | no          | Ruta o nombre de archivo de la foto                                              |
+| `foto`                        | no          | URL `https://…`, ruta pública `/photos/<sku>.webp` o vacío (ver «Fotos»)         |
+| `foto_ilustrativa`            | no          | `si` = imagen ilustrativa (la app lo rotula), `no` = foto real. Vacío = `si`     |
 | `activo`                      | no          | Por defecto `si`                                                                 |
 
 El importador acepta cabeceras con o sin acentos, y archivos de Excel en español (separador `;` y coma decimal).
+
+`foto_ilustrativa` es opcional y va al final: un CSV viejo sin esa columna sigue siendo válido y se importa como `si`. Acepta `si`/`no` (también `sí`, `true`/`false`, `1`/`0`) y las cabeceras `Foto ilustrativa`, `Ilustrativa` o `Imagen ilustrativa`. Marcar `no` en una fila sin `foto` da un aviso. La exportación del panel la incluye, así que exportar y volver a importar no pierde nada.
+
+## Fotos
+
+Una foto `foto` puede ser una URL completa (p. ej. del CDN de generación de imágenes), una ruta pública `/photos/<sku>.webp` que sirve el propio API, o vacío. El API vuelve absolutas las rutas `/photos/…` (con `PUBLIC_API_URL`) al responder, para que la app móvil pueda cargarlas.
+
+```bash
+npm run photos:apply -- --dry-run   # qué cambiaría en products.seed.csv según photos.manifest.json
+npm run photos:apply                # escribe foto + foto_ilustrativa (no toca precios ni otros campos)
+npm run photos:fetch -- --rewrite   # baja las imágenes a data/catalog/photos y deja foto=/photos/<sku>.webp
+```
+
+Detalles, opciones y límites: `docs/features/photos.md`.
 
 ## Validar sin tocar nada
 

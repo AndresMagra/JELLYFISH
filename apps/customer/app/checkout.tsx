@@ -17,6 +17,7 @@ import {
   TextField,
   dayKey,
   errorMessage,
+  quantityLabel,
   slotLabel,
   success,
   useSession,
@@ -32,6 +33,9 @@ import {
   useStartPayment,
   useUpdateMe,
 } from '../src/api/hooks';
+import { CouponField } from '../src/components/CouponField';
+import { LegalCheckoutNotice } from '../src/components/LegalLinks';
+import { ProductImage } from '../src/components/ProductImage';
 import { randomKey, shortHash } from '../src/lib/ids';
 import { openCardCheckout } from '../src/lib/pay';
 import { useCart } from '../src/store/cart';
@@ -104,17 +108,26 @@ function CheckoutInner() {
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [placed, setPlaced] = useState(false);
+  /** Código de cupón que se manda a cotizar (el servidor dice si sirve). */
+  const [couponCode, setCouponCode] = useState<string | undefined>();
   const attempt = useRef(randomKey('co')).current;
 
   const list = addresses.data ?? [];
   const address = list.find((a) => a.id === addressId) ?? list.find((a) => a.isDefault) ?? list[0];
 
   const items = lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity }));
-  const quote = useQuote({
-    items,
-    address: address ? { sector: address.sector, city: address.city } : undefined,
-  });
+  const quote = useQuote(
+    {
+      items,
+      address: address ? { sector: address.sector, city: address.city } : undefined,
+      couponCode,
+    },
+    { keepPrevious: true },
+  );
   const q = quote.data;
+  // Solo un cupón que el servidor aceptó viaja con el pedido (con uno malo, el pedido se rechazaría).
+  const coupon = q?.coupon ?? null;
+  const couponError = q?.couponError ?? null;
 
   const allSlots = slots.data ?? [];
   const days = useMemo(() => [...new Set(allSlots.map((s) => dayKey(s.start)))], [allSlots]);
@@ -133,6 +146,7 @@ function CheckoutInner() {
     !quote.error &&
     q.coverage === 'covered' &&
     q.missingForMinimum === 0 &&
+    !quote.isPlaceholderData &&
     methodOk(method) &&
     (!needsName || name.trim().length >= 2);
 
@@ -142,7 +156,7 @@ function CheckoutInner() {
     try {
       if (needsName) await updateMe.mutateAsync({ name: name.trim() });
       // La clave cambia si cambia el contenido del pedido; un reintento idéntico no lo duplica.
-      const idempotencyKey = `${attempt}-${shortHash(JSON.stringify([items, slotStart, method, address.id, substitution, notes]))}`;
+      const idempotencyKey = `${attempt}-${shortHash(JSON.stringify([items, slotStart, method, address.id, substitution, notes, coupon?.code ?? null]))}`;
       const order = await createOrder.mutateAsync({
         items,
         addressId: address.id,
@@ -150,6 +164,7 @@ function CheckoutInner() {
         paymentMethod: method,
         substitutionPolicy: substitution,
         notes: notes.trim() || undefined,
+        ...(coupon ? { couponCode: coupon.code } : null),
         idempotencyKey,
       });
       setPlaced(true); // evita la redirección "carrito vacío" mientras navegamos al pedido
@@ -208,6 +223,51 @@ function CheckoutInner() {
           showsVerticalScrollIndicator={false}
         >
           <Header title="Confirmar pedido" />
+
+          <Section title="Tu pedido">
+            <Card style={{ gap: 4, padding: 12 }} testID="checkout-items">
+              {lines.map((l) => (
+                <View
+                  key={l.variantId}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                    paddingVertical: 6,
+                  }}
+                >
+                  <ProductImage
+                    category={l.category}
+                    photo={l.photo}
+                    frozen={false}
+                    radius={12}
+                    iconSize={18}
+                    style={{ width: 48, height: 48 }}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text variant="bodyStrong" numberOfLines={1}>
+                      {l.name}
+                      {l.variant ? ` · ${l.variant}` : ''}
+                    </Text>
+                    <Text variant="caption" muted>
+                      {quantityLabel(l.pricingUnit, l.quantity)}
+                    </Text>
+                  </View>
+                  <Text variant="bodyStrong">
+                    {formatDOP(q?.lines.find((x) => x.variantId === l.variantId)?.net ?? 0)}
+                  </Text>
+                </View>
+              ))}
+              {lines.some((l) => l.photoIllustrative !== false) ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 4 }}>
+                  <Icon name="information-outline" size={14} color={colors.textMuted} />
+                  <Text variant="caption" muted style={{ flex: 1 }}>
+                    Imágenes ilustrativas: el producto real puede variar un poco.
+                  </Text>
+                </View>
+              ) : null}
+            </Card>
+          </Section>
 
           <Section title="Dirección de entrega">
             {addresses.isLoading ? (
@@ -380,12 +440,29 @@ function CheckoutInner() {
             </Section>
           ) : null}
 
+          <CouponField
+            coupon={coupon}
+            sentCode={couponCode}
+            error={couponError}
+            busy={!!couponCode && quote.isFetching && !coupon}
+            onApply={setCouponCode}
+            onRemove={() => setCouponCode(undefined)}
+          />
+
           <Card style={{ borderRadius: radii.xl }}>
             {quote.isLoading ? (
               <Skeleton height={100} />
             ) : (
               <>
                 <Row label="Subtotal" value={formatDOP(q?.subtotal ?? 0)} />
+                {coupon && (q?.discount ?? 0) > 0 ? (
+                  <View testID="quote-discount">
+                    <Row
+                      label={`Descuento · ${coupon.code}`}
+                      value={`− ${formatDOP(q?.discount ?? 0)}`}
+                    />
+                  </View>
+                ) : null}
                 <Row
                   label="Envío"
                   value={q ? (q.freeDelivery ? 'Gratis' : formatDOP(q.deliveryFee)) : '—'}
@@ -431,6 +508,7 @@ function CheckoutInner() {
               {blockedReason}
             </Text>
           ) : null}
+          <LegalCheckoutNotice />
         </FooterBar>
       </KeyboardAvoidingView>
     </SafeAreaView>

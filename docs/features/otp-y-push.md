@@ -23,7 +23,7 @@ Cada intento tiene plazo de 8 s (`AbortController`) y hay **un** reintento solo 
 
 ### Por qué solo se avisa tras el commit
 
-Los `OrderHooks` corren dentro de la transacción. El hook de push no envía nada: anota el id del `order_events` que acaba de insertar en una cola por petición (`AsyncLocalStorage`, abierta en `preHandler`). Al enviar la respuesta (`onSend`) se programa el envío **sin esperarlo**, y antes de enviar se comprueba que ese evento ya existe en la base fuera de la transacción: eso solo es cierto si hizo commit. Por eso un rollback no avisa **aunque el código llamante atrape el error y responda 200**, y un push lento o caído no retrasa ni rompe la operación. El mensaje se arma con el pedido ya confirmado (estado y PIN reales). El temporizador de reservas vencidas usa `app.push.scope(...)` para lo mismo; cualquier otra transición fuera de petición y sin cola se cubre esperando a ver el evento confirmado (hasta ~5 s).
+Los `OrderHooks` corren dentro de la transacción. El hook de push no envía nada: anota el id del `order_events` que acaba de insertar en una cola por petición (`AsyncLocalStorage`, abierta en `preHandler`). Al enviar la respuesta (`onSend`) se programa el envío **sin esperarlo**, y antes de enviar se comprueba que ese evento ya existe en la base fuera de la transacción: eso solo es cierto si hizo commit. Por eso un rollback no avisa **aunque el código llamante atrape el error y responda 200**, y un push lento o caído no retrasa ni rompe la operación. El mensaje se arma con el pedido ya confirmado (estado y PIN reales). El temporizador del servidor (`maintenance.ts`, cada minuto) cancela las reservas vencidas dentro de `app.push.scope(...)` para lo mismo y de paso consulta los recibos de Expo; cualquier otra transición fuera de petición y sin cola se cubre esperando a ver el evento confirmado (hasta ~5 s).
 
 ## Variables de entorno
 
@@ -40,7 +40,7 @@ Los `OrderHooks` corren dentro de la transacción. El hook de push no envía nad
 | `PUSH_ENABLED`                                     | no               | `1/0` o `true/false`. Por defecto activo, salvo `NODE_ENV=test`                |
 | `EXPO_ACCESS_TOKEN`                                | no               | Solo si el proyecto de Expo exige "enhanced push security"                     |
 
-Los secretos van solo por variables de entorno: nada se escribe en archivos ni en logs (no se registran teléfonos completos, códigos, PIN ni tokens).
+Los secretos van solo por variables de entorno: nada se escribe en archivos ni en logs (no se registran teléfonos completos, códigos, PIN ni tokens). Un token de push también se oculta en el registro de acceso de Fastify: `DELETE /v1/me/devices/:token` y cualquier `?token=…` salen como `:token` (`redactUrl` en `services/http-util.ts`, conectado en `app.ts`), porque con el token de un teléfono se le podrían mandar avisos falsos.
 
 ## Cómo probarlo
 
@@ -49,7 +49,7 @@ npx vitest run apps/api/test/otp-senders.test.ts apps/api/test/push.test.ts
 npx tsc --noEmit -p .
 ```
 
-Las pruebas usan `fetch` y transporte falsos (cuerpo y cabeceras exactos, reintentos, plazo de 8 s con reloj simulado, rollback, tokens muertos, PIN). Prueba manual de OTP real: arrancar con `OTP_SENDER=twilio` y las variables, pedir un código a un número propio (con la cuenta de prueba de Twilio solo llega a números verificados). Prueba manual de push: abrir la app en un teléfono, registrar el token (`POST /v1/me/devices`) y confirmar un pedido en efectivo.
+Las pruebas usan `fetch` y transporte falsos (cuerpo y cabeceras exactos, reintentos, plazo de 8 s con reloj simulado, rollback, tokens muertos, PIN) y, además, un servidor HTTP local con `fetch` real para lo que un doble no demuestra: que un socket colgado se corta de verdad por plazo, que no se siguen redirecciones y qué bytes salen realmente por el cable (Twilio, WhatsApp y Expo). También comprueban `PUSH_ENABLED`/`EXPO_ACCESS_TOKEN`, que sin transporte inyectado se usa Expo real con el token de la configuración, y que el registro de acceso no guarda tokens. Con `TEST_DATABASE_URL` (ver `scripts/pg-local.ts`) las mismas pruebas corren contra PostgreSQL 16 real, donde el rollback es el de verdad. Prueba manual de OTP real: arrancar con `OTP_SENDER=twilio` y las variables, pedir un código a un número propio (con la cuenta de prueba de Twilio solo llega a números verificados). Prueba manual de push: abrir la app en un teléfono, registrar el token (`POST /v1/me/devices`) y confirmar un pedido en efectivo.
 
 ## Límites conocidos
 
@@ -60,4 +60,6 @@ Las pruebas usan `fetch` y transporte falsos (cuerpo y cabeceras exactos, reinte
 - **Recibos de Expo:** los tickets se interpretan al enviar; los recibos (donde Expo suele reportar `DeviceNotRegistered`) se consultan a los 15 min **desde memoria**: si el servidor se reinicia se pierden los pendientes. El token muerto se limpia igual en el siguiente envío.
 - Si el proceso se cae entre el commit y el envío, ese aviso se pierde (no hay cola durable). Los avisos fuera de petición y sin `app.push.scope` esperan ~5 s a ver el commit; una transacción más larga no avisa.
 - Los pedidos que cambian de estado con SQL directo (sin pasar por `transitionOrder`) no generan avisos.
+- El arranque de `server.ts` (elegir canal de OTP, fallar con mensaje claro en producción) se comprobó a mano arrancando el proceso; las pruebas automáticas cubren `createOtpSender` y `runMaintenanceTick`, no el `main()`.
+- Solo se ocultó el token en la URL del registro de acceso. No se auditaron los logs de otros módulos ni lo que registre un proxy o balanceador delante del API (revisar que tampoco guarde URLs completas).
 - No hay preferencias de notificación por persona ni push web (`platform: web` se acepta, pero el token debe ser de Expo).

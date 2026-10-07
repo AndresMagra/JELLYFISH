@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
 function resolveApiUrl(): string {
   const fromEnv: unknown = process.env.EXPO_PUBLIC_API_URL;
@@ -16,3 +17,10 @@ function resolveApiUrl(): string {
 export const API_URL: string = resolveApiUrl();
 
 export const APP_SCHEME = 'jellyfish';
+
+/**
+ * Vista previa web (`npm run preview:build`): la app corre en el navegador del teléfono contra un
+ * servidor de demostración que vive dentro de la página (packages/demo-backend). Solo se enciende
+ * con `EXPO_PUBLIC_DEMO=1` Y en web: en un build nativo (iPhone/Android) esta variable no hace nada.
+ */
+export const IS_DEMO: boolean = process.env.EXPO_PUBLIC_DEMO === '1' && Platform.OS === 'web';

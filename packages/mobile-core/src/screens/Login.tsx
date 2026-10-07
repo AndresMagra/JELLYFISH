@@ -1,6 +1,6 @@
 import { normalizeDominicanPhone } from '@jellyfish/shared';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { errorMessage } from '../api';
@@ -10,7 +10,7 @@ import { Icon } from '../Icon';
 import { Button, TextField } from '../ui';
 import { Text, useTheme } from '../theme';
 
-export function LoginScreen() {
+export function LoginScreen({ footer }: { footer?: ReactNode } = {}) {
   const { colors, spacing } = useTheme();
   const { next } = useLocalSearchParams<{ next?: string }>();
   const [phone, setPhone] = useState('');
@@ -86,10 +86,13 @@ export function LoginScreen() {
             loading={request.isPending}
             testID="send-code"
           />
-          <Text variant="caption" muted center>
-            Al continuar aceptas recibir un SMS con tu código. Pueden aplicar tarifas de tu
-            operadora.
-          </Text>
+          {/* Con `footer` la app reemplaza el aviso por el suyo (p. ej. con los textos legales). */}
+          {footer ?? (
+            <Text variant="caption" muted center>
+              Al continuar aceptas recibir un SMS con tu código. Pueden aplicar tarifas de tu
+              operadora.
+            </Text>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>

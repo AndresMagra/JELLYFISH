@@ -142,6 +142,8 @@ export function Button({
         {
           backgroundColor: bg,
           borderRadius: radii.pill,
+          // Los botones chicos también llegan a 44 de alto (tamaño táctil mínimo).
+          minHeight: small ? 44 : undefined,
           paddingVertical: small ? 10 : 15,
           paddingHorizontal: small ? 16 : 22,
           alignItems: 'center',
@@ -233,10 +235,12 @@ export function Card({
   children,
   style,
   onPress,
+  testID,
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
   onPress?: () => void;
+  testID?: string;
 }) {
   const { colors, radii, spacing } = useTheme();
   const base: ViewStyle = {
@@ -246,9 +250,15 @@ export function Card({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   };
-  if (!onPress) return <View style={[base, style]}>{children}</View>;
+  if (!onPress)
+    return (
+      <View testID={testID} style={[base, style]}>
+        {children}
+      </View>
+    );
   return (
     <Pressable
+      testID={testID}
       accessibilityRole="button"
       onPress={() => {
         tap();

@@ -23,7 +23,10 @@
     "e2e:customer": "tsx scripts/e2e-customer.ts",
     "e2e:admin": "tsx scripts/e2e-admin.ts",
     "e2e:pricelist": "tsx scripts/e2e-pricelist.ts",
-    "e2e:driver": "tsx scripts/e2e-driver.ts"
+    "e2e:driver": "tsx scripts/e2e-driver.ts",
+    "preview:build": "tsx scripts/build-preview.ts",
+    "demo:phone": "tsx scripts/demo-phone.ts",
+    "e2e:preview": "tsx scripts/e2e-preview.ts"
   },
   "engines": {
     "node": ">=20"

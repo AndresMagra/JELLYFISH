@@ -62,6 +62,17 @@ export function describeError(e: unknown): string {
   return `${e.name}${code}`;
 }
 
+/**
+ * URL apta para registros de acceso: oculta los tokens que viajan en la ruta
+ * (`DELETE /v1/me/devices/:token`) o en el query (`?token=…`). Con un token de push cualquiera
+ * podría mandarle notificaciones falsas a ese teléfono, así que no debe quedar en los logs.
+ */
+export function redactUrl(url: string): string {
+  return url
+    .replace(/(\/v1\/me\/devices\/)[^/?#]+/, '$1:token')
+    .replace(/([?&]token=)[^&#]*/gi, '$1:token');
+}
+
 /** "+18095551234" → "+1809*****34": suficiente para ubicar el caso sin exponer el número. */
 export function maskPhone(phone: string): string {
   if (phone.length <= 7) return '***';

@@ -1,9 +1,25 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { absolutePhotoUrl, isRemotePhoto, photoThumb } from '../src';
 
 const CDN = 'https://d8j0ntlcm91z4.cloudfront.net';
 
 describe('photoThumb', () => {
+  it('reproduce la miniatura real de cada imagen del manifiesto de fotos', () => {
+    const manifest = JSON.parse(
+      readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), '../../../data/catalog/photos.manifest.json'),
+        'utf8',
+      ),
+    ) as { items: { sku: string; rawUrl: string; minUrl: string }[] };
+    expect(manifest.items.length).toBeGreaterThan(0);
+    for (const { sku, rawUrl, minUrl } of manifest.items) {
+      expect(photoThumb(rawUrl), sku).toBe(minUrl);
+    }
+  });
+
   it('cambia la imagen del CDN de generación por su variante liviana _min.webp', () => {
     expect(photoThumb(`${CDN}/user_2abc/hf_20260930_141500_9f3a.png`)).toBe(
       `${CDN}/user_2abc/hf_20260930_141500_9f3a_min.webp`,

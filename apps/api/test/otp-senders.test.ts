@@ -1,3 +1,5 @@
+import { type IncomingMessage, type ServerResponse, createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
@@ -428,6 +430,171 @@ describe('WhatsAppCloudSender', () => {
     expect(log.entries[0]!.obj.providerCode).toBe('[formato inesperado]');
     expect(log.dump()).not.toContain(CODE);
     expect(log.dump()).not.toContain('8095550123');
+  });
+});
+
+// Con `fetch` real y un servidor local: comprueba lo que el `fetch` falso no puede (que el
+// AbortController corte de verdad un socket colgado, que no se sigan redirecciones y que lo que sale
+// por el cable sea exactamente lo que documentan Twilio y Meta).
+describe('con sockets reales (servidor local)', () => {
+  interface Seen {
+    method: string | undefined;
+    url: string | undefined;
+    headers: IncomingMessage['headers'];
+    body: string;
+  }
+
+  const servers: { close: () => Promise<void> }[] = [];
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((s) => s.close()));
+  });
+
+  async function localServer(handler: (req: Seen, res: ServerResponse, n: number) => void) {
+    const seen: Seen[] = [];
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        seen.push({
+          method: req.method,
+          url: req.url,
+          headers: req.headers,
+          body: Buffer.concat(chunks).toString('utf8'),
+        });
+        handler(seen.at(-1)!, res, seen.length);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const handle = {
+      seen,
+      base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      close: () =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections();
+          server.close(() => resolve());
+        }),
+    };
+    servers.push(handle);
+    return handle;
+  }
+
+  /** `fetch` real, pero con el host del proveedor cambiado por el servidor local. */
+  const viaLocal =
+    (providerHost: string, base: string): FetchLike =>
+    (url, init) =>
+      fetch(String(url).replace(providerHost, base), init);
+
+  const created = (_req: Seen, res: ServerResponse) => {
+    res.writeHead(201, { 'content-type': 'application/json' });
+    res.end('{"sid":"SM1"}');
+  };
+
+  it('Twilio: lo que sale por el cable es el POST con Basic auth y formulario que documenta Twilio', async () => {
+    const srv = await localServer(created);
+    const sender = new TwilioSmsSender(
+      { accountSid: SID, authToken: TOKEN, from: '+18095550000' },
+      { fetch: viaLocal('https://api.twilio.com', srv.base), ttlMinutes: 5, logger: quiet() },
+    );
+    await sender.send(PHONE, CODE);
+
+    expect(srv.seen).toHaveLength(1);
+    const req = srv.seen[0]!;
+    expect(req.method).toBe('POST');
+    expect(req.url).toBe(`/2010-04-01/Accounts/${SID}/Messages.json`);
+    expect(req.headers['content-type']).toBe('application/x-www-form-urlencoded');
+    expect(req.headers.authorization).toBe(
+      `Basic ${Buffer.from(`${SID}:${TOKEN}`).toString('base64')}`,
+    );
+    expect(Object.fromEntries(new URLSearchParams(req.body))).toEqual({
+      To: PHONE,
+      From: '+18095550000',
+      Body: 'Tu código de JELLYFISH es 482916. Vence en 5 minutos. No lo compartas con nadie.',
+    });
+  });
+
+  it('WhatsApp: el JSON que sale por el cable lleva el código en el cuerpo y en el botón', async () => {
+    const srv = await localServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"messages":[{"id":"wamid.1"}]}');
+    });
+    const sender = new WhatsAppCloudSender(
+      { phoneNumberId: '109876543210', accessToken: WA_TOKEN, template: 'jellyfish_otp' },
+      { fetch: viaLocal('https://graph.facebook.com', srv.base), logger: quiet() },
+    );
+    await sender.send(PHONE, CODE);
+
+    const req = srv.seen[0]!;
+    expect(req.method).toBe('POST');
+    expect(req.url).toBe('/v21.0/109876543210/messages');
+    expect(req.headers.authorization).toBe(`Bearer ${WA_TOKEN}`);
+    expect(req.headers['content-type']).toBe('application/json');
+    const body = JSON.parse(req.body);
+    expect(body.to).toBe(PHONE);
+    expect(body.template.language).toEqual({ code: 'es' });
+    const params = body.template.components.flatMap(
+      (c: { parameters: { text: string }[] }) => c.parameters,
+    );
+    expect(params.map((p: { text: string }) => p.text)).toEqual([CODE, CODE]);
+  });
+
+  it('un 503 real se reintenta una vez y la segunda respuesta entrega el código', async () => {
+    const srv = await localServer((req, res, n) => {
+      if (n === 1) {
+        res.writeHead(503);
+        res.end('upstream caído');
+      } else created(req, res);
+    });
+    const sender = new TwilioSmsSender(
+      { accountSid: SID, authToken: TOKEN, from: '+18095550000' },
+      {
+        fetch: viaLocal('https://api.twilio.com', srv.base),
+        sleep: noSleep,
+        logger: quiet(),
+      },
+    );
+    await sender.send(PHONE, CODE);
+    expect(srv.seen).toHaveLength(2);
+  });
+
+  it('un servidor que no contesta se corta de verdad por plazo, con un solo reintento', async () => {
+    const srv = await localServer(() => {
+      /* nunca responde */
+    });
+    const sender = new TwilioSmsSender(
+      { accountSid: SID, authToken: TOKEN, from: '+18095550000' },
+      {
+        fetch: viaLocal('https://api.twilio.com', srv.base),
+        timeoutMs: 150,
+        sleep: noSleep,
+        logger: quiet(),
+      },
+    );
+    const started = Date.now();
+    const err = await rejection(sender.send(PHONE, CODE));
+    const elapsed = Date.now() - started;
+
+    expect(err.code).toBe('otp_delivery_failed');
+    expect(srv.seen).toHaveLength(2);
+    // Dos plazos completos de 150 ms (no se corta antes) y nada que se quede esperando.
+    expect(elapsed).toBeGreaterThanOrEqual(280);
+    expect(elapsed).toBeLessThan(5_000);
+  });
+
+  it('una redirección real no se sigue: las credenciales no viajan a otro destino', async () => {
+    const elsewhere = await localServer(created);
+    const srv = await localServer((_req, res) => {
+      res.writeHead(307, { location: `${elsewhere.base}/robado` });
+      res.end();
+    });
+    const sender = new TwilioSmsSender(
+      { accountSid: SID, authToken: TOKEN, from: '+18095550000' },
+      { fetch: viaLocal('https://api.twilio.com', srv.base), sleep: noSleep, logger: quiet() },
+    );
+    const err = await rejection(sender.send(PHONE, CODE));
+
+    expect(err.code).toBe('otp_delivery_failed');
+    expect(srv.seen).toHaveLength(1);
+    expect(elsewhere.seen).toHaveLength(0);
   });
 });
 

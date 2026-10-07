@@ -5,7 +5,7 @@ import {
   groupProducts,
   parseCatalogCsv,
 } from '@jellyfish/catalog';
-import type { PricingUnit } from '@jellyfish/shared';
+import { type PricingUnit, absolutePhotoUrl } from '@jellyfish/shared';
 import { and, asc, eq, exists, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { categories, inventoryMovements, products, variants } from '../db/schema';
@@ -191,6 +191,8 @@ export async function importCatalog(
             minCentilb: item.minCentilb,
             pieceCentilb: item.pieceCentilb,
             photo: item.photo,
+            // Sin dato explícito no se promete una foto real: el CSV vacío equivale a "ilustrativa".
+            photoIllustrative: item.photoIllustrative ?? true,
             active: item.active,
             updatedAt: new Date(),
           };
@@ -274,7 +276,10 @@ export interface VariantDTO {
   /** Disponible para pedir (centilibras o unidades). */
   available: number;
   inStock: boolean;
+  /** URL absoluta (las rutas locales `/photos/…` se completan con la URL pública del API). */
   photo: string;
+  /** true = imagen ilustrativa (la app la rotula así); false = foto real del producto. */
+  photoIllustrative: boolean;
   /** Precio no confirmado (solo se ve en modo demo). */
   unconfirmed: boolean;
 }
@@ -294,7 +299,7 @@ export interface ProductDTO {
 type VariantRow = typeof variants.$inferSelect;
 type ProductRow = typeof products.$inferSelect;
 
-function toVariantDTO(v: VariantRow): VariantDTO {
+function toVariantDTO(v: VariantRow, photoBaseUrl?: string): VariantDTO {
   const available = Math.max(0, v.onHand - v.reserved);
   const min = v.minCentilb ?? 1;
   return {
@@ -311,13 +316,14 @@ function toVariantDTO(v: VariantRow): VariantDTO {
     pieceCentilb: v.pieceCentilb,
     available,
     inStock: v.pricingUnit === 'lb' ? available >= min : available >= 1,
-    photo: v.photo,
+    photo: photoBaseUrl ? absolutePhotoUrl(v.photo, photoBaseUrl) : v.photo,
+    photoIllustrative: v.photoIllustrative,
     unconfirmed: v.priceSource === 'estimado' || v.itbisBps === null,
   };
 }
 
-function toProductDTO(p: ProductRow, vs: VariantRow[]): ProductDTO {
-  const dtos = vs.map(toVariantDTO);
+function toProductDTO(p: ProductRow, vs: VariantRow[], photoBaseUrl?: string): ProductDTO {
+  const dtos = vs.map((v) => toVariantDTO(v, photoBaseUrl));
   return {
     group: p.group,
     name: p.name,
@@ -339,10 +345,15 @@ export interface ListProductsQuery {
   offset?: number;
 }
 
+/**
+ * `photoBaseUrl` (la URL pública del API) vuelve absolutas las fotos locales `/photos/…` para que
+ * la app móvil, que no tiene "mismo origen", pueda cargarlas. Sin ella se devuelven como están.
+ */
 export async function listProducts(
   db: Db,
   demo: boolean,
   query: ListProductsQuery = {},
+  photoBaseUrl?: string,
 ): Promise<{ items: ProductDTO[]; total: number }> {
   const limit = Math.min(Math.max(query.limit ?? 50, 1), 100);
   const offset = Math.max(query.offset ?? 0, 0);
@@ -400,12 +411,17 @@ export async function listProducts(
     byProduct.set(v.productId, [...(byProduct.get(v.productId) ?? []), v]);
 
   const items = productRows
-    .map((r) => toProductDTO(r.products, byProduct.get(r.products.id) ?? []))
+    .map((r) => toProductDTO(r.products, byProduct.get(r.products.id) ?? [], photoBaseUrl))
     .filter((p) => p.variants.length > 0);
   return { items, total: count };
 }
 
-export async function getProduct(db: Db, demo: boolean, group: string): Promise<ProductDTO> {
+export async function getProduct(
+  db: Db,
+  demo: boolean,
+  group: string,
+  photoBaseUrl?: string,
+): Promise<ProductDTO> {
   const [p] = await db.select().from(products).where(eq(products.group, group));
   if (!p || !p.active) throw notFound('Producto');
   const vs = await db
@@ -416,7 +432,7 @@ export async function getProduct(db: Db, demo: boolean, group: string): Promise<
     )
     .orderBy(asc(variants.price));
   if (vs.length === 0) throw notFound('Producto');
-  return toProductDTO(p, vs);
+  return toProductDTO(p, vs, photoBaseUrl);
 }
 
 function escapeLike(s: string): string {
@@ -444,7 +460,10 @@ export interface VariantPatch {
   itbisBps?: number | null;
   active?: boolean;
   lowStockThreshold?: number;
+  /** URL https://…, ruta local `/photos/…` o texto vacío para quitarla. */
   photo?: string;
+  /** true = imagen ilustrativa; false = foto real del producto. */
+  photoIllustrative?: boolean;
 }
 
 /**
@@ -471,9 +490,16 @@ export async function patchVariant(db: Db, variantId: string, patch: VariantPatc
     }
     set.itbisBps = patch.itbisBps;
   }
-  for (const key of ['priceNote', 'cost', 'active', 'lowStockThreshold', 'photo'] as const) {
+  for (const key of [
+    'priceNote',
+    'cost',
+    'active',
+    'lowStockThreshold',
+    'photoIllustrative',
+  ] as const) {
     if (patch[key] !== undefined) set[key] = patch[key];
   }
+  if (patch.photo !== undefined) set.photo = patch.photo.trim();
   const [row] = await db.update(variants).set(set).where(eq(variants.id, variantId)).returning();
   if (!row) throw notFound('Artículo');
   return row;
@@ -557,6 +583,7 @@ export async function exportCatalogCsv(db: Db): Promise<string> {
     description: p.description,
     cookingTip: p.cookingTip,
     photo: v.photo,
+    photoIllustrative: v.photoIllustrative,
     active: v.active,
   }));
   return catalogToCsv(items);
