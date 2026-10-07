@@ -53,7 +53,9 @@ export function shapeOf(value: unknown): Shape {
 /** Diferencias entre la forma esperada (API real) y la real obtenida (demostración). */
 export function diffShapes(expected: Shape, actual: Shape, path = '$'): string[] {
   if (typeof expected === 'string' || typeof actual === 'string') {
-    return expected === actual ? [] : [`${path}: el API real devuelve ${stable(expected)} y la demostración ${stable(actual)}`];
+    return expected === actual
+      ? []
+      : [`${path}: el API real devuelve ${stable(expected)} y la demostración ${stable(actual)}`];
   }
   if (isArrayShape(expected) || isArrayShape(actual)) {
     if (!isArrayShape(expected) || !isArrayShape(actual)) {
@@ -81,18 +83,26 @@ export function diffShapes(expected: Shape, actual: Shape, path = '$'): string[]
         left.splice(best, 1);
         out.push(...(bestDiffs as string[]));
       } else {
-        out.push(`${path}[]: el API real tiene un elemento con forma ${ea.slice(0, 200)} y la demostración ninguno parecido`);
+        out.push(
+          `${path}[]: el API real tiene un elemento con forma ${ea.slice(0, 200)} y la demostración ninguno parecido`,
+        );
       }
     }
-    for (const eb of left) out.push(`${path}[]: la demostración tiene un elemento con forma ${eb.slice(0, 200)} y el API real ninguno parecido`);
+    for (const eb of left)
+      out.push(
+        `${path}[]: la demostración tiene un elemento con forma ${eb.slice(0, 200)} y el API real ninguno parecido`,
+      );
     return out;
   }
   const out: string[] = [];
   const ek = Object.keys(expected);
   const ak = Object.keys(actual);
   for (const k of ek) if (!(k in actual)) out.push(`${path}.${k}: falta en la demostración`);
-  for (const k of ak) if (!(k in expected)) out.push(`${path}.${k}: la demostración lo agrega y el API real no lo tiene`);
-  for (const k of ek) if (k in actual) out.push(...diffShapes(expected[k]!, actual[k]!, `${path}.${k}`));
+  for (const k of ak)
+    if (!(k in expected))
+      out.push(`${path}.${k}: la demostración lo agrega y el API real no lo tiene`);
+  for (const k of ek)
+    if (k in actual) out.push(...diffShapes(expected[k]!, actual[k]!, `${path}.${k}`));
   return out;
 }
 
@@ -113,15 +123,22 @@ export function compareRec(real: Rec, demo: Rec): string[] {
   if (real.status !== demo.status) {
     out.push(`estado HTTP: el API real responde ${real.status} y la demostración ${demo.status}`);
   }
-  const realErr = (real.body as { error?: { code?: string; message?: string; details?: unknown } } | null)?.error;
-  const demoErr = (demo.body as { error?: { code?: string; message?: string; details?: unknown } } | null)?.error;
+  const realErr = (
+    real.body as { error?: { code?: string; message?: string; details?: unknown } } | null
+  )?.error;
+  const demoErr = (
+    demo.body as { error?: { code?: string; message?: string; details?: unknown } } | null
+  )?.error;
   if (realErr || demoErr) {
-    if (realErr?.code !== demoErr?.code) out.push(`error.code: real "${realErr?.code}" vs demo "${demoErr?.code}"`);
+    if (realErr?.code !== demoErr?.code)
+      out.push(`error.code: real "${realErr?.code}" vs demo "${demoErr?.code}"`);
     if (realErr?.message !== demoErr?.message) {
       out.push(`error.message: real "${realErr?.message}" vs demo "${demoErr?.message}"`);
     }
     if (stable(shapeOf(realErr?.details ?? null)) !== stable(shapeOf(demoErr?.details ?? null))) {
-      out.push(`error.details: forma distinta (real ${stable(shapeOf(realErr?.details ?? null))} vs demo ${stable(shapeOf(demoErr?.details ?? null))})`);
+      out.push(
+        `error.details: forma distinta (real ${stable(shapeOf(realErr?.details ?? null))} vs demo ${stable(shapeOf(demoErr?.details ?? null))})`,
+      );
     }
   }
   out.push(...diffShapes(shapeOf(real.body), shapeOf(demo.body)).filter((m) => !isPendingGap(m)));
@@ -130,7 +147,9 @@ export function compareRec(real: Rec, demo: Rec): string[] {
 
 /** Lee un valor por ruta ("items.0.name"). */
 export function at(value: unknown, path: string): unknown {
-  return path.split('.').reduce<unknown>((v, k) => (v == null ? v : (v as Record<string, unknown>)[k]), value);
+  return path
+    .split('.')
+    .reduce<unknown>((v, k) => (v == null ? v : (v as Record<string, unknown>)[k]), value);
 }
 
 /** Valores que sí tienen que ser idénticos (dinero, mensajes, franjas): mismo código de reglas. */

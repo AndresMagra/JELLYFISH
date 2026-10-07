@@ -64,14 +64,16 @@ export function routeFor(order: OrderRec): Point[] {
 }
 
 export function getTracking(ctx: Ctx, order: OrderRec): TrackingDTO {
-  if (order.status !== 'out_for_delivery') return { available: false, reason: 'not_out_for_delivery' };
+  if (order.status !== 'out_for_delivery')
+    return { available: false, reason: 'not_out_for_delivery' };
   if (!order.driverId) return { available: false, reason: 'no_driver' };
 
   const now = ctx.now();
   const stage = ctx.cfg.stageMs.out_for_delivery;
   const sinceStart = Math.max(0, now - order.stageEnteredAt);
   // Última posición reportada: múltiplo de 4 s desde que salió el pedido.
-  const reportedAt = order.stageEnteredAt + Math.floor(sinceStart / LOCATION_INTERVAL_MS) * LOCATION_INTERVAL_MS;
+  const reportedAt =
+    order.stageEnteredAt + Math.floor(sinceStart / LOCATION_INTERVAL_MS) * LOCATION_INTERVAL_MS;
   const progress = Math.min(1, (reportedAt - order.stageEnteredAt) / stage);
   const p = pointAlong(routeFor(order), progress);
   return {

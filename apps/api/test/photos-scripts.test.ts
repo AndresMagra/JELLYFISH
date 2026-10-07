@@ -34,8 +34,13 @@ const categoriesPath = join(catalogDir, 'categories.json');
 const categories = (JSON.parse(readFileSync(categoriesPath, 'utf8')) as { slug: string }[]).map(
   (c) => c.slug,
 );
-const seedText = readFileSync(join(catalogDir, 'products.seed.csv'), 'utf8');
-const seedSkus = parseCatalogCsv(seedText, { categories }).items.map((i) => i.sku);
+// La semilla real ya trae fotos (se aplicó el manifiesto): las pruebas parten de una copia SIN fotos
+// para no depender del estado de los datos del negocio.
+const seedItems = parseCatalogCsv(readFileSync(join(catalogDir, 'products.seed.csv'), 'utf8'), {
+  categories,
+}).items.map((i) => ({ ...i, photo: '', photoIllustrative: true }));
+const seedText = catalogToCsv(seedItems);
+const seedSkus = seedItems.map((i) => i.sku);
 
 const entry = (sku: string, rawUrl: string, over: Partial<PhotoManifestItem> = {}) => ({
   sku,

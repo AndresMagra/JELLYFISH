@@ -29,11 +29,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { parseCatalogCsv } from '@jellyfish/catalog';
-import { build as esbuild } from 'esbuild';
+import { type Plugin, build as esbuild } from 'esbuild';
 import sharp from 'sharp';
 import {
   DEMO_BASE_URL,
   type FontUsage,
+  iconFamilyOfFile,
+  iconNamesIn,
   keepAssetFile,
   patchAppBundle,
   renderIndexHtml,
@@ -47,21 +49,34 @@ const customerDir = `${root}/apps/customer`;
 const catalogDir = `${root}/data/catalog`;
 
 /** Límites de publicación de una página privada. */
-export const LIMITS = { maxFiles: 255, maxFileBytes: 16 * 1024 * 1024, maxTotalBytes: 64 * 1024 * 1024 };
+export const LIMITS = {
+  maxFiles: 255,
+  maxFileBytes: 16 * 1024 * 1024,
+  maxTotalBytes: 64 * 1024 * 1024,
+};
 
 const log = (m: string) => console.log(`• ${m}`);
 const sha = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
 
 function run(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
   return new Promise((ok, fail) => {
-    const p = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = spawn(cmd, args, {
+      cwd,
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     let out = '';
     p.stdout.on('data', (d: Buffer) => (out += d.toString()));
     p.stderr.on('data', (d: Buffer) => (out += d.toString()));
     p.on('error', fail);
     p.on('exit', (code) => {
       if (code === 0) ok();
-      else fail(new Error(`${cmd} ${args.join(' ')} falló (${code}):\n${out.split('\n').slice(-25).join('\n')}`));
+      else
+        fail(
+          new Error(
+            `${cmd} ${args.join(' ')} falló (${code}):\n${out.split('\n').slice(-25).join('\n')}`,
+          ),
+        );
     });
   });
 }
@@ -103,7 +118,13 @@ function readCatalogData(): { data: Omit<DemoData, 'buildId'>; notes: string[] }
   const manifestPath = `${catalogDir}/photos.manifest.json`;
   if (existsSync(manifestPath)) {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
-      items: { sku: string; rawUrl: string; minUrl: string; illustrative: boolean; verified: boolean }[];
+      items: {
+        sku: string;
+        rawUrl: string;
+        minUrl: string;
+        illustrative: boolean;
+        verified: boolean;
+      }[];
     };
     let skipped = 0;
     for (const m of manifest.items) {
@@ -113,14 +134,19 @@ function readCatalogData(): { data: Omit<DemoData, 'buildId'>; notes: string[] }
         continue;
       }
       // La variante liviana para listas y tarjetas; si falta, la imagen completa.
-      photos.push({ sku: m.sku, url: m.minUrl || m.rawUrl, illustrative: m.illustrative !== false });
+      photos.push({
+        sku: m.sku,
+        url: m.minUrl || m.rawUrl,
+        illustrative: m.illustrative !== false,
+      });
     }
     if (skipped > 0) notes.push(`${skipped} fotos sin verificar omitidas`);
   } else {
     notes.push('sin photos.manifest.json: se usa la columna foto del CSV');
   }
   const withoutPhoto = parsed.items.filter((i) => !photos.some((p) => p.sku === i.sku) && !i.photo);
-  if (withoutPhoto.length > 0) notes.push(`${withoutPhoto.length} artículos sin foto (se verán con su ícono)`);
+  if (withoutPhoto.length > 0)
+    notes.push(`${withoutPhoto.length} artículos sin foto (se verán con su ícono)`);
   return {
     data: { baseUrl: DEMO_BASE_URL, catalogCsv, categories, photos },
     notes,
@@ -145,8 +171,35 @@ async function exportExpo(outDir: string): Promise<void> {
 
 // ───────────────────────── 3. simulador ─────────────────────────
 
+/**
+ * Los paquetes del monorepo (`@jellyfish/shared`, `@jellyfish/catalog`) exportan mucho más de lo que
+ * el simulador usa (lector de Excel, manifiesto de fotos con zod, textos legales…). Se marcan sin
+ * efectos secundarios para que el empaquetador deje fuera lo que nadie importa.
+ */
+const workspaceSideEffectFree: Plugin = {
+  name: 'workspace-side-effect-free',
+  setup(build) {
+    build.onResolve({ filter: /.*/ }, async (args) => {
+      if (args.pluginData?.skip) return undefined;
+      const resolved = await build.resolve(args.path, {
+        importer: args.importer,
+        kind: args.kind,
+        namespace: args.namespace,
+        resolveDir: args.resolveDir,
+        pluginData: { skip: true },
+      });
+      if (resolved.errors.length > 0) return resolved;
+      if (/\/packages\/(shared|catalog)\/src\//.test(resolved.path)) {
+        return { ...resolved, sideEffects: false };
+      }
+      return resolved;
+    });
+  },
+};
+
 async function bundleSimulator(): Promise<string> {
   const result = await esbuild({
+    plugins: [workspaceSideEffectFree],
     entryPoints: [`${root}/packages/demo-backend/src/browser.ts`],
     bundle: true,
     format: 'iife',
@@ -171,6 +224,75 @@ function sourcesForFontScan(): string[] {
     for (const f of walk(r)) if (/\.(ts|tsx)$/.test(f)) out.push(readFileSync(f, 'utf8'));
   }
   return out;
+}
+
+/** Archivo de glifos (nombre → punto de código) de una familia de @expo/vector-icons. */
+function glyphMapFor(family: string): Record<string, number> | null {
+  const base = `${root}/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/glyphmaps`;
+  for (const name of [`${family}Free.json`, `${family}.json`]) {
+    if (existsSync(`${base}/${name}`))
+      return JSON.parse(readFileSync(`${base}/${name}`, 'utf8')) as Record<string, number>;
+  }
+  return null;
+}
+
+/**
+ * Recorta las fuentes de íconos a los glifos que el código usa (MaterialCommunityIcons pesa 1.3 MB y
+ * la app usa unas decenas de íconos). Si `subset-font` no está instalado o algo falla, se deja la
+ * fuente completa: es más pesada, nunca incorrecta.
+ */
+async function subsetIconFonts(
+  outDir: string,
+): Promise<{ notes: string[]; renames: Map<string, string> }> {
+  const notes: string[] = [];
+  const renames = new Map<string, string>();
+  let subsetFont: (
+    font: Buffer,
+    text: string,
+    options: { targetFormat: 'truetype' },
+  ) => Promise<Buffer>;
+  try {
+    // Nombre en una variable: `subset-font` no trae tipos y así el verificador de TypeScript no se queja.
+    const moduleName = 'subset-font';
+    subsetFont = ((await import(moduleName)) as { default: typeof subsetFont }).default;
+  } catch {
+    notes.push(
+      'subset-font no está instalado: las fuentes de íconos se publican completas (≈ 1.7 MB más)',
+    );
+    return { notes, renames };
+  }
+  const sources = sourcesForFontScan();
+  for (const file of walk(`${outDir}/assets`).filter((f) => f.endsWith('.ttf'))) {
+    const rel = relative(outDir, file).split('\\').join('/');
+    const family = iconFamilyOfFile(rel);
+    if (!family) continue;
+    const map = glyphMapFor(family);
+    if (!map) continue;
+    const names = iconNamesIn(sources, Object.keys(map));
+    if (names.size < 3) {
+      notes.push(
+        `${family}: casi no se encontraron íconos en el código (${names.size}); se deja la fuente completa`,
+      );
+      continue;
+    }
+    const before = statSync(file).size;
+    try {
+      const text = [...names].map((n) => String.fromCodePoint(map[n]!)).join('');
+      const out = await subsetFont(readFileSync(file), text, { targetFormat: 'truetype' });
+      // El archivo cambia de contenido: también de nombre (hash nuevo), para que ninguna caché sirva uno viejo.
+      const oldName = file.slice(file.lastIndexOf('/') + 1);
+      const newName = `${oldName.replace(/\.[0-9a-f]{32}\.ttf$/, '').replace(/\.ttf$/, '')}.${sha(out).slice(0, 32)}.ttf`;
+      rmSync(file);
+      writeFileSync(`${file.slice(0, file.lastIndexOf('/') + 1)}${newName}`, out);
+      renames.set(oldName, newName);
+      notes.push(
+        `${family}: ${names.size} íconos, ${(before / 1024).toFixed(0)} KB → ${(out.length / 1024).toFixed(0)} KB`,
+      );
+    } catch (e) {
+      notes.push(`${family}: no se pudo recortar (${(e as Error).message}); se deja completa`);
+    }
+  }
+  return { notes, renames };
 }
 
 async function makeIcons(outDir: string): Promise<void> {
@@ -257,7 +379,9 @@ export async function buildPreview(options: BuildOptions): Promise<PreviewManife
   try {
     log('Datos del catálogo para el simulador…');
     const { data, notes } = readCatalogData();
-    log(`  ${data.photos.length} fotos del manifiesto${notes.length ? ` · ${notes.join(' · ')}` : ''}`);
+    log(
+      `  ${data.photos.length} fotos del manifiesto${notes.length ? ` · ${notes.join(' · ')}` : ''}`,
+    );
 
     if (options.skipExport && existsSync(exportDir)) {
       log(`Reutilizando la exportación de Expo en ${exportDir}`);
@@ -269,7 +393,8 @@ export async function buildPreview(options: BuildOptions): Promise<PreviewManife
     const entryRel = walk(`${exportDir}/_expo/static/js/web`)
       .map((f) => relative(exportDir, f).split('\\').join('/'))
       .find((f) => /entry-.*\.js$/.test(f));
-    if (!entryRel) throw new Error('La exportación de Expo no produjo el bundle de la app (entry-*.js).');
+    if (!entryRel)
+      throw new Error('La exportación de Expo no produjo el bundle de la app (entry-*.js).');
 
     log('Empaquetando el servidor de demostración (esbuild)…');
     const demoJs = await bundleSimulator();
@@ -281,22 +406,13 @@ export async function buildPreview(options: BuildOptions): Promise<PreviewManife
         `concessions ${patched.report.concessions} · appendBaseUrl ${patched.report.appendBaseUrl}`,
     );
     if (/EXPO_PUBLIC_DEMO|demo\.jellyfish\.local/.test(patched.js) === false) {
-      throw new Error('El bundle no trae la URL de demostración: ¿se exportó sin EXPO_PUBLIC_API_URL?');
+      throw new Error(
+        'El bundle no trae la URL de demostración: ¿se exportó sin EXPO_PUBLIC_API_URL?',
+      );
     }
-
-    const buildId = sha(`${patched.js}\n${demoJs}\n${data.catalogCsv}\n${JSON.stringify(data.photos)}`).slice(0, 10);
-    const dataJs = `window.__JF_DEMO_DATA__=${JSON.stringify({ ...data, buildId })};\n`;
 
     rmSync(outDir, { recursive: true, force: true });
     mkdirSync(`${outDir}/js`, { recursive: true });
-    const files = {
-      data: `js/demo-data.${buildId}.js`,
-      demo: `js/demo.${buildId}.js`,
-      app: `js/app.${buildId}.js`,
-    };
-    writeFileSync(`${outDir}/${files.data}`, dataJs);
-    writeFileSync(`${outDir}/${files.demo}`, demoJs);
-    writeFileSync(`${outDir}/${files.app}`, patched.js);
 
     // Assets de Expo (fuentes, imágenes): solo las fuentes que el código usa de verdad.
     const usage: FontUsage = scanFontUsage(sourcesForFontScan());
@@ -321,14 +437,37 @@ export async function buildPreview(options: BuildOptions): Promise<PreviewManife
         `(${(droppedBytes / 1048576).toFixed(1)} MB)`,
     );
     if (usage.googleFonts.size + usage.iconFamilies.size > 0) {
-      log(`  en uso: ${[...usage.googleFonts].sort().join(', ')} · íconos ${[...usage.iconFamilies].sort().join(', ')}`);
+      log(
+        `  en uso: ${[...usage.googleFonts].sort().join(', ')} · íconos ${[...usage.iconFamilies].sort().join(', ')}`,
+      );
     }
+
+    // Íconos: solo los glifos usados. Los archivos recortados cambian de nombre y el bundle los sigue.
+    const fonts = await subsetIconFonts(outDir);
+    for (const n of fonts.notes) log(`  ${n}`);
+    notes.push(...fonts.notes);
+    let appJs = patched.js;
+    for (const [oldName, newName] of fonts.renames) appJs = appJs.split(oldName).join(newName);
+
+    const buildId = sha(
+      `${appJs}\n${demoJs}\n${data.catalogCsv}\n${JSON.stringify(data.photos)}`,
+    ).slice(0, 10);
+    const dataJs = `window.__JF_DEMO_DATA__=${JSON.stringify({ ...data, buildId })};\n`;
+    const files = {
+      data: `js/demo-data.${buildId}.js`,
+      demo: `js/demo.${buildId}.js`,
+      app: `js/app.${buildId}.js`,
+    };
+    writeFileSync(`${outDir}/${files.data}`, dataJs);
+    writeFileSync(`${outDir}/${files.demo}`, demoJs);
+    writeFileSync(`${outDir}/${files.app}`, appJs);
 
     writeFileSync(`${outDir}/index.html`, renderIndexHtml({ buildId, files }));
     writeFileSync(`${outDir}/manifest.webmanifest`, renderWebManifest());
     writeFileSync(`${outDir}/sw.js`, renderServiceWorker());
     writeFileSync(`${outDir}/jf-probe.json`, `${JSON.stringify({ jf: buildId })}\n`);
-    if (existsSync(`${exportDir}/favicon.ico`)) cpSync(`${exportDir}/favicon.ico`, `${outDir}/favicon.ico`);
+    if (existsSync(`${exportDir}/favicon.ico`))
+      cpSync(`${exportDir}/favicon.ico`, `${outDir}/favicon.ico`);
     await makeIcons(outDir);
 
     const manifest = writeManifest(outDir, buildId, notes);
@@ -346,7 +485,10 @@ async function main() {
     },
   });
   const t0 = Date.now();
-  const manifest = await buildPreview({ out: values.out!, skipExport: values['skip-export'] === true });
+  const manifest = await buildPreview({
+    out: values.out!,
+    skipExport: values['skip-export'] === true,
+  });
   const mb = (n: number) => `${(n / 1048576).toFixed(2)} MB`;
   console.log(
     `\n✔ Vista previa lista en ${relative(root, resolve(values.out!)) || '.'} (${((Date.now() - t0) / 1000).toFixed(0)} s)\n` +
@@ -359,7 +501,10 @@ async function main() {
   if (!manifest.withinLimits) process.exitCode = 1;
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('build-preview.ts')) {
+if (
+  import.meta.url === `file://${process.argv[1]}` ||
+  process.argv[1]?.endsWith('build-preview.ts')
+) {
   main().catch((e) => {
     console.error(`\n✖ ${e instanceof Error ? e.message : e}\n`);
     process.exitCode = 1;

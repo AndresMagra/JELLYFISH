@@ -53,21 +53,24 @@ const mutations: { name: string; expectLabel: RegExp; tamper: (res: Res, req: Re
     name: 'cambia el código de error out_of_zone',
     expectLabel: /fuera de zona/,
     tamper: (res) => {
-      if (res.body.includes('"out_of_zone"')) res.body = res.body.replace('"out_of_zone"', '"zona"');
+      if (res.body.includes('"out_of_zone"'))
+        res.body = res.body.replace('"out_of_zone"', '"zona"');
     },
   },
   {
     name: 'cambia el texto del mensaje de pedido mínimo',
     expectLabel: /bajo el mínimo/,
     tamper: (res) => {
-      if (res.body.includes('below_minimum')) res.body = res.body.replace('El pedido mínimo', 'El mínimo del pedido');
+      if (res.body.includes('below_minimum'))
+        res.body = res.body.replace('El pedido mínimo', 'El mínimo del pedido');
     },
   },
   {
     name: 'el total de la cotización viaja como texto en vez de número',
     expectLabel: /cotización/,
     tamper: (res, req) => {
-      if (req.url.endsWith('/v1/quote')) edit(res, (b) => typeof b.total === 'number' && (b.total = String(b.total)));
+      if (req.url.endsWith('/v1/quote'))
+        edit(res, (b) => typeof b.total === 'number' && (b.total = String(b.total)));
     },
   },
   {
@@ -86,7 +89,8 @@ const mutations: { name: string; expectLabel: RegExp; tamper: (res: Res, req: Re
     name: 'descuadra la cotización por un centavo (misma forma, otro valor)',
     expectLabel: /cotización con dirección/,
     tamper: (res, req) => {
-      if (req.url.endsWith('/v1/quote')) edit(res, (b) => typeof b.total === 'number' && (b.total += 1));
+      if (req.url.endsWith('/v1/quote'))
+        edit(res, (b) => typeof b.total === 'number' && (b.total += 1));
     },
   },
 ];
@@ -122,7 +126,10 @@ describe('el contrato detecta las desviaciones', () => {
   it.each(mutations)('detecta: $name', async ({ expectLabel, tamper }) => {
     const run = await demoRunWith(tamper);
     const problems = compareRuns(realRun, run);
-    expect(problems.length, 'la mutación pasó sin que la prueba de contrato se enterara').toBeGreaterThan(0);
+    expect(
+      problems.length,
+      'la mutación pasó sin que la prueba de contrato se enterara',
+    ).toBeGreaterThan(0);
     expect(
       problems.some((p) => expectLabel.test(p.split('\n')[0]!)),
       `se detectó, pero no en el escenario esperado:\n${problems.slice(0, 3).join('\n')}`,

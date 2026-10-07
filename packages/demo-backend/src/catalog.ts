@@ -47,11 +47,14 @@ export interface DemoCatalog {
   signature: string;
 }
 
-function photoMap(photos: DemoOptions['photos']): Map<string, { url: string; illustrative: boolean }> {
+function photoMap(
+  photos: DemoOptions['photos'],
+): Map<string, { url: string; illustrative: boolean }> {
   const map = new Map<string, { url: string; illustrative: boolean }>();
   if (!photos) return map;
   if (Array.isArray(photos)) {
-    for (const p of photos as PhotoSeed[]) map.set(p.sku, { url: p.url, illustrative: p.illustrative });
+    for (const p of photos as PhotoSeed[])
+      map.set(p.sku, { url: p.url, illustrative: p.illustrative });
   } else {
     for (const [sku, p] of Object.entries(photos)) map.set(sku, p);
   }
@@ -76,7 +79,9 @@ export function demoStockFor(
 
 export function buildCatalog(options: DemoOptions): DemoCatalog {
   const categorySeeds: CategorySeed[] = options.categories;
-  const parsed = parseCatalogCsv(options.catalogCsv, { categories: categorySeeds.map((c) => c.slug) });
+  const parsed = parseCatalogCsv(options.catalogCsv, {
+    categories: categorySeeds.map((c) => c.slug),
+  });
   if (parsed.errors.length > 0) {
     const first = parsed.errors[0]!;
     throw new Error(
@@ -97,7 +102,9 @@ export function buildCatalog(options: DemoOptions): DemoCatalog {
       // Una foto real del dueño (foto_ilustrativa = no) vale más que la ilustración generada.
       const keepOwn = item.photo !== '' && item.photoIllustrative === false;
       const photo = keepOwn ? item.photo : (manifest?.url ?? item.photo);
-      const illustrative = keepOwn ? false : (manifest?.illustrative ?? item.photoIllustrative ?? true);
+      const illustrative = keepOwn
+        ? false
+        : (manifest?.illustrative ?? item.photoIllustrative ?? true);
       return {
         id: stableUuid(`variant:${item.sku}`),
         sku: item.sku,
@@ -119,7 +126,8 @@ export function buildCatalog(options: DemoOptions): DemoCatalog {
       };
     });
     const searchParts = [categoryName.get(group.category) ?? ''];
-    for (const i of group.variants) searchParts.push(i.name, i.variant, i.subcategory, ...i.synonyms);
+    for (const i of group.variants)
+      searchParts.push(i.name, i.variant, i.subcategory, ...i.synonyms);
     const product: ProductRec = {
       group: group.group,
       name: group.name,

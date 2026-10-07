@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import helmet from '@fastify/helmet';
 import type { FastifyInstance, FastifyRequest, FastifyServerOptions } from 'fastify';
 import type { Config } from '../config';
@@ -30,12 +31,18 @@ export interface RateRule {
   url: RegExp;
   max: number;
   timeWindow: string;
+  /**
+   * `ip` (por defecto) o `token`: una cuenta con sesión cuenta aparte aunque comparta IP con otras. Las
+   * redes móviles de República Dominicana comparten IP entre muchos teléfonos (CGNAT): con `ip`, varios
+   * repartidores en la misma red se bloquearían entre sí. Sin cabecera de sesión se cae a la IP.
+   */
+  keyBy?: 'ip' | 'token';
 }
 
 /**
- * Se aplican a las rutas que NO traen su propio `config.rateLimit` (la importación de OTP ya define
- * 10 por 10 minutos y se respeta). Van por IP: sin TRUST_PROXY detrás de un balanceador todos
- * compartirían la IP del balanceador.
+ * Se aplican a las rutas que NO traen su propio `config.rateLimit` (pedir y verificar el OTP ya definen
+ * 10 por 10 minutos y se respeta). Por IP salvo que se indique `keyBy: 'token'`; sin TRUST_PROXY detrás
+ * de un balanceador, todas las IP serían la del balanceador.
  */
 export const STRICT_RATE_RULES: readonly RateRule[] = [
   // Cualquier ruta de acceso nueva nace con un límite bajo por defecto.
@@ -47,6 +54,7 @@ export const STRICT_RATE_RULES: readonly RateRule[] = [
     url: /^\/v1\/driver\/orders\/:id\/transition$/,
     max: 30,
     timeWindow: '1 minute',
+    keyBy: 'token',
   },
   // La app manda posición cada pocos segundos; esto solo frena el abuso (el servicio ya limita a 1 cada 4 s).
   {
@@ -55,6 +63,7 @@ export const STRICT_RATE_RULES: readonly RateRule[] = [
     url: /^\/v1\/driver\/location$/,
     max: 120,
     timeWindow: '1 minute',
+    keyBy: 'token',
   },
 ];
 
@@ -168,6 +177,14 @@ export function rateRuleFor(method: string, url: string): RateRule | undefined {
   );
 }
 
+/** Clave del límite por sesión: huella de la cabecera Authorization (nunca el token entero); sin ella, la IP. */
+export function tokenOrIpKey(req: { headers: { authorization?: string }; ip: string }): string {
+  const auth = req.headers.authorization;
+  return auth
+    ? `t:${createHash('sha256').update(auth).digest('base64url').slice(0, 22)}`
+    : `ip:${req.ip}`;
+}
+
 export function isLargeBodyRoute(method: string, url: string): boolean {
   return LARGE_BODY_ROUTES.some((r) => r.method === method && r.url === url);
 }
@@ -186,7 +203,11 @@ export async function installSecurity(app: FastifyInstance, config: Config): Pro
     const rule = methods.map((m) => rateRuleFor(m, route.url)).find(Boolean);
     const routeConfig = (route.config ??= {}) as { rateLimit?: unknown };
     if (rule && routeConfig.rateLimit === undefined) {
-      routeConfig.rateLimit = { max: rule.max, timeWindow: rule.timeWindow };
+      routeConfig.rateLimit = {
+        max: rule.max,
+        timeWindow: rule.timeWindow,
+        ...(rule.keyBy === 'token' ? { keyGenerator: tokenOrIpKey } : {}),
+      };
     }
   });
 

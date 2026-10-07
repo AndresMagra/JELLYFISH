@@ -47,6 +47,11 @@ export interface Config {
   otpPepper: string;
   /** Vigencia del código OTP en minutos (la usan el vencimiento y el texto del SMS/WhatsApp). */
   otpTtlMinutes: number;
+  /**
+   * Código OTP fijo SOLO para demostraciones (JELLYFISH_DEMO=1 + DEMO_OTP_CODE=123456): permite
+   * entrar desde un teléfono sin ver la consola del servidor. Nunca en producción.
+   */
+  demoOtpCode: string | null;
   /** Notificaciones push (Expo). Apagadas por defecto en pruebas; PUSH_ENABLED=0/1 lo fuerza. */
   pushEnabled: boolean;
   /** Token de acceso de Expo (opcional; solo si el proyecto exige "enhanced push security"). */
@@ -148,8 +153,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (production && otpPepper.length < 16) {
     throw new Error('OTP_PEPPER (≥ 16 caracteres) es obligatorio en producción');
   }
+  const demo = env.JELLYFISH_DEMO === '1';
+  const demoOtpRaw = env.DEMO_OTP_CODE?.trim();
+  if (demoOtpRaw) {
+    if (production) throw new Error('DEMO_OTP_CODE no se permite en producción');
+    if (!demo) throw new Error('DEMO_OTP_CODE solo funciona con JELLYFISH_DEMO=1');
+    if (!/^\d{6}$/.test(demoOtpRaw)) throw new Error('DEMO_OTP_CODE debe ser de 6 dígitos');
+  }
   return {
-    demo: env.JELLYFISH_DEMO === '1',
+    demo,
+    demoOtpCode: demoOtpRaw || null,
     payments: loadPaymentsConfig(env, production),
     corsOrigins: env.CORS_ORIGINS
       ? env.CORS_ORIGINS.split(',')

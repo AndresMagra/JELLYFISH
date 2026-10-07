@@ -31,14 +31,18 @@ describe('cupones de la vista previa (mismas reglas que el API)', () => {
   it('el porcentaje redondea hacia abajo y respeta el tope y el subtotal', () => {
     expect(couponDiscount(base, 123_456)).toBe(12_345);
     expect(couponDiscount(base, 1_000_000)).toBe(50_000); // tope
-    expect(couponDiscount({ ...base, kind: 'fixed', value: 20_000, maxDiscount: null }, 15_000)).toBe(15_000);
+    expect(
+      couponDiscount({ ...base, kind: 'fixed', value: 20_000, maxDiscount: null }, 15_000),
+    ).toBe(15_000);
     expect(couponDiscount({ ...base, kind: 'free_delivery' }, 500_000)).toBe(0);
     expect(couponDiscount(base, 0)).toBe(0);
   });
 
   it('textos para el cliente', () => {
     expect(describeCoupon(base)).toBe('10 % de descuento (hasta RD$ 500.00)');
-    expect(describeCoupon({ ...base, kind: 'fixed', value: 20_000 })).toBe('RD$ 200.00 de descuento');
+    expect(describeCoupon({ ...base, kind: 'fixed', value: 20_000 })).toBe(
+      'RD$ 200.00 de descuento',
+    );
     expect(describeCoupon({ ...base, kind: 'free_delivery' })).toBe('Envío gratis');
     expect(describeCoupon({ ...base, description: ' Solo hoy ' })).toBe('Solo hoy');
   });
@@ -50,9 +54,13 @@ describe('cupones de la vista previa (mismas reglas que el API)', () => {
     };
     expect(msg({})).toBe('ok');
     expect(msg({ active: false })).toMatch(/^not_found/);
-    expect(msg({ startsAt: NOW + 86_400_000 })).toMatch(/^not_started: Este cupón estará disponible desde el /);
+    expect(msg({ startsAt: NOW + 86_400_000 })).toMatch(
+      /^not_started: Este cupón estará disponible desde el /,
+    );
     expect(msg({ endsAt: NOW })).toBe('expired: Este cupón venció');
-    expect(msg({ maxRedemptions: 5 }, 200_000, { total: 5, byUser: 0 })).toBe('exhausted: Este cupón ya se agotó');
+    expect(msg({ maxRedemptions: 5 }, 200_000, { total: 5, byUser: 0 })).toBe(
+      'exhausted: Este cupón ya se agotó',
+    );
     expect(msg({}, 200_000, { total: 1, byUser: 1 })).toBe('user_limit: Ya usaste este cupón');
     expect(msg({ perUserLimit: 3 }, 200_000, { total: 3, byUser: 3 })).toBe(
       'user_limit: Ya usaste este cupón el máximo de veces (3)',
@@ -61,9 +69,24 @@ describe('cupones de la vista previa (mismas reglas que el API)', () => {
   });
 
   it('envío gratis: sin zona todavía se acepta; si el envío ya es gratis, no sirve', () => {
-    const free = { ...base, kind: 'free_delivery' as const, value: 0, minSubtotal: 0, maxDiscount: null };
-    expect(assessCoupon(free, cart(100_000, null), fresh, NOW)).toMatchObject({ ok: true, deliveryWaived: 0 });
-    expect(assessCoupon(free, cart(100_000, 15_000), fresh, NOW)).toMatchObject({ ok: true, deliveryWaived: 15_000 });
-    expect(assessCoupon(free, cart(500_000, 0), fresh, NOW)).toMatchObject({ ok: false, reason: 'no_benefit' });
+    const free = {
+      ...base,
+      kind: 'free_delivery' as const,
+      value: 0,
+      minSubtotal: 0,
+      maxDiscount: null,
+    };
+    expect(assessCoupon(free, cart(100_000, null), fresh, NOW)).toMatchObject({
+      ok: true,
+      deliveryWaived: 0,
+    });
+    expect(assessCoupon(free, cart(100_000, 15_000), fresh, NOW)).toMatchObject({
+      ok: true,
+      deliveryWaived: 15_000,
+    });
+    expect(assessCoupon(free, cart(500_000, 0), fresh, NOW)).toMatchObject({
+      ok: false,
+      reason: 'no_benefit',
+    });
   });
 });

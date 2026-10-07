@@ -165,7 +165,11 @@ describe('ciclo del pedido con reloj falso (efectivo)', () => {
     const { server, c, token } = setup();
     const { res } = placeOrder(c, token);
     const other = clientFor(server).login('829-555-0202');
-    for (const path of [`/v1/orders/${res.body.id}`, `/v1/orders/${res.body.id}/tracking`, `/v1/orders/${res.body.id}/reorder`]) {
+    for (const path of [
+      `/v1/orders/${res.body.id}`,
+      `/v1/orders/${res.body.id}/tracking`,
+      `/v1/orders/${res.body.id}/reorder`,
+    ]) {
       const r = c.call('GET', path, { token: other.token });
       expect(r.status, path).toBe(404);
       expect(r.body.error.code).toBe('not_found');
@@ -199,7 +203,9 @@ describe('cancelar', () => {
     clock.advance(30 * S);
     const r = c.call('POST', `/v1/orders/${res.body.id}/cancel`, { token, body: {} });
     expect(r.status).toBe(403);
-    expect(r.body.error.message).toBe('Solo puedes cancelar un pedido que aún no empezamos a preparar');
+    expect(r.body.error.message).toBe(
+      'Solo puedes cancelar un pedido que aún no empezamos a preparar',
+    );
   });
 });
 
@@ -224,7 +230,10 @@ describe('pago con tarjeta simulado', () => {
     expect(o.status).toBe('confirmed');
     expect(o.deliveryPin).toMatch(/^\d{4}$/);
     expect(o.payments.at(-1)).toMatchObject({ status: 'captured', capturedAmount: o.total });
-    expect(o.timeline.map((e: { toStatus: string }) => e.toStatus)).toEqual(['pending_payment', 'confirmed']);
+    expect(o.timeline.map((e: { toStatus: string }) => e.toStatus)).toEqual([
+      'pending_payment',
+      'confirmed',
+    ]);
     expect(o.timeline.at(-1).note).toBe('Pago con tarjeta aprobado');
 
     // Después sigue el ciclo normal.
@@ -261,9 +270,15 @@ describe('pago con tarjeta simulado', () => {
     const { res } = placeOrder(c, token, { paymentMethod: 'card' });
     c.call('POST', `/v1/orders/${res.body.id}/pay`, { token });
     clock.advance(3 * S);
-    const cancel = c.call('POST', `/v1/orders/${res.body.id}/cancel`, { token, body: { reason: 'x' } });
+    const cancel = c.call('POST', `/v1/orders/${res.body.id}/cancel`, {
+      token,
+      body: { reason: 'x' },
+    });
     expect(cancel.body.status).toBe('cancelled');
-    expect(cancel.body.payments.at(-1)).toMatchObject({ status: 'captured', refundPending: res.body.total });
+    expect(cancel.body.payments.at(-1)).toMatchObject({
+      status: 'captured',
+      refundPending: res.body.total,
+    });
   });
 
   it('cancelar antes de que el banco apruebe anula el intento: el pago nunca se cobra', () => {
@@ -302,7 +317,10 @@ describe('transferencia', () => {
     const id = res.body.id;
     expect(res.body.reservationExpiresAt).toBe(new Date(clock.now() + 120 * 60_000).toISOString());
     const info = c.call('GET', '/v1/payments/transfer-info', { token });
-    expect(info.body).toMatchObject({ bank: expect.any(String), accountNumber: expect.any(String) });
+    expect(info.body).toMatchObject({
+      bank: expect.any(String),
+      accountNumber: expect.any(String),
+    });
 
     const proof = c.call('POST', `/v1/orders/${id}/transfer-proof`, {
       token,

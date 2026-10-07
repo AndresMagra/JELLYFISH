@@ -1,4 +1,10 @@
-import { type DemoServer, type FetchInit, type FetchInput, createDemoServer, matchesBase } from './server';
+import {
+  type DemoServer,
+  type FetchInit,
+  type FetchInput,
+  createDemoServer,
+  matchesBase,
+} from './server';
 import type { DemoOptions } from './types';
 
 /** Dónde se instala: por defecto `globalThis` (en las pruebas, un objeto propio). */

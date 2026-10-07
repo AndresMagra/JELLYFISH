@@ -97,9 +97,18 @@ export function createDemoServer(options: DemoOptions): DemoServer {
   // Con semilla fija (pruebas), un servidor que continúa un estado guardado no repite los mismos ids.
   const entropy = state.orders.length * 7919 + state.users.length * 104729 + state.addresses.length;
   const rng: Random =
-    options.random ?? (options.seed !== undefined ? mulberry32(options.seed + entropy) : Math.random);
+    options.random ??
+    (options.seed !== undefined ? mulberry32(options.seed + entropy) : Math.random);
 
-  const ctx: Ctx = { state, catalog, zone, cfg, coupons: options.coupons ?? DEFAULT_COUPONS, rng, now };
+  const ctx: Ctx = {
+    state,
+    catalog,
+    zone,
+    cfg,
+    coupons: options.coupons ?? DEFAULT_COUPONS,
+    rng,
+    now,
+  };
 
   const persist = () => saveState(storage, storageKey, ctx.state, lastSaved);
 
@@ -153,7 +162,8 @@ export function createDemoServer(options: DemoOptions): DemoServer {
       lastSaved.text = '';
       const fresh = freshState(signature);
       // Se vacía y se rellena el MISMO objeto: `ctx.state` sigue siendo la referencia vigente.
-      for (const k of Object.keys(ctx.state) as (keyof DemoState)[]) delete (ctx.state as Partial<DemoState>)[k];
+      for (const k of Object.keys(ctx.state) as (keyof DemoState)[])
+        delete (ctx.state as Partial<DemoState>)[k];
       Object.assign(ctx.state, fresh);
     },
     summary() {

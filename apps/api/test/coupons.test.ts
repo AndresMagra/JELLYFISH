@@ -10,6 +10,7 @@ import {
   assessCoupon,
   couponDiscount,
   createCoupon,
+  isUniqueViolation,
   normalizeCouponCode,
   updateCoupon,
 } from '../src/services/coupons';
@@ -151,6 +152,27 @@ describe('código del cupón', () => {
   it('convierte los guiones largos del teclado del celular en guion normal', () => {
     expect(normalizeCouponCode('envio\u2013gratis')).toBe('ENVIO-GRATIS');
     expect(normalizeCouponCode('envio\u2014gratis')).toBe('ENVIO-GRATIS');
+  });
+});
+
+describe('detección de índice único', () => {
+  const pgError = (message: string) => Object.assign(new Error(message), { code: '23505' });
+  const wrapped = (cause: unknown) =>
+    Object.assign(new Error('Failed query: insert into "coupons" (...) params: ...'), { cause });
+
+  it('encuentra el SQLSTATE 23505 aunque el driver lo envuelva (el mensaje externo es solo el SQL)', () => {
+    expect(isUniqueViolation(pgError('duplicate key value violates unique constraint'))).toBe(true);
+    expect(isUniqueViolation(wrapped(pgError('lo que sea')))).toBe(true);
+    expect(isUniqueViolation(wrapped(wrapped(pgError('x'))))).toBe(true);
+  });
+
+  it('no confunde otros errores con un índice único', () => {
+    expect(isUniqueViolation(wrapped(Object.assign(new Error('x'), { code: '23503' })))).toBe(
+      false,
+    );
+    expect(isUniqueViolation(new Error('connection terminated'))).toBe(false);
+    expect(isUniqueViolation(undefined)).toBe(false);
+    expect(isUniqueViolation('texto')).toBe(false);
   });
 });
 
@@ -1529,13 +1551,14 @@ describe('API HTTP de cupones', () => {
       }
     });
 
-    it('dos altas simultáneas del mismo código: una gana y la otra recibe 409 (no 500)', async () => {
+    it('ocho altas simultáneas del mismo código: una gana y las demás reciben 409 (nunca 500)', async () => {
       const code = codeOf();
-      const [a, b] = await Promise.all([
-        create({ code, kind: 'percent', value: 1000 }),
-        create({ code, kind: 'percent', value: 2000 }),
+      const results = await Promise.all(
+        Array.from({ length: 8 }, (_, i) => create({ code, kind: 'percent', value: 1000 + i })),
+      );
+      expect(results.map((r) => r.statusCode).sort()).toEqual([
+        201, 409, 409, 409, 409, 409, 409, 409,
       ]);
-      expect([a.statusCode, b.statusCode].sort()).toEqual([201, 409]);
     });
 
     it('trae los valores por defecto', async () => {

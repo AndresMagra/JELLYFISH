@@ -47,8 +47,12 @@ describe('patchAppBundle', () => {
     expect(js).toContain('uri:"assets/__node_modules/expo-router');
     expect(js).toContain('m.exports="assets/__node_modules/@expo/vector-icons');
     expect(js).toContain('function o(t,a=globalThis.__JF_BASE__||""){return a?t.replace(');
-    expect(js).toContain('getUrlWithReactNavigationConcessions=function(t,n=globalThis.__JF_BASE__||""){');
-    expect(js.match(/appendBaseUrl=function\(t,n=globalThis\.__JF_BASE__\|\|""\)\{if\(n\)return/g)).toHaveLength(2);
+    expect(js).toContain(
+      'getUrlWithReactNavigationConcessions=function(t,n=globalThis.__JF_BASE__||""){',
+    );
+    expect(
+      js.match(/appendBaseUrl=function\(t,n=globalThis\.__JF_BASE__\|\|""\)\{if\(n\)return/g),
+    ).toHaveLength(2);
   });
 
   it('el resultado sigue siendo JavaScript válido', () => {
@@ -64,7 +68,10 @@ describe('patchAppBundle', () => {
         `e.getUrlWithReactNavigationConcessions=function(t,n=""){return o(t,n)};"/assets/x"`,
     );
     const make = (base: string) =>
-      new Function('globalThis', `const e={};${js.replace('"/assets/x"', '"assets/x"')};return {o,e}`)({ __JF_BASE__: base }) as {
+      new Function(
+        'globalThis',
+        `const e={};${js.replace('"/assets/x"', '"assets/x"')};return {o,e}`,
+      )({ __JF_BASE__: base }) as {
         o: (p: string) => string;
         e: { appendBaseUrl: (p: string) => string };
       };
@@ -78,9 +85,11 @@ describe('patchAppBundle', () => {
   });
 
   it('falla en voz alta si una versión nueva de Expo cambia los patrones', () => {
-    expect(() => patchAppBundle(SAMPLE.replace(/appendBaseUrl=function\(t,n=""\)/g, 'appendBaseUrl=function(t,n)'))).toThrow(
-      /appendBaseUrl/,
-    );
+    expect(() =>
+      patchAppBundle(
+        SAMPLE.replace(/appendBaseUrl=function\(t,n=""\)/g, 'appendBaseUrl=function(t,n)'),
+      ),
+    ).toThrow(/appendBaseUrl/);
     expect(() => patchAppBundle('console.log(1)')).toThrow(/No se pudo parchear el bundle/);
   });
 });
@@ -94,26 +103,43 @@ describe('fuentes: solo se publican las que el código usa', () => {
   ]);
 
   it('detecta las fuentes de Google y las familias de íconos que se importan', () => {
-    expect([...usage.googleFonts].sort()).toEqual(['PlusJakartaSans_400Regular', 'PlusJakartaSans_700Bold', 'Sora_700Bold']);
+    expect([...usage.googleFonts].sort()).toEqual([
+      'PlusJakartaSans_400Regular',
+      'PlusJakartaSans_700Bold',
+      'Sora_700Bold',
+    ]);
     expect([...usage.iconFamilies].sort()).toEqual(['FontAwesome6', 'MaterialCommunityIcons']);
   });
 
   it('conserva lo usado y descarta el resto de los .ttf', () => {
     const f = (p: string) => keepAssetFile(p, usage);
     const gf = 'assets/__node_modules/@expo-google-fonts';
-    const vi = 'assets/__node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts';
-    expect(f(`${gf}/plus-jakarta-sans/400Regular/PlusJakartaSans_400Regular.dd3a1370a03dc0f2d7d093bd0ffe7c0b.ttf`)).toBe(true);
-    expect(f(`${gf}/plus-jakarta-sans/200ExtraLight/PlusJakartaSans_200ExtraLight.fdd89758261c9786825d3cdeaf8bc77d.ttf`)).toBe(false);
+    const vi =
+      'assets/__node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts';
+    expect(
+      f(
+        `${gf}/plus-jakarta-sans/400Regular/PlusJakartaSans_400Regular.dd3a1370a03dc0f2d7d093bd0ffe7c0b.ttf`,
+      ),
+    ).toBe(true);
+    expect(
+      f(
+        `${gf}/plus-jakarta-sans/200ExtraLight/PlusJakartaSans_200ExtraLight.fdd89758261c9786825d3cdeaf8bc77d.ttf`,
+      ),
+    ).toBe(false);
     expect(f(`${gf}/sora/700Bold/Sora_700Bold.0123456789abcdef0123456789abcdef.ttf`)).toBe(true);
     expect(f(`${vi}/MaterialCommunityIcons.6e435534bd35da5fef04168860a9b8fa.ttf`)).toBe(true);
     expect(f(`${vi}/FontAwesome6_Solid.adec7d6f310bc577f05e8fe06a5daccf.ttf`)).toBe(true);
     expect(f(`${vi}/Ionicons.b4eb097d35f44ed943676fd56f6bdc51.ttf`)).toBe(false);
-    expect(f('assets/__node_modules/expo-router/assets/error.d1ea1496f9057eb392d5bbf3732a61b7.png')).toBe(true);
+    expect(
+      f('assets/__node_modules/expo-router/assets/error.d1ea1496f9057eb392d5bbf3732a61b7.png'),
+    ).toBe(true);
   });
 
   it('sin datos de uso no se descarta nada (nunca se deja una fuente a medias)', () => {
     const none = scanFontUsage([]);
-    expect(keepAssetFile('assets/__node_modules/@expo/vector-icons/Fonts/Ionicons.abc.ttf', none)).toBe(true);
+    expect(
+      keepAssetFile('assets/__node_modules/@expo/vector-icons/Fonts/Ionicons.abc.ttf', none),
+    ).toBe(true);
   });
 });
 
@@ -149,10 +175,12 @@ describe('index.html de la vista previa', () => {
 
   it('el arranque prueba la carpeta, fija <base>, la base del router y carga datos → simulador → app', () => {
     expect(html).toContain("fetch(base + 'jf-probe.json'");
-    expect(html).toContain("j.jf === BUILD");
+    expect(html).toContain('j.jf === BUILD');
     expect(html).toContain('window.__JF_BASE__ =');
     expect(html).toContain("el('base', { href: base })");
-    const order = ['FILES.data', 'FILES.demo', 'FILES.app'].map((k) => html.indexOf(`load(base, ${k})`));
+    const order = ['FILES.data', 'FILES.demo', 'FILES.app'].map((k) =>
+      html.indexOf(`load(base, ${k})`),
+    );
     expect(order.every((i) => i > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(html).toContain('"abc1234567"');

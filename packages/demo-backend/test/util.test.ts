@@ -24,7 +24,14 @@ describe('utilidades', () => {
   });
 
   it('normalizeText y formatOrderNumber son idénticos a los del API real', () => {
-    for (const s of ['Camarón 16/20', ' ÑANDÚ  ', 'pechuga, deshuesada!', 'Mejillón-media concha', '%_', '']) {
+    for (const s of [
+      'Camarón 16/20',
+      ' ÑANDÚ  ',
+      'pechuga, deshuesada!',
+      'Mejillón-media concha',
+      '%_',
+      '',
+    ]) {
       expect(normalizeText(s)).toBe(apiNormalizeText(s));
     }
     for (const n of [1, 42, 123456]) expect(formatOrderNumber(n)).toBe(apiFormatOrderNumber(n));

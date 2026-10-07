@@ -103,7 +103,10 @@ export function quoteOrder(
       if (q < min) throw invalid(`El mínimo de ${label} es ${min / 100} lb`, item);
       if (q % step !== 0) throw invalid(`${label} se vende en múltiplos de ${step / 100} lb`, item);
       if (q > LIMITS.maxCentilbPerLine) {
-        throw invalid(`El máximo por pedido de ${label} es ${LIMITS.maxCentilbPerLine / 100} lb`, item);
+        throw invalid(
+          `El máximo por pedido de ${label} es ${LIMITS.maxCentilbPerLine / 100} lb`,
+          item,
+        );
       }
     } else if (q > LIMITS.maxUnitsPerLine) {
       throw invalid(`El máximo por pedido de ${label} es ${LIMITS.maxUnitsPerLine} unidades`, item);
@@ -201,7 +204,9 @@ export function quoteOrder(
 
   // El colchón de peso variable se calcula sobre el monto BRUTO de esas líneas: un descuento fijo
   // no baja al crecer el peso, así que el colchón sobre el neto se quedaría corto al empacar.
-  const variableGross = totals.lines.filter((l) => l.variableWeight).reduce((a, l) => a + l.gross, 0);
+  const variableGross = totals.lines
+    .filter((l) => l.variableWeight)
+    .reduce((a, l) => a + l.gross, 0);
 
   return {
     lines,
@@ -348,24 +353,22 @@ export function createOrder(ctx: Ctx, input: CreateOrderInput): OrderRec {
     timeline: [],
   };
 
-  order.items = quote.lines.map(
-    (l): ItemRec => ({
-      id: randomUuid(ctx.rng),
-      orderId,
-      variantId: l.variantId,
-      sku: l.sku,
-      name: l.name,
-      variant: l.variant,
-      pricingUnit: l.pricingUnit,
-      unitPrice: l.unitPrice,
-      itbisBps: l.itbisBps,
-      variableWeight: l.variableWeight,
-      quantity: l.quantity,
-      finalQuantity: null,
-      lineTotal: l.net,
-      finalLineTotal: null,
-    }),
-  );
+  order.items = quote.lines.map((l): ItemRec => ({
+    id: randomUuid(ctx.rng),
+    orderId,
+    variantId: l.variantId,
+    sku: l.sku,
+    name: l.name,
+    variant: l.variant,
+    pricingUnit: l.pricingUnit,
+    unitPrice: l.unitPrice,
+    itbisBps: l.itbisBps,
+    variableWeight: l.variableWeight,
+    quantity: l.quantity,
+    finalQuantity: null,
+    lineTotal: l.net,
+    finalLineTotal: null,
+  }));
 
   // Reserva de existencias (orden estable por id, como el API).
   const toReserve = [...quote.lines].sort((a, b) => (a.variantId < b.variantId ? -1 : 1));
@@ -510,7 +513,9 @@ export function findOwnOrder(ctx: Ctx, orderId: string, userId: string): OrderRe
 export function listOrdersForUser(ctx: Ctx, userId: string, limit = 30): OrderRec[] {
   return ctx.state.orders
     .filter((o) => o.userId === userId)
-    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : b.number - a.number))
+    .sort((a, b) =>
+      a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : b.number - a.number,
+    )
     .slice(0, limit);
 }
 
@@ -571,7 +576,9 @@ function applyTransition(
   if (to === 'delivered') {
     order.deliveredAt = iso(at);
     order.pinVerifiedAt = iso(at);
-    eventNote = note ? `Entrega confirmada con el PIN del cliente. ${note}` : 'Entrega confirmada con el PIN del cliente';
+    eventNote = note
+      ? `Entrega confirmada con el PIN del cliente. ${note}`
+      : 'Entrega confirmada con el PIN del cliente';
     // El efectivo se cobra al entregar (el repartidor lo registra antes de cerrar la entrega).
     for (const p of order.payments) {
       if (p.method === 'cash' && p.status === 'pending') {
@@ -612,7 +619,10 @@ function weighItems(ctx: Ctx, order: OrderRec): void {
 }
 
 function pack(ctx: Ctx, order: OrderRec): void {
-  const finals = order.items.map((item) => ({ item, finalQuantity: item.finalQuantity ?? item.quantity }));
+  const finals = order.items.map((item) => ({
+    item,
+    finalQuantity: item.finalQuantity ?? item.quantity,
+  }));
   const totalsFor = () => {
     const lines = finals.map(({ item, finalQuantity }) => ({
       id: item.id,
@@ -663,7 +673,10 @@ function paymentsAfterTransition(order: OrderRec, to: OrderStatus, at: number): 
     }
     // Prepago: si el peso real cuesta menos que lo cobrado, se devuelve la diferencia.
     const prepaid = order.payments.filter((p) => p.method !== 'cash' && isHeld(p));
-    const held = prepaid.reduce((a, p) => a + p.capturedAmount - p.refundedAmount - p.refundPending, 0);
+    const held = prepaid.reduce(
+      (a, p) => a + p.capturedAmount - p.refundedAmount - p.refundPending,
+      0,
+    );
     const excess = held - order.finalTotal;
     if (excess > 0 && prepaid[0]) {
       prepaid[0].refundPending += excess;
@@ -715,7 +728,10 @@ export function startCardPayment(
     throw conflict('not_payable', 'Este pedido ya no está esperando pago');
   }
   if (order.reservationExpiresAt && Date.parse(order.reservationExpiresAt) <= now) {
-    throw conflict('expired', 'Tu reserva venció. Haz el pedido de nuevo para asegurar tus productos.');
+    throw conflict(
+      'expired',
+      'Tu reserva venció. Haz el pedido de nuevo para asegurar tus productos.',
+    );
   }
   if (order.payments.some(isHeld)) throw conflict('already_paid', 'Este pedido ya fue pagado');
 

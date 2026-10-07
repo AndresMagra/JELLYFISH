@@ -31,6 +31,7 @@ const { values: args } = parseArgs({
     device: { type: 'string', default: 'all' },
     mount: { type: 'string', default: 'all' },
     quick: { type: 'boolean', default: false },
+    only: { type: 'string' },
   },
 });
 const DIST = resolve(args.dir!);
@@ -86,6 +87,14 @@ function startServer(): { close: () => void; stats: ServerStats } {
       }
       if (file) break;
     }
+    if (path === '/host.html') {
+      // Página anfitriona: la vista previa dentro de un marco aislado (sin acceso a localStorage).
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(
+        `<!doctype html><body style="margin:0"><iframe id="f" sandbox="allow-scripts allow-forms allow-popups" src="/artifact/xyz/" style="border:0;width:390px;height:800px"></iframe></body>`,
+      );
+      return;
+    }
     const ok = file && existsSync(file) && statSync(file).isFile() && file.startsWith(DIST);
     const status = ok ? 200 : 404;
     stats.requests.push({ url: `${url.pathname}`, status });
@@ -97,6 +106,7 @@ function startServer(): { close: () => void; stats: ServerStats } {
     res.writeHead(200, {
       'content-type': TYPES[extname(file!)] ?? 'application/octet-stream',
       'cache-control': 'no-store',
+      'access-control-allow-origin': '*',
     });
     res.end(readFileSync(file!));
   });
@@ -159,7 +169,9 @@ function check(cond: unknown, message: string): asserts cond {
 /** Comprobación de algo que otro equipo todavía puede estar construyendo: avisa, no rompe. */
 function soft(cond: unknown, message: string, note = '') {
   results.push({ name: `${currentLabel}: ${message}`, ok: !!cond, soft: true, note });
-  log(`${cond ? '✔' : '⚠'} ${message}${cond ? '' : ` (pendiente: ${note || 'no está en la app todavía'})`}`);
+  log(
+    `${cond ? '✔' : '⚠'} ${message}${cond ? '' : ` (pendiente: ${note || 'no está en la app todavía'})`}`,
+  );
 }
 
 async function shot(page: Page, name: string) {
@@ -167,8 +179,56 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: `${OUT}/${currentLabel}-${name}.png` });
 }
 
+/**
+ * ¿Algún ícono se ve como un cuadro vacío? Recorre todo el texto de la pantalla que usa una fuente de
+ * íconos (caracteres privados de Unicode) y compara cómo lo dibuja esa fuente contra una fuente cualquiera:
+ * si salen idénticos, a la fuente le falta ese glifo (pasa si se recorta de más).
+ */
+async function missingGlyphs(page: Page): Promise<string[]> {
+  return page.evaluate(`(async function () {
+    await document.fonts.ready;
+    var seen = {}; var missing = [];
+    var canvas = document.createElement('canvas'); canvas.width = 48; canvas.height = 48;
+    var ctx = canvas.getContext('2d');
+    function draw(font, ch) {
+      ctx.clearRect(0, 0, 48, 48); ctx.font = '32px ' + font; ctx.fillStyle = '#000'; ctx.textBaseline = 'top'; ctx.fillText(ch, 4, 4);
+      return Array.prototype.join.call(ctx.getImageData(0, 0, 48, 48).data, ',');
+    }
+    var nodes = document.querySelectorAll('div, span');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var txt = el.childNodes.length === 1 && el.firstChild.nodeType === 3 ? el.firstChild.nodeValue : '';
+      if (!txt || txt.length > 2) continue;
+      var cp = txt.codePointAt(0);
+      if (!(cp >= 0xE000 && cp <= 0xF8FF) && !(cp >= 0xF0000 && cp <= 0xFFFFD)) continue;
+      var family = getComputedStyle(el).fontFamily;
+      var key = family + '|' + cp;
+      if (seen[key]) continue; seen[key] = true;
+      // Si el glifo se dibuja igual que un punto de código que ninguna fuente de íconos tiene, no existe.
+      var unmapped = String.fromCodePoint(0x10FFFD);
+      var drawn = draw(family, txt);
+      if (drawn === draw(family, unmapped)) missing.push(family + ' U+' + cp.toString(16).toUpperCase());
+    }
+    return missing;
+  })()`) as Promise<string[]>;
+}
+
+/** Espera a que el service worker de la carpeta esté activo (sin colgarse si la página queda fuera de su alcance). */
+async function swActive(page: Page, scope: string): Promise<boolean> {
+  return page.evaluate(`(async function () {
+    for (var i = 0; i < 100; i++) {
+      var r = await navigator.serviceWorker.getRegistration(${JSON.stringify(scope)});
+      if (r && r.active) return true;
+      await new Promise(function (ok) { setTimeout(ok, 100); });
+    }
+    return false;
+  })()`) as Promise<boolean>;
+}
+
 async function demoState<T>(page: Page, fn: string): Promise<T> {
-  return page.evaluate(`(function(){ var d = window.JellyfishDemo; return (${fn})(d); })()`) as Promise<T>;
+  return page.evaluate(
+    `(function(){ var d = window.JellyfishDemo; return (${fn})(d); })()`,
+  ) as Promise<T>;
 }
 
 const STATUS_LABELS = {
@@ -182,7 +242,12 @@ const STATUS_LABELS = {
 } as const;
 
 async function orderStatusText(page: Page): Promise<string> {
-  return (await page.getByTestId('order-status').innerText().catch(() => '')).trim();
+  return (
+    await page
+      .getByTestId('order-status')
+      .innerText()
+      .catch(() => '')
+  ).trim();
 }
 
 /** Recarga la pantalla del pedido hasta ver `label` (el pedido sigue avanzando mientras tanto). */
@@ -197,7 +262,10 @@ async function waitForStatus(page: Page, label: string, seen: Set<string>, timeo
     }
     await sleep(1500);
     await page.reload();
-    await page.getByTestId('order-status').waitFor({ timeout: 20_000 }).catch(() => {});
+    await page
+      .getByTestId('order-status')
+      .waitFor({ timeout: 20_000 })
+      .catch(() => {});
   }
 }
 
@@ -218,10 +286,12 @@ interface RunOptions {
   mount: MountName;
   quick: boolean;
   photos: 'black' | 'fail';
+  /** false = el navegador no deja usar localStorage (modo privado, datos bloqueados). */
+  storage?: boolean;
 }
 
 async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: RunOptions) {
-  currentLabel = `${o.device.name}-${o.mount}${o.photos === 'fail' ? '-sinfotos' : ''}`;
+  currentLabel = `${o.device.name}-${o.mount}${o.photos === 'fail' ? '-sinfotos' : ''}${o.storage === false ? '-sinalmacenamiento' : ''}`;
   const net: NetLog = { external: [], cdn: 0, failed: [] };
   const ctx = await browser.newContext({
     ...o.device.descriptor,
@@ -230,6 +300,16 @@ async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: 
     colorScheme: 'dark',
   });
   await lockNetwork(ctx, o.photos, net);
+  if (o.storage === false) {
+    // Como texto: un `() => {}` pasaría por el transpilador y dejaría ayudantes (`__name`) que el navegador no tiene.
+    await ctx.addInitScript({
+      content: `(function () {
+        function deny() { throw new DOMException('El almacenamiento está bloqueado', 'SecurityError'); }
+        Object.defineProperty(window, 'localStorage', { get: deny, configurable: true });
+        Object.defineProperty(window, 'sessionStorage', { get: deny, configurable: true });
+      })();`,
+    });
+  }
   const page = await ctx.newPage();
   const consoleErrors: string[] = [];
   const badResponses: string[] = [];
@@ -243,15 +323,17 @@ async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: 
     }
   });
   page.on('response', (r) => {
-    if (r.url().startsWith(ORIGIN) && r.status() >= 400) badResponses.push(`${r.status()} ${r.url()}`);
+    if (r.url().startsWith(ORIGIN) && r.status() >= 400)
+      badResponses.push(`${r.status()} ${r.url()}`);
   });
   page.on('requestfailed', (r) => {
     if (r.url().startsWith(ORIGIN)) net.failed.push(r.url());
   });
 
   const mountPath = MOUNTS[o.mount];
-  const speed = 2;
-  const url = `${ORIGIN}${mountPath}${mountPath.endsWith('/') ? '' : ''}?speed=${speed}&reset=1`;
+  // Los recorridos rápidos corren a velocidad normal (para comprobar los tiempos reales por etapa).
+  const speedParam = o.quick ? '' : 'speed=2&';
+  const url = `${ORIGIN}${mountPath}?${speedParam}reset=1`;
   const tab = (name: RegExp) => page.getByRole('tab', { name });
 
   try {
@@ -260,24 +342,70 @@ async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: 
     await page.locator('#jf-ribbon').waitFor();
     await tab(/Buscar/).waitFor({ timeout: 45_000 });
     await shot(page, '01-inicio');
+    const missing0 = await missingGlyphs(page);
+    check(
+      missing0.length === 0,
+      `todos los íconos del inicio tienen su glifo en la fuente recortada${missing0.length ? `: ${missing0.join(', ')}` : ''}`,
+    );
     const ribbon = await page.locator('#jf-ribbon').innerText();
-    check(/VISTA PREVIA/.test(ribbon) && /123456/.test(ribbon), 'la cinta dice VISTA PREVIA y el código de prueba 123456');
+    check(
+      /VISTA PREVIA/.test(ribbon) && /123456/.test(ribbon),
+      'la cinta dice VISTA PREVIA y el código de prueba 123456',
+    );
     const base = await page.evaluate('document.querySelector("base").getAttribute("href")');
-    check(base === (mountPath.endsWith('/') ? mountPath : `${mountPath}/`), `la carpeta base se calculó sola (${String(base)})`);
+    check(
+      base === (mountPath.endsWith('/') ? mountPath : `${mountPath}/`),
+      `la carpeta base se calculó sola (${String(base)})`,
+    );
     const demoOn = await page.evaluate('typeof window.JellyfishDemo === "object"');
-    check(demoOn === true, 'el servidor de demostración está instalado antes de que arranque la app');
+    check(
+      demoOn === true,
+      'el servidor de demostración está instalado antes de que arranque la app',
+    );
+    if (o.quick) {
+      const stages = await page.evaluate('window.JellyfishDemo.handle.server.ctx.cfg.stageMs');
+      check(
+        JSON.stringify(stages) ===
+          JSON.stringify({
+            confirmed: 25_000,
+            picking: 20_000,
+            packed: 20_000,
+            out_for_delivery: 30_000,
+          }),
+        'a velocidad normal cada etapa del pedido dura 25 / 20 / 20 / 30 s',
+      );
+    }
     check(
       (await page.getByText('Camarón').count()) > 0 || (await page.getByText('Res').count()) > 0,
       'el inicio muestra productos y categorías del catálogo de ejemplo',
     );
     const pathAtStart = new URL(page.url()).pathname;
-    check(!/Unmatched|No encontramos esta página/i.test(await page.locator('body').innerText()), 'el router reconoce la pantalla de inicio en la subcarpeta');
+    check(
+      !/Unmatched|No encontramos esta página/i.test(await page.locator('body').innerText()),
+      'el router reconoce la pantalla de inicio en la subcarpeta',
+    );
 
     // ───── Categorías ─────
-    await page.getByRole('button', { name: /Categoría Mariscos/ }).first().click();
-    await page.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
+    await page
+      .getByRole('button', { name: /Categoría Mariscos/ })
+      .first()
+      .click();
+    await page
+      .getByTestId('search-results')
+      .getByText('Camarón')
+      .first()
+      .waitFor({ timeout: 20_000 });
     await shot(page, '02-categoria');
-    check(new URL(page.url()).pathname.startsWith(mountPath.replace(/\/$/, '')), 'al navegar, la dirección sigue dentro de la subcarpeta');
+    check(
+      new URL(page.url()).pathname.startsWith(mountPath.replace(/\/$/, '')),
+      'al navegar, la dirección sigue dentro de la subcarpeta',
+    );
+    if (o.storage === false) {
+      check(
+        (await page.evaluate('window.JellyfishDemo.handle.server.ctx.state.users.length')) === 0,
+        'sin almacenamiento la demostración corre solo en memoria',
+      );
+    }
 
     // ───── Búsqueda sin acento ─────
     await page.getByTestId('search-input').fill('camaron');
@@ -292,13 +420,19 @@ async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: 
     await page.getByTestId('search-results').getByText('Camarón').first().click();
     await page.getByRole('button', { name: '16/20' }).click();
     await shot(page, '04-producto');
-    check(await page.getByText('16/20').first().isVisible(), 'el detalle muestra las variantes (calibres) y deja elegir una');
+    check(
+      await page.getByText('16/20').first().isVisible(),
+      'el detalle muestra las variantes (calibres) y deja elegir una',
+    );
     await page.getByTestId('add-to-cart').click();
     for (let i = 0; i < 6; i++) await page.getByRole('button', { name: 'Agregar' }).click();
     await shot(page, '05-producto-agregado');
 
-    if (o.quick) {
-      await page.evaluate('navigator.serviceWorker.ready.then(function(){return true})');
+    if (o.quick && o.storage !== false) {
+      check(
+        await swActive(page, mountPath.endsWith('/') ? mountPath : `${mountPath}/`),
+        'el respaldo de navegación (service worker) quedó activo',
+      );
       await page.reload();
       await page.getByTestId('add-to-cart').waitFor({ timeout: 45_000 });
       check(
@@ -308,7 +442,10 @@ async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: 
       await shot(page, '06-recargado-en-producto');
       await page.goto(url.replace('&reset=1', ''));
       await tab(/Buscar/).waitFor({ timeout: 45_000 });
-      check(!/Unmatched/i.test(await page.locator('body').innerText()), 'recargar en la pantalla de inicio funciona');
+      check(
+        !/Unmatched/i.test(await page.locator('body').innerText()),
+        'recargar en la pantalla de inicio funciona',
+      );
       return finish();
     }
 
@@ -317,7 +454,10 @@ async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: 
     await page.getByTestId('go-checkout').waitFor({ timeout: 20_000 });
     await shot(page, '06-carrito');
     const goText = await page.getByTestId('go-checkout').innerText();
-    check(/RD\$/.test(goText), `el carrito calcula el total en pesos (${goText.replace(/\s+/g, ' ')})`);
+    check(
+      /RD\$/.test(goText),
+      `el carrito calcula el total en pesos (${goText.replace(/\s+/g, ' ')})`,
+    );
 
     // ───── Login por OTP (123456) ─────
     await page.getByTestId('go-checkout').click();
@@ -346,18 +486,50 @@ async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: 
     await slotButtons.first().click();
     await page.getByTestId('checkout-name').fill('Andrés Prueba');
     await shot(page, '10-checkout-listo');
-    check(await page.getByTestId('place-order').isEnabled(), 'con dirección, horario y pago el botón de confirmar se habilita');
+    const missing1 = await missingGlyphs(page);
+    check(
+      missing1.length === 0,
+      `todos los íconos del checkout tienen glifo${missing1.length ? `: ${missing1.join(', ')}` : ''}`,
+    );
+    check(
+      await page.getByTestId('place-order').isEnabled(),
+      'con dirección, horario y pago el botón de confirmar se habilita',
+    );
     await page.getByTestId('place-order').click();
     await page.getByTestId('order-status').waitFor({ timeout: 20_000 });
     await shot(page, '11-pedido-efectivo');
-    check((await orderStatusText(page)).includes(STATUS_LABELS.confirmed), 'el pedido en efectivo queda confirmado');
+    check(
+      (await orderStatusText(page)).includes(STATUS_LABELS.confirmed),
+      'el pedido en efectivo queda confirmado',
+    );
+
+    if (o.storage === false) {
+      await page.reload();
+      await tab(/Buscar/).waitFor({ timeout: 45_000 });
+      check(
+        true,
+        'sin localStorage el pedido se hizo igual; al recargar la app abre limpia (la sesión vivía en memoria)',
+      );
+      return finish();
+    }
 
     const orderState = await demoState<{ id: string; pin: string; code: string }>(
       page,
       '(d)=>{var o=d.handle.server.ctx.state.orders[0];return {id:o.id,pin:o.deliveryPin,code:"JF-"+String(o.number).padStart(6,"0")}}',
     );
-    check(/^\d{4}$/.test(orderState.pin), `el pedido trae un PIN de entrega de 4 dígitos (${orderState.pin})`);
-    soft(await page.getByText(orderState.pin).first().isVisible().catch(() => false), 'la pantalla del pedido muestra el PIN al cliente', 'la pantalla del PIN la construye otro equipo');
+    check(
+      /^\d{4}$/.test(orderState.pin),
+      `el pedido trae un PIN de entrega de 4 dígitos (${orderState.pin})`,
+    );
+    soft(
+      await page
+        .getByText(orderState.pin)
+        .first()
+        .isVisible()
+        .catch(() => false),
+      'la pantalla del pedido muestra el PIN al cliente',
+      'la pantalla del PIN la construye otro equipo',
+    );
 
     // ───── Etapas del pedido ─────
     const seen = new Set<string>();
@@ -366,14 +538,22 @@ async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: 
     await waitForStatus(page, STATUS_LABELS.packed, seen);
     await waitForStatus(page, STATUS_LABELS.out_for_delivery, seen);
     await shot(page, '13-en-camino');
+    const missing2 = await missingGlyphs(page);
+    check(
+      missing2.length === 0,
+      `todos los íconos del pedido en camino tienen glifo${missing2.length ? `: ${missing2.join(', ')}` : ''}`,
+    );
     check(true, 'el pedido avanza solo: confirmado → preparando → empacado → en camino');
 
     // ───── Seguimiento ─────
     const token = await page.evaluate('localStorage.getItem("jellyfish.token")');
-    const tracking = await page.evaluate(
+    const tracking = (await page.evaluate(
       `fetch("https://demo.jellyfish.local/v1/orders/${orderState.id}/tracking",{headers:{Authorization:"Bearer ${String(token)}"}}).then(r=>r.json())`,
-    ) as { available: boolean; latitude?: number; longitude?: number };
-    check(tracking.available === true && typeof tracking.latitude === 'number', 'el seguimiento devuelve la posición del repartidor simulado en Santo Domingo');
+    )) as { available: boolean; latitude?: number; longitude?: number };
+    check(
+      tracking.available === true && typeof tracking.latitude === 'number',
+      'el seguimiento devuelve la posición del repartidor simulado en Santo Domingo',
+    );
     soft(
       /repartidor|Seguimiento en vivo|¿Dónde va/i.test(await page.locator('body').innerText()),
       'la pantalla del pedido muestra el seguimiento del repartidor',
@@ -386,21 +566,31 @@ async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: 
       page,
       '(d)=>{var o=d.handle.server.ctx.state.orders[0];return {pinVerifiedAt:o.pinVerifiedAt,payment:o.payments[0].status}}',
     );
-    check(delivered.pinVerifiedAt !== null && delivered.payment === 'captured', 'al entregar, el PIN queda verificado y el efectivo cobrado');
+    check(
+      delivered.pinVerifiedAt !== null && delivered.payment === 'captured',
+      'al entregar, el PIN queda verificado y el efectivo cobrado',
+    );
 
     // ───── Pedir de nuevo ─────
     const reorderBtn = page.getByRole('button', { name: /Pedir de nuevo/i });
     const hasReorderUi = (await reorderBtn.count()) > 0;
-    soft(hasReorderUi, 'hay un botón "Pedir de nuevo" en el pedido entregado', 'lo construye otro equipo');
+    soft(
+      hasReorderUi,
+      'hay un botón "Pedir de nuevo" en el pedido entregado',
+      'lo construye otro equipo',
+    );
     if (hasReorderUi) {
       await reorderBtn.first().click();
       await page.waitForTimeout(1500);
       await shot(page, '15-pedir-de-nuevo');
     }
-    const reorder = await page.evaluate(
+    const reorder = (await page.evaluate(
       `fetch("https://demo.jellyfish.local/v1/orders/${orderState.id}/reorder",{headers:{Authorization:"Bearer ${String(token)}"}}).then(r=>r.json())`,
-    ) as { lines: { status: string }[] };
-    check(reorder.lines.length > 0 && reorder.lines.every((l) => l.status === 'ok'), 'pedir de nuevo devuelve las líneas del pedido contra el catálogo de hoy');
+    )) as { lines: { status: string }[] };
+    check(
+      reorder.lines.length > 0 && reorder.lines.every((l) => l.status === 'ok'),
+      'pedir de nuevo devuelve las líneas del pedido contra el catálogo de hoy',
+    );
 
     // ───── Pedido con tarjeta ─────
     // Carga limpia de la página: el carrito (y la sesión) sobreviven a recargar.
@@ -419,55 +609,194 @@ async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: 
     }
     await page.getByTestId('go-checkout').click();
     await page.getByText('Confirmar pedido').first().waitFor({ timeout: 20_000 });
-    await page.getByRole('button').filter({ hasText: /\d:\d\d [ap]\. m\. – / }).first().click();
+    await page
+      .getByRole('button')
+      .filter({ hasText: /\d:\d\d [ap]\. m\. – / })
+      .first()
+      .click();
     await page.getByTestId('pay-card').click();
     await shot(page, '16-checkout-tarjeta');
     const pagesBefore = ctx.pages().length;
     await page.getByTestId('place-order').click();
     await page.getByTestId('order-status').waitFor({ timeout: 20_000 });
-    check((await orderStatusText(page)).includes(STATUS_LABELS.pending_payment) || (await orderStatusText(page)).includes(STATUS_LABELS.confirmed), 'el pedido con tarjeta empieza esperando el pago');
+    check(
+      (await orderStatusText(page)).includes(STATUS_LABELS.pending_payment) ||
+        (await orderStatusText(page)).includes(STATUS_LABELS.confirmed),
+      'el pedido con tarjeta empieza esperando el pago',
+    );
     await page.getByText(STATUS_LABELS.confirmed).first().waitFor({ timeout: 20_000 });
     await shot(page, '17-tarjeta-aprobada');
-    check(ctx.pages().length === pagesBefore, 'el pago con tarjeta NO abre ninguna pasarela (ni pestaña nueva)');
-    check(await page.getByText('Pagado').first().isVisible().catch(() => false), 'el servidor de demostración aprueba el pago y el pedido queda Pagado');
+    check(
+      ctx.pages().length === pagesBefore,
+      'el pago con tarjeta NO abre ninguna pasarela (ni pestaña nueva)',
+    );
+    check(
+      await page
+        .getByText('Pagado')
+        .first()
+        .isVisible()
+        .catch(() => false),
+      'el servidor de demostración aprueba el pago y el pedido queda Pagado',
+    );
 
     // ───── Pedidos, perfil, favoritos y legales ─────
     await page.goto(url.replace('&reset=1', ''));
     await tab(/Pedidos/).click();
-    await page.getByText(/^JF-\d{6}$/).first().waitFor({ timeout: 20_000 });
+    await page
+      .getByText(/^JF-\d{6}$/)
+      .first()
+      .waitFor({ timeout: 20_000 });
     await shot(page, '18-pedidos');
-    check((await page.getByText(/^JF-\d{6}$/).count()) >= 2, 'Mis pedidos lista los dos pedidos hechos');
+    check(
+      (await page.getByText(/^JF-\d{6}$/).count()) >= 2,
+      'Mis pedidos lista los dos pedidos hechos',
+    );
     await tab(/Perfil/).click();
     await page.getByText('Mis direcciones').waitFor();
     await shot(page, '19-perfil');
+    const missing3 = await missingGlyphs(page);
+    check(
+      missing3.length === 0,
+      `todos los íconos del perfil tienen glifo${missing3.length ? `: ${missing3.join(', ')}` : ''}`,
+    );
     const profileText = await page.locator('body').innerText();
     soft(/Favoritos/i.test(profileText), 'el perfil tiene Favoritos', 'lo construye otro equipo');
-    soft(/Términos|Privacidad/i.test(profileText), 'el perfil tiene los textos legales', 'lo construye otro equipo');
+    soft(
+      /Términos|Privacidad/i.test(profileText),
+      'el perfil tiene los textos legales',
+      'lo construye otro equipo',
+    );
 
     // ───── Recarga: todo persiste ─────
     await page.reload();
     await tab(/Perfil/).waitFor({ timeout: 45_000 });
     await tab(/Pedidos/).click();
-    await page.getByText(/^JF-\d{6}$/).first().waitFor({ timeout: 20_000 });
-    check((await page.getByText(/^JF-\d{6}$/).count()) >= 2, 'tras recargar la página, la sesión y los pedidos siguen ahí');
+    await page
+      .getByText(/^JF-\d{6}$/)
+      .first()
+      .waitFor({ timeout: 20_000 });
+    check(
+      (await page.getByText(/^JF-\d{6}$/).count()) >= 2,
+      'tras recargar la página, la sesión y los pedidos siguen ahí',
+    );
     await shot(page, '20-despues-de-recargar');
     void pathAtStart;
+
+    // ───── Reiniciar la demostración (botón de la cinta) ─────
+    page.once('dialog', (d) => void d.accept());
+    await page.locator('#jf-restart').click();
+    await tab(/Buscar/).waitFor({ timeout: 45_000 });
+    await page.waitForTimeout(500);
+    const afterReset = (await page.evaluate(
+      '({token: localStorage.getItem("jellyfish.token"), orders: window.JellyfishDemo.summary().orders, users: window.JellyfishDemo.summary().users})',
+    )) as { token: string | null; orders: number; users: number };
+    check(
+      afterReset.token === null && afterReset.orders === 0 && afterReset.users === 0,
+      'el botón Reiniciar de la cinta borra la sesión, el carrito y los pedidos de ejemplo',
+    );
+    await shot(page, '21-reiniciado');
     return finish();
   } catch (e) {
     await page.screenshot({ path: `${OUT}/${currentLabel}-FALLO.png` }).catch(() => {});
-    console.error(`Texto visible al fallar:\n${(await page.locator('body').innerText().catch(() => '')).slice(0, 700)}`);
+    console.error(
+      `Texto visible al fallar:\n${(
+        await page
+          .locator('body')
+          .innerText()
+          .catch(() => '')
+      ).slice(0, 700)}`,
+    );
     console.error(`URL: ${page.url()}`);
-    if (consoleErrors.length) console.error(`Errores del navegador:\n- ${consoleErrors.slice(0, 6).join('\n- ')}`);
+    if (consoleErrors.length)
+      console.error(`Errores del navegador:\n- ${consoleErrors.slice(0, 6).join('\n- ')}`);
     throw e;
   } finally {
     await ctx.close();
   }
 
   function finish() {
-    check(consoleErrors.length === 0, `0 errores de consola${consoleErrors.length ? `: ${consoleErrors.slice(0, 3).join(' | ')}` : ''}`);
-    check(badResponses.length === 0, `ningún archivo local falló (404/500)${badResponses.length ? `: ${badResponses.slice(0, 3).join(' | ')}` : ''}`);
-    check(net.external.length === 0, `ninguna petición salió a internet salvo las fotos del CDN${net.external.length ? `: ${net.external.slice(0, 3).join(' | ')}` : ''}`);
-    log(`  fotos del CDN pedidas: ${net.cdn} (${o.photos === 'black' ? 'respondidas con imagen negra' : 'cortadas a propósito'})`);
+    // Con la página en "/artifact/abc" (sin barra) el arranque prueba primero la carpeta "/artifact/" y
+    // recibe un 404 esperado antes de acertar con "/artifact/abc/": el navegador lo anota en la consola.
+    if (o.mount === 'noslash') {
+      const expected = badResponses.filter((u) => u.endsWith('/artifact/jf-probe.json'));
+      for (const u of expected) badResponses.splice(badResponses.indexOf(u), 1);
+      let toDrop = expected.length;
+      for (let i = consoleErrors.length - 1; i >= 0 && toDrop > 0; i--) {
+        if (/Failed to load resource.*404/.test(consoleErrors[i]!)) {
+          consoleErrors.splice(i, 1);
+          toDrop--;
+        }
+      }
+      if (expected.length)
+        log(`  (${expected.length} sondeos de carpeta con 404 esperado en esta modalidad)`);
+    }
+    if (badResponses.length) log(`  respuestas locales con error: ${badResponses.join(' · ')}`);
+    check(
+      consoleErrors.length === 0,
+      `0 errores de consola${consoleErrors.length ? `: ${consoleErrors.slice(0, 3).join(' | ')}` : ''}`,
+    );
+    check(
+      badResponses.length === 0,
+      `ningún archivo local falló (404/500)${badResponses.length ? `: ${badResponses.slice(0, 3).join(' | ')}` : ''}`,
+    );
+    check(
+      net.external.length === 0,
+      `ninguna petición salió a internet salvo las fotos del CDN${net.external.length ? `: ${net.external.slice(0, 3).join(' | ')}` : ''}`,
+    );
+    log(
+      `  fotos del CDN pedidas: ${net.cdn} (${o.photos === 'black' ? 'respondidas con imagen negra' : 'cortadas a propósito'})`,
+    );
+  }
+}
+
+/**
+ * La vista previa dentro de un marco aislado (sandbox sin same-origin): sin localStorage, sin service
+ * worker y con el origen "null". Así se vería si el alojamiento la mete en un iframe restringido.
+ */
+async function sandboxSmoke(
+  browser: Awaited<ReturnType<typeof chromium.launch>>,
+  device: DeviceCase,
+) {
+  currentLabel = `${device.name}-marco-aislado`;
+  const net: NetLog = { external: [], cdn: 0, failed: [] };
+  const ctx = await browser.newContext({
+    ...device.descriptor,
+    locale: 'es-DO',
+    timezoneId: 'America/Santo_Domingo',
+  });
+  await lockNetwork(ctx, 'black', net);
+  const page = await ctx.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text());
+  });
+  try {
+    await page.goto(`${ORIGIN}/host.html`);
+    const frame = page.frameLocator('#f');
+    await frame.getByRole('tab', { name: /Buscar/ }).waitFor({ timeout: 60_000 });
+    await shot(page, '01-inicio');
+    check(true, 'dentro de un marco aislado (sin localStorage ni service worker) la app abre');
+    await frame.getByRole('tab', { name: /Buscar/ }).click();
+    await frame.getByTestId('search-input').fill('camaron');
+    await frame
+      .getByTestId('search-results')
+      .getByText('Camarón')
+      .first()
+      .waitFor({ timeout: 20_000 });
+    await shot(page, '02-busqueda');
+    check(true, 'la búsqueda funciona dentro del marco aislado');
+    check(
+      errors.length === 0,
+      `0 errores de consola en el marco aislado${errors.length ? `: ${errors.slice(0, 3).join(' | ')}` : ''}`,
+    );
+  } catch (e) {
+    await page.screenshot({ path: `${OUT}/${currentLabel}-FALLO.png` }).catch(() => {});
+    if (errors.length)
+      console.error(`Errores del navegador:\n- ${errors.slice(0, 6).join('\n- ')}`);
+    throw e;
+  } finally {
+    await ctx.close();
   }
 }
 
@@ -479,15 +808,23 @@ async function main() {
   }
   const server = startServer();
   if (args.serve) {
-    console.log(`\nVista previa servida en:\n  ${ORIGIN}/            (raíz)\n  ${ORIGIN}${MOUNTS.subdir}   (subcarpeta)\n  ${ORIGIN}${MOUNTS.noslash}      (subcarpeta sin barra)\nCtrl+C para salir.\n`);
+    console.log(
+      `\nVista previa servida en:\n  ${ORIGIN}/            (raíz)\n  ${ORIGIN}${MOUNTS.subdir}   (subcarpeta)\n  ${ORIGIN}${MOUNTS.noslash}      (subcarpeta sin barra)\nCtrl+C para salir.\n`,
+    );
     await new Promise(() => {});
   }
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
+  const browser = await chromium.launch({
+    executablePath: CHROME,
+    headless: true,
+    args: ['--no-sandbox'],
+  });
   const devs = CASES.filter((c) => args.device === 'all' || c.name === args.device);
-  const mounts = (Object.keys(MOUNTS) as MountName[]).filter((m) => args.mount === 'all' || m === args.mount);
+  const mounts = (Object.keys(MOUNTS) as MountName[]).filter(
+    (m) => args.mount === 'all' || m === args.mount,
+  );
   let failed = 0;
   try {
-    for (const device of devs) {
+    for (const device of args.only ? [] : devs) {
       for (const mount of mounts) {
         // Recorrido completo en la subcarpeta; en la raíz y sin barra, el recorrido rápido (la app es la misma).
         const quick = args.quick || mount === 'noslash';
@@ -499,13 +836,37 @@ async function main() {
         }
       }
     }
-    if (!args.quick && devs.length > 0) {
-      // Respaldo cuando las fotos no cargan.
-      try {
-        await journey(browser, { device: devs[0]!, mount: 'subdir', quick: true, photos: 'fail' });
-      } catch (e) {
-        failed++;
-        console.error(`\n✖ ${currentLabel}: ${e instanceof Error ? e.message : e}\n`);
+    if ((!args.quick || args.only) && devs.length > 0) {
+      let extra: [string, () => Promise<void>][] = [
+        // Respaldo cuando las fotos no cargan.
+        [
+          'sin fotos',
+          () =>
+            journey(browser, { device: devs[0]!, mount: 'subdir', quick: true, photos: 'fail' }),
+        ],
+        // El navegador no deja usar localStorage (modo privado, datos bloqueados).
+        [
+          'sin almacenamiento',
+          () =>
+            journey(browser, {
+              device: devs[0]!,
+              mount: 'subdir',
+              quick: false,
+              photos: 'black',
+              storage: false,
+            }),
+        ],
+        // Dentro de un iframe aislado.
+        ['marco aislado', () => sandboxSmoke(browser, devs[0]!)],
+      ];
+      if (args.only) extra = extra.filter(([name]) => name === args.only);
+      for (const [name, fn] of extra) {
+        try {
+          await fn();
+        } catch (e) {
+          failed++;
+          console.error(`\n✖ ${name} (${currentLabel}): ${e instanceof Error ? e.message : e}\n`);
+        }
       }
     }
   } finally {
@@ -518,7 +879,8 @@ async function main() {
   console.log(
     `\n${failed === 0 ? '✔' : '✖'} ${hard.filter((r) => r.ok).length}/${hard.length} comprobaciones, ${softMiss.length} pendientes de otros equipos. Capturas y report.json en ${OUT}\n`,
   );
-  if (softMiss.length) for (const s of softMiss) console.log(`  ⚠ ${s.name} (${s.note || 'pendiente'})`);
+  if (softMiss.length)
+    for (const s of softMiss) console.log(`  ⚠ ${s.name} (${s.note || 'pendiente'})`);
   if (failed > 0) process.exitCode = 1;
 }
 

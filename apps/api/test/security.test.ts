@@ -15,6 +15,7 @@ import {
   isWeakSecret,
   rateRuleFor,
   redactQuery,
+  tokenOrIpKey,
   toFastifyTrustProxy,
   validateProductionEnv,
 } from '../src/plugins/security';
@@ -287,11 +288,33 @@ describe('seguridad del API', () => {
         max: 30,
         timeWindow: '1 minute',
       });
-      expect(rateRuleFor('POST', '/v1/driver/location')).toMatchObject({ max: 120 });
+      expect(rateRuleFor('POST', '/v1/driver/location')).toMatchObject({
+        max: 120,
+        keyBy: 'token',
+      });
+      expect(rateRuleFor('POST', '/v1/auth/magic')?.keyBy).toBeUndefined(); // el acceso sin sesión va por IP
       expect(rateRuleFor('GET', '/v1/driver/orders')).toBeUndefined();
       expect(rateRuleFor('GET', '/v1/driver/location')).toBeUndefined();
       expect(rateRuleFor('POST', '/v1/orders')).toBeUndefined();
       expect(STRICT_RATE_RULES.every((r) => r.max < 300)).toBe(true);
+    });
+
+    it('la clave por sesión no guarda el token y cae a la IP sin cabecera', () => {
+      const withToken = tokenOrIpKey({
+        headers: { authorization: 'Bearer abc.def.ghi' },
+        ip: '1.1.1.1',
+      });
+      expect(withToken).toMatch(/^t:[A-Za-z0-9_-]{22}$/);
+      expect(withToken).not.toContain('abc');
+      expect(
+        tokenOrIpKey({ headers: { authorization: 'Bearer abc.def.ghi' }, ip: '2.2.2.2' }),
+      ).toBe(
+        withToken, // la IP no cambia la clave de una sesión
+      );
+      expect(tokenOrIpKey({ headers: { authorization: 'Bearer otra' }, ip: '1.1.1.1' })).not.toBe(
+        withToken,
+      );
+      expect(tokenOrIpKey({ headers: {}, ip: '1.1.1.1' })).toBe('ip:1.1.1.1');
     });
 
     // Cada prueba usa su propia app: el contador de peticiones vive en la instancia.
@@ -317,6 +340,29 @@ describe('seguridad del API', () => {
         }
         expect(codes.slice(0, 30).every((c) => c === 401)).toBe(true);
         expect(codes[30]).toBe(429);
+      } finally {
+        await a.close();
+      }
+    });
+
+    it('los repartidores que comparten IP (red móvil) no se bloquean entre sí: el límite es por sesión', async () => {
+      const a = await freshApp();
+      try {
+        const post = (token: string | null) =>
+          a.inject({
+            method: 'POST',
+            url: `/v1/driver/orders/${UUID}/transition`,
+            remoteAddress: '190.80.1.1', // la misma IP para todos
+            headers: token ? { authorization: `Bearer ${token}` } : {},
+            payload: { to: 'delivered', pin: '0000' },
+          });
+        for (let i = 0; i < 30; i++) expect((await post('repartidor-A')).statusCode).toBe(401);
+        expect((await post('repartidor-A')).statusCode).toBe(429); // A agotó SU cupo
+        expect((await post('repartidor-B')).statusCode).toBe(401); // B, en la misma IP, sigue
+        // sin sesión se cuenta por IP: 30 más y se acaba
+        for (let i = 0; i < 30; i++) expect((await post(null)).statusCode).toBe(401);
+        expect((await post(null)).statusCode).toBe(429);
+        expect((await post('repartidor-C')).statusCode).toBe(401);
       } finally {
         await a.close();
       }

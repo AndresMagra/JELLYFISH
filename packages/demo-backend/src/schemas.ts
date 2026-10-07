@@ -1,9 +1,10 @@
 import { DR_BOUNDS, OUTSIDE_DR_MESSAGE } from '@jellyfish/shared';
-import { type ZodType, z } from 'zod';
+// `import * as z` (y no `{ z }`) deja que el empaquetador descarte el 80 % de zod que no se usa.
+import * as z from 'zod';
 import { invalid } from './errors';
 
 /** Valida con zod y devuelve un error 400 en español con el campo que falló (igual que el API). */
-export function parse<T extends ZodType>(schema: T, data: unknown): z.infer<T> {
+export function parse<T extends z.ZodType>(schema: T, data: unknown): z.infer<T> {
   const result = schema.safeParse(data);
   if (result.success) return result.data;
   const first = result.error.issues[0];

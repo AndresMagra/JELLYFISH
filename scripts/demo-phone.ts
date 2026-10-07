@@ -45,7 +45,8 @@ export function classifyIp(ip: string): LanCandidate['kind'] {
   return 'publica';
 }
 
-const VIRTUAL_IFACE = /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|utun|tun|tap|ppp|wg|tailscale|zt|lo|awdl|llw|bridge|anpi|gif|stf)/i;
+const VIRTUAL_IFACE =
+  /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|utun|tun|tap|ppp|wg|tailscale|zt|lo|awdl|llw|bridge|anpi|gif|stf)/i;
 
 /** Ordena las direcciones locales: Wi‑Fi/Ethernet privadas primero; Docker, VPN y similares al final. */
 export function lanCandidates(
@@ -72,7 +73,15 @@ export function lanCandidates(
 
 export function pickLan(candidates: LanCandidate[], forced?: string): LanCandidate | null {
   if (forced) {
-    return candidates.find((c) => c.address === forced) ?? { iface: '(indicada)', address: forced, kind: classifyIp(forced), virtual: false, score: 0 };
+    return (
+      candidates.find((c) => c.address === forced) ?? {
+        iface: '(indicada)',
+        address: forced,
+        kind: classifyIp(forced),
+        virtual: false,
+        score: 0,
+      }
+    );
   }
   return candidates.find((c) => c.kind === 'privada' && !c.virtual) ?? candidates[0] ?? null;
 }
@@ -81,18 +90,40 @@ export function pickLan(candidates: LanCandidate[], forced?: string): LanCandida
 export function networkWarnings(chosen: LanCandidate | null, all: LanCandidate[]): string[] {
   const w: string[] = [];
   if (!chosen) {
-    w.push('No encontré ninguna dirección de red local. Conéctate a tu Wi‑Fi (o por cable) y vuelve a intentar, o indica la IP con --ip.');
+    w.push(
+      'No encontré ninguna dirección de red local. Conéctate a tu Wi‑Fi (o por cable) y vuelve a intentar, o indica la IP con --ip.',
+    );
     return w;
   }
-  if (chosen.kind === 'link-local') w.push(`La IP ${chosen.address} (169.254.x.x) significa que tu red no te dio dirección: revisa el Wi‑Fi o el cable.`);
-  if (chosen.kind === 'cgnat') w.push(`La IP ${chosen.address} parece de una VPN (Tailscale u otra). Tu teléfono probablemente no la alcance: usa la IP de tu Wi‑Fi con --ip.`);
-  if (chosen.kind === 'publica') w.push(`La IP ${chosen.address} no es de una red doméstica. Si el teléfono no conecta, indica la IP de tu Wi‑Fi con --ip.`);
-  if (chosen.virtual) w.push(`Se eligió la interfaz "${chosen.iface}", que parece virtual (Docker, VPN o máquina virtual). Si falla, usa --ip con la IP de tu Wi‑Fi.`);
-  const others = all.filter((c) => c.address !== chosen.address && c.kind === 'privada' && !c.virtual);
+  if (chosen.kind === 'link-local')
+    w.push(
+      `La IP ${chosen.address} (169.254.x.x) significa que tu red no te dio dirección: revisa el Wi‑Fi o el cable.`,
+    );
+  if (chosen.kind === 'cgnat')
+    w.push(
+      `La IP ${chosen.address} parece de una VPN (Tailscale u otra). Tu teléfono probablemente no la alcance: usa la IP de tu Wi‑Fi con --ip.`,
+    );
+  if (chosen.kind === 'publica')
+    w.push(
+      `La IP ${chosen.address} no es de una red doméstica. Si el teléfono no conecta, indica la IP de tu Wi‑Fi con --ip.`,
+    );
+  if (chosen.virtual)
+    w.push(
+      `Se eligió la interfaz "${chosen.iface}", que parece virtual (Docker, VPN o máquina virtual). Si falla, usa --ip con la IP de tu Wi‑Fi.`,
+    );
+  const others = all.filter(
+    (c) => c.address !== chosen.address && c.kind === 'privada' && !c.virtual,
+  );
   if (others.length > 0) {
-    w.push(`Tienes varias redes activas (${[chosen, ...others].map((c) => `${c.iface} ${c.address}`).join(', ')}). Usé ${chosen.address}; si el teléfono está en otra, pásala con --ip.`);
+    w.push(
+      `Tienes varias redes activas (${[chosen, ...others].map((c) => `${c.iface} ${c.address}`).join(', ')}). Usé ${chosen.address}; si el teléfono está en otra, pásala con --ip.`,
+    );
   }
-  if (chosen.kind === 'privada' && /^10\.(?!0\.0\.)/.test(chosen.address) && /^(utun|tun|ppp)/i.test(chosen.iface)) {
+  if (
+    chosen.kind === 'privada' &&
+    /^10\.(?!0\.0\.)/.test(chosen.address) &&
+    /^(utun|tun|ppp)/i.test(chosen.iface)
+  ) {
     w.push('Parece que estás conectado a una VPN: desconéctala mientras pruebas.');
   }
   return w;
@@ -124,9 +155,11 @@ export function firewallHint(ports: number[], os: NodeJS.Platform = platform()):
     return null;
   }
   const ufw = run('ufw', ['status']);
-  if (ufw && /Status: active/i.test(ufw)) return `ufw está activo. Permite los puertos:  sudo ufw allow ${ports.join('/tcp && sudo ufw allow ')}/tcp`;
+  if (ufw && /Status: active/i.test(ufw))
+    return `ufw está activo. Permite los puertos:  sudo ufw allow ${ports.join('/tcp && sudo ufw allow ')}/tcp`;
   const fw = run('firewall-cmd', ['--state']);
-  if (fw && /running/i.test(fw)) return `firewalld está activo. Permite los puertos ${list} (TCP) en la zona de tu Wi‑Fi.`;
+  if (fw && /running/i.test(fw))
+    return `firewalld está activo. Permite los puertos ${list} (TCP) en la zona de tu Wi‑Fi.`;
   return null;
 }
 
@@ -179,7 +212,12 @@ export async function qrToText(url: string): Promise<string | null> {
   }
 }
 
-async function waitFor(url: string, what: string, isUp: (res: Response, text: string) => boolean, tries = 120): Promise<void> {
+async function waitFor(
+  url: string,
+  what: string,
+  isUp: (res: Response, text: string) => boolean,
+  tries = 120,
+): Promise<void> {
   for (let i = 0; i < tries; i++) {
     try {
       const res = await fetch(url);
@@ -238,7 +276,9 @@ let shuttingDown = false;
 export async function shutdown(code = 0): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  const alive = managed.filter((m) => m.child.pid && m.child.exitCode === null && m.child.signalCode === null);
+  const alive = managed.filter(
+    (m) => m.child.pid && m.child.exitCode === null && m.child.signalCode === null,
+  );
   for (const m of alive) {
     try {
       process.kill(-m.child.pid!, 'SIGTERM');
@@ -246,7 +286,12 @@ export async function shutdown(code = 0): Promise<void> {
       /* ya terminó */
     }
   }
-  for (let i = 0; i < 30 && alive.some((m) => m.child.exitCode === null && m.child.signalCode === null); i++) await sleep(100);
+  for (
+    let i = 0;
+    i < 30 && alive.some((m) => m.child.exitCode === null && m.child.signalCode === null);
+    i++
+  )
+    await sleep(100);
   for (const m of alive) {
     if (m.child.exitCode === null && m.child.signalCode === null) {
       try {
@@ -275,18 +320,36 @@ async function otpFromLog(out: { text: string }, phoneE164: string): Promise<str
 const e164 = (phone: string) => `+1${phone.replace(/\D/g, '').slice(-10)}`;
 
 /** Con la app del repartidor hace falta una cuenta de repartidor: la crea un administrador por la API. */
-async function prepareDriver(api: string, apiOut: { text: string }, adminPhone: string, driverPhone: string, apiHasFixedCode: boolean): Promise<void> {
+async function prepareDriver(
+  api: string,
+  apiOut: { text: string },
+  adminPhone: string,
+  driverPhone: string,
+  apiHasFixedCode: boolean,
+): Promise<void> {
   const login = async (phone: string): Promise<string> => {
-    await fetch(`${api}/v1/auth/otp/request`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ phone: e164(phone) }) });
+    await fetch(`${api}/v1/auth/otp/request`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: e164(phone) }),
+    });
     const code = apiHasFixedCode ? DEMO_CODE : await otpFromLog(apiOut, e164(phone));
-    const res = await fetch(`${api}/v1/auth/otp/verify`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ phone: e164(phone), code }) });
+    const res = await fetch(`${api}/v1/auth/otp/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: e164(phone), code }),
+    });
     return ((await res.json()) as { token: string }).token;
   };
   const token = await login(adminPhone);
   const res = await fetch(`${api}/v1/admin/users`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ phone: e164(driverPhone), name: 'Repartidor de prueba', role: 'driver' }),
+    body: JSON.stringify({
+      phone: e164(driverPhone),
+      name: 'Repartidor de prueba',
+      role: 'driver',
+    }),
   });
   if (!res.ok) throw new Error(`No pude crear el repartidor de prueba (${res.status})`);
 }
@@ -339,11 +402,16 @@ async function main() {
     },
   });
   if (a.help) {
-    console.log(readFileSync(import.meta.filename, 'utf8').split('*/')[0]!.replace(/^\/\*\*\n|^ \* ?/gm, ''));
+    console.log(
+      readFileSync(import.meta.filename, 'utf8')
+        .split('*/')[0]!
+        .replace(/^\/\*\*\n|^ \* ?/gm, ''),
+    );
     return;
   }
   const app = a.app === 'driver' ? 'driver' : 'customer';
-  if (a.app !== 'customer' && a.app !== 'driver') throw new Error('--app debe ser "customer" o "driver"');
+  if (a.app !== 'customer' && a.app !== 'driver')
+    throw new Error('--app debe ser "customer" o "driver"');
   const appDir = `${root}/apps/${app}`;
   if (!existsSync(appDir)) throw new Error(`No existe ${appDir}`);
 
@@ -358,12 +426,18 @@ async function main() {
   }
   const apiPort = await findFreePort(Number(a['api-port']));
   const expoPort = await findFreePort(Number(a['expo-port']), [apiPort]);
-  console.log(`• IP de tu red: ${lan.address} (${lan.iface}). Puertos: API ${apiPort}, Expo ${expoPort}.`);
+  console.log(
+    `• IP de tu red: ${lan.address} (${lan.iface}). Puertos: API ${apiPort}, Expo ${expoPort}.`,
+  );
   for (const w of warnings) console.log(`⚠ ${w}`);
   const fw = firewallHint([apiPort, expoPort]);
   if (fw) console.log(`⚠ ${fw}`);
   if (a.check) {
-    console.log(all.length ? `• Direcciones encontradas:\n${all.map((c) => `    ${c.address}  ${c.iface}  (${c.kind}${c.virtual ? ', virtual' : ''})`).join('\n')}` : '');
+    console.log(
+      all.length
+        ? `• Direcciones encontradas:\n${all.map((c) => `    ${c.address}  ${c.iface}  (${c.kind}${c.virtual ? ', virtual' : ''})`).join('\n')}`
+        : '',
+    );
     return;
   }
 
@@ -413,15 +487,25 @@ async function main() {
     if (!res.ok) throw new Error(String(res.status));
     console.log(`✔ El API también responde por ${lan.address}: el teléfono podrá alcanzarlo.`);
   } catch {
-    console.log(`⚠ El API NO responde por ${lan.address}:${apiPort} desde esta misma computadora. Probablemente un firewall lo bloquea; el teléfono tampoco podrá conectarse hasta que lo permitas.`);
+    console.log(
+      `⚠ El API NO responde por ${lan.address}:${apiPort} desde esta misma computadora. Probablemente un firewall lo bloquea; el teléfono tampoco podrá conectarse hasta que lo permitas.`,
+    );
   }
 
   if (app === 'driver') {
     try {
-      await prepareDriver(apiUrl.replace(lan.address, '127.0.0.1'), api.output, a['admin-phone']!, a['driver-phone']!, fixedCode);
+      await prepareDriver(
+        apiUrl.replace(lan.address, '127.0.0.1'),
+        api.output,
+        a['admin-phone']!,
+        a['driver-phone']!,
+        fixedCode,
+      );
       console.log(`✔ Cuenta de repartidor de prueba lista: ${a['driver-phone']}`);
     } catch (e) {
-      console.log(`⚠ No pude preparar la cuenta de repartidor: ${(e as Error).message}. Pide a un administrador que la cree (panel → equipo).`);
+      console.log(
+        `⚠ No pude preparar la cuenta de repartidor: ${(e as Error).message}. Pide a un administrador que la cree (panel → equipo).`,
+      );
     }
   }
 
@@ -446,13 +530,24 @@ async function main() {
       void shutdown(1);
     }
   });
-  await waitFor(`http://127.0.0.1:${expoPort}/status`, 'Expo', (_r, t) => /packager-status:running/.test(t));
+  await waitFor(`http://127.0.0.1:${expoPort}/status`, 'Expo', (_r, t) =>
+    /packager-status:running/.test(t),
+  );
   console.log(`✔ Expo listo en el puerto ${expoPort}.`);
   const expoUrl = `exp://${lan.address}:${expoPort}`;
   const qr = await qrToText(expoUrl);
   console.log(`\n  Escanea este código con el teléfono  (${expoUrl})\n`);
   if (qr) console.log(qr);
-  console.log(instructions({ app, ip: lan.address, apiPort, expoPort, fixedCode, driverPhone: a['driver-phone'] }));
+  console.log(
+    instructions({
+      app,
+      ip: lan.address,
+      apiPort,
+      expoPort,
+      fixedCode,
+      driverPhone: a['driver-phone'],
+    }),
+  );
 
   // Se queda corriendo hasta Ctrl+C.
   await new Promise(() => {});

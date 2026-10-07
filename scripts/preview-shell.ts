@@ -141,7 +141,10 @@ export function scanFontUsage(sources: string[]): FontUsage {
       /import\s*\{([^}]*)\}\s*from\s*['"]@expo\/vector-icons(?:\/[\w-]+)?['"]/g,
     )) {
       for (const name of m[1]!.split(',')) {
-        const id = name.trim().split(/\s+as\s+/)[0]!.trim();
+        const id = name
+          .trim()
+          .split(/\s+as\s+/)[0]!
+          .trim();
         if (ICON_FAMILIES.includes(id)) iconFamilies.add(id);
       }
     }
@@ -171,6 +174,40 @@ export function keepAssetFile(relPath: string, usage: FontUsage): boolean {
     return usage.iconFamilies.has(family);
   }
   return true;
+}
+
+/**
+ * Nombres de íconos que el código usa de verdad: toda cadena de texto del código que sea un nombre del
+ * mapa de glifos de la fuente (p. ej. 'snowflake', 'cart-outline'). Es un conjunto "de más" a propósito
+ * (una palabra suelta que coincida no cuesta nada); lo que NO puede pasar es que falte un ícono, así que
+ * también se incluye la variante con y sin "-outline".
+ */
+export function iconNamesIn(sources: string[], glyphNames: Iterable<string>): Set<string> {
+  const known = new Set(glyphNames);
+  const found = new Set<string>();
+  for (const src of sources) {
+    for (const m of src.matchAll(/(['"`])([a-z0-9][a-z0-9-]*)\1/g)) {
+      const name = m[2]!;
+      if (known.has(name)) found.add(name);
+    }
+  }
+  for (const name of [...found]) {
+    const pair = name.endsWith('-outline') ? name.slice(0, -'-outline'.length) : `${name}-outline`;
+    if (known.has(pair)) found.add(pair);
+  }
+  return found;
+}
+
+/** Familia de una fuente de @expo/vector-icons a partir del nombre de su archivo .ttf. */
+export function iconFamilyOfFile(relPath: string): string | null {
+  if (!relPath.includes('@expo/vector-icons/') || !relPath.endsWith('.ttf')) return null;
+  const file = relPath.slice(relPath.lastIndexOf('/') + 1);
+  return (
+    file
+      .replace(/\.[0-9a-f]{32}\.ttf$/, '')
+      .replace(/\.ttf$/, '')
+      .split('_')[0] ?? null
+  );
 }
 
 // ───────────────────────── index.html ─────────────────────────
@@ -359,7 +396,12 @@ export function renderWebManifest(): string {
       icons: [
         { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
         { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-        { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        {
+          src: 'icons/icon-maskable-512.png',
+          sizes: '512x512',
+          type: 'image/png',
+          purpose: 'maskable',
+        },
       ],
     },
     null,

@@ -367,7 +367,9 @@ export function dispatch(ctx: Ctx, req: DemoRequest): DemoResponse {
     // Si el baseUrl trae una ruta (https://host/api), se descarta antes de buscar la ruta.
     const basePath = new URL(base).pathname.replace(/\/+$/, '');
     const path =
-      basePath && url.pathname.startsWith(basePath) ? url.pathname.slice(basePath.length) : url.pathname;
+      basePath && url.pathname.startsWith(basePath)
+        ? url.pathname.slice(basePath.length)
+        : url.pathname;
     const segments = path.split('/').filter(Boolean);
     const matched = matchRoute(method, segments);
     if (!matched) {
@@ -391,7 +393,9 @@ export function dispatch(ctx: Ctx, req: DemoRequest): DemoResponse {
       query[k] = v;
     });
 
-    const user = matched.route.auth ? authenticate(ctx, headers) : (undefined as unknown as UserRec);
+    const user = matched.route.auth
+      ? authenticate(ctx, headers)
+      : (undefined as unknown as UserRec);
     const result = matched.route.handler({
       ctx,
       params: matched.params,

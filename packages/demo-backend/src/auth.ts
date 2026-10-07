@@ -19,7 +19,10 @@ export function requirePhone(raw: string): string {
  * que el código es 123456 (y cualquier código de 6 dígitos sirve). Con `strictOtp` se aplica el
  * mismo límite de 3 códigos cada 10 minutos que el API real.
  */
-export function requestOtp(ctx: Ctx, rawPhone: string): { phone: string; expiresInSeconds: number } {
+export function requestOtp(
+  ctx: Ctx,
+  rawPhone: string,
+): { phone: string; expiresInSeconds: number } {
   const phone = requirePhone(rawPhone);
   const now = ctx.now();
   const recent = (ctx.state.otpRequests[phone] ?? []).filter((t) => t > now - OTP_WINDOW_MS);
@@ -117,7 +120,12 @@ export function createAddress(ctx: Ctx, userId: string, body: AddressFields): Ad
   return row;
 }
 
-export function updateAddress(ctx: Ctx, userId: string, id: string, body: AddressFields): AddressRec {
+export function updateAddress(
+  ctx: Ctx,
+  userId: string,
+  id: string,
+  body: AddressFields,
+): AddressRec {
   if (body.isDefault) {
     for (const a of ctx.state.addresses) if (a.userId === userId) a.isDefault = false;
   }

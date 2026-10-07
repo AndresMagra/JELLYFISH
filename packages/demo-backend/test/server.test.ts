@@ -86,9 +86,9 @@ describe('catálogo (mismo CSV y mismo código que el API)', () => {
   it('la búsqueda ignora acentos y mayúsculas, busca en sinónimos y exige todas las palabras', () => {
     const { c } = fresh();
     const names = (q: string) =>
-      (c.call('GET', `/v1/products?q=${encodeURIComponent(q)}`).body.items as { name: string }[]).map(
-        (p) => p.name,
-      );
+      (
+        c.call('GET', `/v1/products?q=${encodeURIComponent(q)}`).body.items as { name: string }[]
+      ).map((p) => p.name);
     expect(names('camaron')).toContain('Camarón');
     expect(names('CAMARÓN')).toContain('Camarón');
     expect(names('gambas')).toContain('Camarón'); // sinónimo
@@ -128,7 +128,9 @@ describe('catálogo (mismo CSV y mismo código que el API)', () => {
 describe('entrega: zona, franjas, métodos de pago', () => {
   it('zona cubierta o no, por sector o por ciudad, sin acentos', () => {
     const { c } = fresh();
-    expect(c.call('GET', '/v1/delivery/zone?sector=Piantini&city=Santo%20Domingo').body).toMatchObject({
+    expect(
+      c.call('GET', '/v1/delivery/zone?sector=Piantini&city=Santo%20Domingo').body,
+    ).toMatchObject({
       covered: true,
       feeCentavos: 15_000,
       minOrderCentavos: 80_000,
@@ -166,7 +168,8 @@ describe('entrega: zona, franjas, métodos de pago', () => {
     expect(first.res.status).toBe(201);
     const after = c.call('GET', '/v1/delivery/slots').body[0];
     expect(after.remaining).toBe(7);
-    for (let i = 1; i < 8; i++) expect(placeOrder(c, token, { key: `cupo-0000${i + 1}` }).res.status).toBe(201);
+    for (let i = 1; i < 8; i++)
+      expect(placeOrder(c, token, { key: `cupo-0000${i + 1}` }).res.status).toBe(201);
     const full = c.call('GET', '/v1/delivery/slots').body[0];
     expect(full).toMatchObject({ remaining: 0, available: false });
     const over = placeOrder(c, token, { key: 'cupo-99999' });
@@ -190,11 +193,23 @@ describe('cotización (reglas de dinero compartidas)', () => {
     const { c } = fresh();
     const v = variantBySku(c, 'JF-MAR-004');
     const q = c.call('POST', '/v1/quote', {
-      body: { items: [{ variantId: v.id, quantity: 350 }], address: { sector: 'Naco', city: 'Santo Domingo' } },
+      body: {
+        items: [{ variantId: v.id, quantity: 350 }],
+        address: { sector: 'Naco', city: 'Santo Domingo' },
+      },
     });
     expect(q.status).toBe(200);
     const expected = computeOrderTotals(
-      [{ id: v.id, pricingUnit: 'lb', unitPrice: v.price, itbisBps: v.itbisBps, quantity: 350, variableWeight: true }],
+      [
+        {
+          id: v.id,
+          pricingUnit: 'lb',
+          unitPrice: v.price,
+          itbisBps: v.itbisBps,
+          quantity: 350,
+          variableWeight: true,
+        },
+      ],
       { deliveryFee: 15_000 },
     );
     expect(q.body).toMatchObject({
@@ -220,9 +235,18 @@ describe('cotización (reglas de dinero compartidas)', () => {
       items: [{ variantId: v.id, quantity }],
       ...(address ? { address } : {}),
     });
-    expect(c.call('POST', '/v1/quote', { body: body() }).body).toMatchObject({ coverage: 'unknown', deliveryFee: 0, zone: null });
-    expect(c.call('POST', '/v1/quote', { body: body({ sector: 'Los Alcarrizos', city: 'Santiago' }) }).body.coverage).toBe('not_covered');
-    const big = c.call('POST', '/v1/quote', { body: body({ sector: 'Naco', city: 'Santo Domingo' }, 1700) }).body;
+    expect(c.call('POST', '/v1/quote', { body: body() }).body).toMatchObject({
+      coverage: 'unknown',
+      deliveryFee: 0,
+      zone: null,
+    });
+    expect(
+      c.call('POST', '/v1/quote', { body: body({ sector: 'Los Alcarrizos', city: 'Santiago' }) })
+        .body.coverage,
+    ).toBe('not_covered');
+    const big = c.call('POST', '/v1/quote', {
+      body: body({ sector: 'Naco', city: 'Santo Domingo' }, 1700),
+    }).body;
     expect(big.subtotal).toBeGreaterThanOrEqual(400_000);
     expect(big).toMatchObject({ freeDelivery: true, deliveryFee: 0 });
   });
@@ -232,21 +256,29 @@ describe('cotización (reglas de dinero compartidas)', () => {
     const v = variantBySku(c, 'JF-MAR-004');
     const q = (quantity: number, variantId = v.id) =>
       c.call('POST', '/v1/quote', { body: { items: [{ variantId, quantity }] } });
-    expect(q(50).body.error).toMatchObject({ code: 'validation', message: expect.stringContaining('El mínimo de') });
+    expect(q(50).body.error).toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining('El mínimo de'),
+    });
     expect(q(125).body.error.message).toMatch(/múltiplos de 0.5 lb/);
     expect(q(10_100).body.error.message).toMatch(/El máximo por pedido de .* es 100 lb/);
     expect(q(100, '00000000-0000-4000-8000-000000000000').body.error.code).toBe('invalid_item');
-    expect(c.call('POST', '/v1/quote', { body: { items: [] } }).body.error.message).toBe('items: El carrito está vacío');
-    expect(c.call('POST', '/v1/quote', { body: { items: [{ variantId: 'x', quantity: 1 }] } }).body.error.message).toBe(
-      'items.0.variantId: Identificador inválido',
+    expect(c.call('POST', '/v1/quote', { body: { items: [] } }).body.error.message).toBe(
+      'items: El carrito está vacío',
     );
+    expect(
+      c.call('POST', '/v1/quote', { body: { items: [{ variantId: 'x', quantity: 1 }] } }).body.error
+        .message,
+    ).toBe('items.0.variantId: Identificador inválido');
   });
 
   it('stock insuficiente: out_of_stock 409 con lo que queda, o "está agotado"', () => {
     const { server } = makeServer({ stock: { bySku: { 'JF-MAR-004': 300, 'JF-MAR-002': 0 } } });
     const c = clientFor(server);
     const v = variantBySku(c, 'JF-MAR-004');
-    const r = c.call('POST', '/v1/quote', { body: { items: [{ variantId: v.id, quantity: 500 }] } });
+    const r = c.call('POST', '/v1/quote', {
+      body: { items: [{ variantId: v.id, quantity: 500 }] },
+    });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatchObject({
       code: 'out_of_stock',
@@ -255,7 +287,9 @@ describe('cotización (reglas de dinero compartidas)', () => {
     });
     const gone = variantBySku(c, 'JF-MAR-002');
     expect(gone.inStock).toBe(false);
-    const r2 = c.call('POST', '/v1/quote', { body: { items: [{ variantId: gone.id, quantity: 100 }] } });
+    const r2 = c.call('POST', '/v1/quote', {
+      body: { items: [{ variantId: gone.id, quantity: 100 }] },
+    });
     expect(r2.body.error.message).toBe('Camarón 8/12 está agotado');
   });
 });
@@ -263,19 +297,30 @@ describe('cotización (reglas de dinero compartidas)', () => {
 describe('sesión y cuenta', () => {
   it('cualquier código de 6 dígitos sirve; 123456 es el que se le muestra a la persona', () => {
     const { c } = fresh();
-    expect(c.call('POST', '/v1/auth/otp/request', { body: { phone: '(809) 555-0199' } })).toMatchObject({
+    expect(
+      c.call('POST', '/v1/auth/otp/request', { body: { phone: '(809) 555-0199' } }),
+    ).toMatchObject({
       status: 200,
       body: { phone: '+18095550199', expiresInSeconds: 600 },
     });
     for (const code of ['123456', '000000', '987654']) {
       const v = c.call('POST', '/v1/auth/otp/verify', { body: { phone: '809-555-0199', code } });
       expect(v.status).toBe(200);
-      expect(v.body.user).toMatchObject({ phone: '+18095550199', name: '', email: null, role: 'customer' });
+      expect(v.body.user).toMatchObject({
+        phone: '+18095550199',
+        name: '',
+        email: null,
+        role: 'customer',
+      });
       expect(v.body.token).toBeTruthy();
     }
     // Misma persona en las tres entradas.
     const ids = new Set(
-      [1, 2].map(() => c.call('POST', '/v1/auth/otp/verify', { body: { phone: '8095550199', code: '123456' } }).body.user.id),
+      [1, 2].map(
+        () =>
+          c.call('POST', '/v1/auth/otp/verify', { body: { phone: '8095550199', code: '123456' } })
+            .body.user.id,
+      ),
     );
     expect(ids.size).toBe(1);
   });
@@ -284,8 +329,12 @@ describe('sesión y cuenta', () => {
     const { c } = fresh();
     const badPhone = c.call('POST', '/v1/auth/otp/request', { body: { phone: '305-555-0101' } });
     expect(badPhone.status).toBe(400);
-    expect(badPhone.body.error.message).toBe('Ingresa un número dominicano válido (809, 829 o 849)');
-    const badCode = c.call('POST', '/v1/auth/otp/verify', { body: { phone: '8095550199', code: '12' } });
+    expect(badPhone.body.error.message).toBe(
+      'Ingresa un número dominicano válido (809, 829 o 849)',
+    );
+    const badCode = c.call('POST', '/v1/auth/otp/verify', {
+      body: { phone: '8095550199', code: '12' },
+    });
     expect(badCode.body.error.message).toBe('code: El código tiene 6 dígitos');
     expect(normalizeDominicanPhone('809-555-0199')).toBe('+18095550199');
   });
@@ -296,7 +345,8 @@ describe('sesión y cuenta', () => {
     const verify = (code: string) =>
       c.call('POST', '/v1/auth/otp/verify', { body: { phone: '8095550150', code } });
     expect(verify('123456').body.error.message).toBe('Código incorrecto o vencido'); // sin pedirlo
-    for (let i = 0; i < 3; i++) c.call('POST', '/v1/auth/otp/request', { body: { phone: '8095550150' } });
+    for (let i = 0; i < 3; i++)
+      c.call('POST', '/v1/auth/otp/request', { body: { phone: '8095550150' } });
     const limited = c.call('POST', '/v1/auth/otp/request', { body: { phone: '8095550150' } });
     expect(limited.status).toBe(429);
     expect(limited.body.error.code).toBe('rate_limited');
@@ -315,7 +365,10 @@ describe('sesión y cuenta', () => {
     ] as const) {
       const r = c.call(m, p);
       expect(r.status, p).toBe(401);
-      expect(r.body.error).toEqual({ code: 'unauthorized', message: 'Inicia sesión para continuar' });
+      expect(r.body.error).toEqual({
+        code: 'unauthorized',
+        message: 'Inicia sesión para continuar',
+      });
     }
     expect(c.call('GET', '/v1/me', { token: 'demo.inventado' }).status).toBe(401);
   });
@@ -326,9 +379,9 @@ describe('sesión y cuenta', () => {
     expect(c.call('GET', '/v1/me', { token }).body.name).toBe('');
     const p = c.call('PATCH', '/v1/me', { token, body: { name: '  Andrés  ', email: 'a@b.do' } });
     expect(p.body).toMatchObject({ name: 'Andrés', email: 'a@b.do' });
-    expect(c.call('PATCH', '/v1/me', { token, body: { email: 'no-es-correo' } }).body.error.message).toBe(
-      'email: Correo inválido',
-    );
+    expect(
+      c.call('PATCH', '/v1/me', { token, body: { email: 'no-es-correo' } }).body.error.message,
+    ).toBe('email: Correo inválido');
     expect(c.call('PATCH', '/v1/me', { token, body: {} }).body.name).toBe('Andrés');
     const del = c.call('DELETE', '/v1/me', { token });
     expect(del.status).toBe(204);
@@ -344,18 +397,29 @@ describe('sesión y cuenta', () => {
     const a1 = c.call('POST', '/v1/me/addresses', { token, body: ADDRESS });
     expect(a1.status).toBe(201);
     expect(a1.body).toMatchObject({ isDefault: true, sector: 'Naco', city: 'Santo Domingo' });
-    const a2 = c.call('POST', '/v1/me/addresses', { token, body: { ...ADDRESS, label: 'Trabajo', isDefault: true } });
+    const a2 = c.call('POST', '/v1/me/addresses', {
+      token,
+      body: { ...ADDRESS, label: 'Trabajo', isDefault: true },
+    });
     expect(a2.body.isDefault).toBe(true);
     const list = c.call('GET', '/v1/me/addresses', { token }).body;
     expect(list.map((a: { label: string }) => a.label)).toEqual(['Trabajo', 'Casa']);
     expect(list[1].isDefault).toBe(false);
-    const put = c.call('PUT', `/v1/me/addresses/${a1.body.id}`, { token, body: { ...ADDRESS, line1: 'Otra calle 5', isDefault: true } });
+    const put = c.call('PUT', `/v1/me/addresses/${a1.body.id}`, {
+      token,
+      body: { ...ADDRESS, line1: 'Otra calle 5', isDefault: true },
+    });
     expect(put.body.line1).toBe('Otra calle 5');
     expect(c.call('GET', '/v1/me/addresses', { token }).body[0].id).toBe(a1.body.id);
     const other = clientFor(server).login('829-555-0303');
-    expect(c.call('DELETE', `/v1/me/addresses/${a1.body.id}`, { token: other.token }).status).toBe(404);
+    expect(c.call('DELETE', `/v1/me/addresses/${a1.body.id}`, { token: other.token }).status).toBe(
+      404,
+    );
     expect(c.call('DELETE', `/v1/me/addresses/${a1.body.id}`, { token }).status).toBe(204);
-    const bad = c.call('POST', '/v1/me/addresses', { token, body: { ...ADDRESS, line1: 'x', latitude: 40.7 } });
+    const bad = c.call('POST', '/v1/me/addresses', {
+      token,
+      body: { ...ADDRESS, line1: 'x', latitude: 40.7 },
+    });
     expect(bad.status).toBe(400);
   });
 
@@ -366,11 +430,16 @@ describe('sesión y cuenta', () => {
     const r = c.call('POST', '/v1/me/devices', { token, body: { token: token1, platform: 'ios' } });
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ token: token1, platform: 'ios' });
-    expect(c.call('POST', '/v1/me/devices', { token, body: { token: 'malo', platform: 'ios' } }).body.error.message).toBe(
-      'token: Token de notificaciones inválido',
+    expect(
+      c.call('POST', '/v1/me/devices', { token, body: { token: 'malo', platform: 'ios' } }).body
+        .error.message,
+    ).toBe('token: Token de notificaciones inválido');
+    expect(c.call('DELETE', `/v1/me/devices/${encodeURIComponent(token1)}`, { token }).status).toBe(
+      204,
     );
-    expect(c.call('DELETE', `/v1/me/devices/${encodeURIComponent(token1)}`, { token }).status).toBe(204);
-    expect(c.call('DELETE', `/v1/me/devices/${encodeURIComponent(token1)}`, { token }).status).toBe(204);
+    expect(c.call('DELETE', `/v1/me/devices/${encodeURIComponent(token1)}`, { token }).status).toBe(
+      204,
+    );
   });
 });
 
@@ -393,31 +462,54 @@ describe('pedidos', () => {
     const { token } = c.login();
     const v = variantBySku(c, 'JF-MAR-004');
     const slots = c.call('GET', '/v1/delivery/slots').body;
-    const base = { items: [{ variantId: v.id, quantity: 400 }], slotStart: slots[0].start, paymentMethod: 'cash' };
+    const base = {
+      items: [{ variantId: v.id, quantity: 400 }],
+      slotStart: slots[0].start,
+      paymentMethod: 'cash',
+    };
 
     const noAddress = c.call('POST', '/v1/orders', { token, body: base });
     expect(noAddress.status).toBe(400);
     expect(noAddress.body.error.message).toBe('Indica la dirección de entrega');
 
-    const shortKey = c.call('POST', '/v1/orders', { token, headers: { 'idempotency-key': 'corta' }, body: { ...base, address: ADDRESS } });
+    const shortKey = c.call('POST', '/v1/orders', {
+      token,
+      headers: { 'idempotency-key': 'corta' },
+      body: { ...base, address: ADDRESS },
+    });
     expect(shortKey.body.error.message).toBe('Idempotency-Key debe tener entre 8 y 100 caracteres');
 
-    const out = c.call('POST', '/v1/orders', { token, body: { ...base, address: { ...ADDRESS, sector: 'Los Alcarrizos', city: 'Santiago' } } });
+    const out = c.call('POST', '/v1/orders', {
+      token,
+      body: { ...base, address: { ...ADDRESS, sector: 'Los Alcarrizos', city: 'Santiago' } },
+    });
     expect(out.status).toBe(409);
     expect(out.body.error).toEqual({
       code: 'out_of_zone',
-      message: 'Aún aún no entregamos en Los Alcarrizos. Pronto llegaremos.'.replace('Aún aún', 'Aún'),
+      message: 'Aún aún no entregamos en Los Alcarrizos. Pronto llegaremos.'.replace(
+        'Aún aún',
+        'Aún',
+      ),
     });
 
-    const small = c.call('POST', '/v1/orders', { token, body: { ...base, items: [{ variantId: v.id, quantity: 100 }], address: ADDRESS } });
+    const small = c.call('POST', '/v1/orders', {
+      token,
+      body: { ...base, items: [{ variantId: v.id, quantity: 100 }], address: ADDRESS },
+    });
     expect(small.status).toBe(409);
     expect(small.body.error.code).toBe('below_minimum');
     expect(small.body.error.message).toBe(
       `El pedido mínimo para Santo Domingo (demo) es ${formatDOP(80_000)}. Te faltan ${formatDOP(80_000 - 25_105)}.`,
     );
-    const badSlot = c.call('POST', '/v1/orders', { token, body: { ...base, address: ADDRESS, slotStart: '2026-10-07T05:00:00.000Z' } });
+    const badSlot = c.call('POST', '/v1/orders', {
+      token,
+      body: { ...base, address: ADDRESS, slotStart: '2026-10-07T05:00:00.000Z' },
+    });
     expect(badSlot.body.error.message).toBe('La franja de entrega elegida no está disponible');
-    const missing = c.call('POST', '/v1/orders', { token, body: { ...base, addressId: '00000000-0000-4000-8000-000000000000' } });
+    const missing = c.call('POST', '/v1/orders', {
+      token,
+      body: { ...base, addressId: '00000000-0000-4000-8000-000000000000' },
+    });
     expect(missing.status).toBe(404);
     expect(missing.body.error.message).toBe('Dirección no encontrado');
   });
@@ -428,10 +520,22 @@ describe('pedidos', () => {
     const { res } = placeOrder(c, token);
     const pay = c.call('POST', `/v1/orders/${res.body.id}/pay`, { token });
     expect(pay.status).toBe(409);
-    expect(pay.body.error).toEqual({ code: 'wrong_method', message: 'Este pedido no es de pago con tarjeta' });
-    const proof = c.call('POST', `/v1/orders/${res.body.id}/transfer-proof`, { token, body: { reference: 'abc123' } });
-    expect(proof.body.error).toEqual({ code: 'wrong_method', message: 'Este pedido no es de transferencia' });
-    const bad = c.call('POST', `/v1/orders/${res.body.id}/transfer-proof`, { token, body: { reference: 'x' } });
+    expect(pay.body.error).toEqual({
+      code: 'wrong_method',
+      message: 'Este pedido no es de pago con tarjeta',
+    });
+    const proof = c.call('POST', `/v1/orders/${res.body.id}/transfer-proof`, {
+      token,
+      body: { reference: 'abc123' },
+    });
+    expect(proof.body.error).toEqual({
+      code: 'wrong_method',
+      message: 'Este pedido no es de transferencia',
+    });
+    const bad = c.call('POST', `/v1/orders/${res.body.id}/transfer-proof`, {
+      token,
+      body: { reference: 'x' },
+    });
     expect(bad.status).toBe(400);
   });
 
@@ -441,7 +545,12 @@ describe('pedidos', () => {
     const { res } = placeOrder(c, token);
     const ok = c.call('GET', `/v1/orders/${res.body.id}/reorder`, { token }).body;
     expect(ok).toMatchObject({ orderId: res.body.id, code: 'JF-000001', demo: true });
-    expect(ok.lines[0]).toMatchObject({ status: 'ok', quantity: 400, requestedQuantity: 400, previousUnitPrice: 25105 });
+    expect(ok.lines[0]).toMatchObject({
+      status: 'ok',
+      quantity: 400,
+      requestedQuantity: 400,
+      previousUnitPrice: 25105,
+    });
     // Quedan solo 2.5 lb de ese artículo: se sugiere lo que hay, en múltiplos del paso.
     const state = server.ctx.state.stock[ok.lines[0].variantId]!;
     state.onHand = state.reserved + 250;
@@ -449,7 +558,9 @@ describe('pedidos', () => {
     expect(reduced).toMatchObject({ status: 'reduced', quantity: 250 });
     expect(reduced.reason).toBe('Solo quedan 2.5 lb disponibles');
     state.onHand = state.reserved;
-    expect(c.call('GET', `/v1/orders/${res.body.id}/reorder`, { token }).body.lines[0]).toMatchObject({
+    expect(
+      c.call('GET', `/v1/orders/${res.body.id}/reorder`, { token }).body.lines[0],
+    ).toMatchObject({
       status: 'unavailable',
       quantity: 0,
       reason: 'Agotado por ahora',
@@ -469,15 +580,28 @@ describe('cupones', () => {
     });
     const anon = c.call('POST', '/v1/quote', { body: body('bienvenido10') });
     expect(anon.status).toBe(200);
-    expect(anon.body).toMatchObject({ coupon: null, couponError: 'Inicia sesión para usar un cupón' });
-    const ok = c.call('POST', '/v1/quote', { token, body: body(' Bienvenido-10 '.replace('-', '')) });
-    expect(ok.body.coupon).toMatchObject({ code: 'BIENVENIDO10', kind: 'percent', description: '10 % de descuento (hasta RD$ 500.00)' });
+    expect(anon.body).toMatchObject({
+      coupon: null,
+      couponError: 'Inicia sesión para usar un cupón',
+    });
+    const ok = c.call('POST', '/v1/quote', {
+      token,
+      body: body(' Bienvenido-10 '.replace('-', '')),
+    });
+    expect(ok.body.coupon).toMatchObject({
+      code: 'BIENVENIDO10',
+      kind: 'percent',
+      description: '10 % de descuento (hasta RD$ 500.00)',
+    });
     expect(ok.body.discount).toBe(Math.min(50_000, Math.floor(ok.body.subtotal * 0.1)));
     expect(ok.body.coupon.discount).toBe(ok.body.discount);
     expect(ok.body.total).toBe(ok.body.subtotal - ok.body.discount + ok.body.deliveryFee);
     const nope = c.call('POST', '/v1/quote', { token, body: body('NOEXISTE') });
     expect(nope.status).toBe(200);
-    expect(nope.body).toMatchObject({ coupon: null, couponError: 'No encontramos ese cupón. Revisa que esté bien escrito' });
+    expect(nope.body).toMatchObject({
+      coupon: null,
+      couponError: 'No encontramos ese cupón. Revisa que esté bien escrito',
+    });
     const free = c.call('POST', '/v1/quote', { token, body: body('ENVIOGRATIS') });
     expect(free.body).toMatchObject({ freeDelivery: true, deliveryFee: 0 });
     expect(free.body.coupon).toMatchObject({ kind: 'free_delivery', discount: 15_000 });
@@ -486,14 +610,25 @@ describe('cupones', () => {
   it('al crear el pedido el cupón se aplica y se guarda; uno inválido RECHAZA el pedido (409 coupon_invalid)', () => {
     const { c } = fresh();
     const { token } = c.login();
-    const good = placeOrder(c, token, { quantity: 800, couponCode: 'BIENVENIDO10', key: 'cupon-0001' });
+    const good = placeOrder(c, token, {
+      quantity: 800,
+      couponCode: 'BIENVENIDO10',
+      key: 'cupon-0001',
+    });
     expect(good.res.status).toBe(201);
     expect(good.res.body.couponCode).toBe('BIENVENIDO10');
     expect(good.res.body.discount).toBeGreaterThan(0);
     const bad = placeOrder(c, token, { quantity: 800, couponCode: 'NOEXISTE', key: 'cupon-0002' });
     expect(bad.res.status).toBe(409);
-    expect(bad.res.body.error).toMatchObject({ code: 'coupon_invalid', details: { reason: 'not_found' } });
-    const below = placeOrder(c, token, { quantity: 350, couponCode: 'BIENVENIDO10', key: 'cupon-0003' });
+    expect(bad.res.body.error).toMatchObject({
+      code: 'coupon_invalid',
+      details: { reason: 'not_found' },
+    });
+    const below = placeOrder(c, token, {
+      quantity: 350,
+      couponCode: 'BIENVENIDO10',
+      key: 'cupon-0003',
+    });
     expect(below.res.status).toBe(409);
     expect(below.res.body.error.details.reason).toBe('below_minimum');
   });
@@ -523,7 +658,10 @@ describe('installDemoBackend: solo toca la dirección de la demostración', () =
     });
     expect(post.status).toBe(200);
     const asRequest = await target.fetch(
-      new Request(`${BASE}/v1/auth/otp/request`, { method: 'POST', body: JSON.stringify({ phone: '8095551234' }) }),
+      new Request(`${BASE}/v1/auth/otp/request`, {
+        method: 'POST',
+        body: JSON.stringify({ phone: '8095551234' }),
+      }),
     );
     expect(asRequest.status).toBe(200);
     expect(passthrough).not.toHaveBeenCalled();
@@ -532,11 +670,16 @@ describe('installDemoBackend: solo toca la dirección de la demostración', () =
     await target.fetch(`${BASE}.evil.example/v1/me`); // parecido, pero otro dominio
     expect(passthrough).toHaveBeenCalledTimes(2);
 
-    const del = await target.fetch(`${BASE}/v1/me`, { method: 'DELETE', headers: { Authorization: 'Bearer x' } });
+    const del = await target.fetch(`${BASE}/v1/me`, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer x' },
+    });
     expect(del.status).toBe(401);
     const unknown = await target.fetch(`${BASE}/v1/no-existe`);
     expect(unknown.status).toBe(404);
-    expect(await unknown.json()).toEqual({ error: { code: 'not_found', message: 'Ruta no encontrada' } });
+    expect(await unknown.json()).toEqual({
+      error: { code: 'not_found', message: 'Ruta no encontrada' },
+    });
 
     handle.uninstall();
     expect(target.fetch).toBe(passthrough);

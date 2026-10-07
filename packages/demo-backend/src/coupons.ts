@@ -143,7 +143,10 @@ export function assessCoupon(
 ): CouponAssessment {
   if (!coupon.active) return rejected('not_found', COUPON_NOT_FOUND);
   if (coupon.startsAt && coupon.startsAt > now) {
-    return rejected('not_started', `Este cupón estará disponible desde el ${longDate(coupon.startsAt)}`);
+    return rejected(
+      'not_started',
+      `Este cupón estará disponible desde el ${longDate(coupon.startsAt)}`,
+    );
   }
   if (coupon.endsAt && coupon.endsAt <= now) return rejected('expired', 'Este cupón venció');
   if (coupon.maxRedemptions != null && usage.total >= coupon.maxRedemptions) {

@@ -293,7 +293,10 @@ describe('lotes con vencimiento (FEFO)', () => {
       const id = await makeVariant(1000);
       const bad: [string, Record<string, unknown>][] = [
         ['fecha mal escrita', { expiresOn: '07/11/2026' }],
-        ['fecha imposible', { expiresOn: '2026-02-30' }],
+        // Fechas que no existen pero que Date "corrige" en silencio (31 de noviembre → 1 de diciembre).
+        ['31 de noviembre', { expiresOn: '2026-11-31' }],
+        ['29 de febrero sin año bisiesto', { expiresOn: '2027-02-29' }],
+        ['mes 13', { expiresOn: '2026-13-01' }],
         ['vencida hace más de 30 días', { expiresOn: day(-31) }],
         ['dentro de 6 años', { expiresOn: day(6 * 365) }],
         ['cantidad cero', { quantity: 0 }],
@@ -333,6 +336,17 @@ describe('lotes con vencimiento (FEFO)', () => {
       expect(await movements(id)).toHaveLength(1);
       // El mismo código en OTRO artículo es normal (cada proveedor numera a su manera).
       expect((await receive(other, { lotCode: 'ABC-1' })).statusCode).toBe(201);
+    });
+
+    it('varias recepciones simultáneas del mismo código: entra una sola y el stock se cuenta una vez', async () => {
+      const id = await makeVariant(0);
+      const results = await Promise.all(
+        Array.from({ length: 6 }, () => receive(id, { lotCode: 'DOBLE-CLIC', quantity: 400 })),
+      );
+      expect(results.map((r) => r.statusCode).sort()).toEqual([201, 409, 409, 409, 409, 409]);
+      expect(await lotsOf(id)).toHaveLength(1);
+      expect((await stock(id)).onHand).toBe(400);
+      expect(await movements(id)).toHaveLength(1);
     });
 
     it('es atómica: si falla guardar el lote, tampoco queda el movimiento ni el stock', async () => {

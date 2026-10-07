@@ -70,7 +70,8 @@ export async function requestOtp(ctx: AuthContext, rawPhone: string) {
     throw tooMany('Pediste demasiados códigos. Intenta de nuevo en unos minutos.');
   }
 
-  const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  // El código fijo solo existe en demostraciones (ver Config.demoOtpCode); en producción es aleatorio.
+  const code = ctx.config.demoOtpCode ?? String(randomInt(0, 1_000_000)).padStart(6, '0');
   const ttlMs = ctx.config.otpTtlMinutes * 60_000;
   await ctx.db.insert(otpCodes).values({
     phone,

@@ -11,7 +11,11 @@ import { testConfig } from '../../../apps/api/src/config';
 import { type DbHandle } from '../../../apps/api/src/db/client';
 import { orders, users, variants } from '../../../apps/api/src/db/schema';
 import { MemoryOtpSender } from '../../../apps/api/src/services/auth';
-import { importCatalog, seedDemoStock, syncCategories } from '../../../apps/api/src/services/catalog';
+import {
+  importCatalog,
+  seedDemoStock,
+  syncCategories,
+} from '../../../apps/api/src/services/catalog';
 import { createCoupon } from '../../../apps/api/src/services/coupons';
 import { createZone } from '../../../apps/api/src/services/zones';
 import { createTestDb } from '../../../apps/api/test/test-db';
@@ -97,7 +101,12 @@ export async function startReal(): Promise<Api & { app: FastifyInstance }> {
 
   const outForDelivery = new Set<string>();
   const sender = new MemoryOtpSender();
-  const app = await buildApp({ db, config, otpSender: sender, now: () => new Date(realClock.now()) });
+  const app = await buildApp({
+    db,
+    config,
+    otpSender: sender,
+    now: () => new Date(realClock.now()),
+  });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const address = app.server.address();
   const base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
@@ -127,25 +136,39 @@ export async function startReal(): Promise<Api & { app: FastifyInstance }> {
     async progress(orderId, to) {
       const out = outForDelivery.has(orderId);
       const step = (toStatus: string, extra: object = {}) =>
-        must(call('POST', `/v1/admin/orders/${orderId}/transition`, { token: adminToken, body: { to: toStatus, ...extra } }), `a ${toStatus}`);
-      const order = (await must(call('GET', `/v1/admin/orders/${orderId}`, { token: adminToken }), 'detalle')).body as {
+        must(
+          call('POST', `/v1/admin/orders/${orderId}/transition`, {
+            token: adminToken,
+            body: { to: toStatus, ...extra },
+          }),
+          `a ${toStatus}`,
+        );
+      const order = (
+        await must(call('GET', `/v1/admin/orders/${orderId}`, { token: adminToken }), 'detalle')
+      ).body as {
         items: { id: string; quantity: number }[];
         finalTotal: number | null;
         total: number;
         paymentMethod: string;
       };
       if (!out) await step('picking');
-      if (!out) await must(
-        call('POST', `/v1/admin/orders/${orderId}/weights`, {
-          token: adminToken,
-          body: { weights: order.items.map((i) => ({ itemId: i.id, finalQuantity: i.quantity })) },
-        }),
-        'pesos',
-      );
+      if (!out)
+        await must(
+          call('POST', `/v1/admin/orders/${orderId}/weights`, {
+            token: adminToken,
+            body: {
+              weights: order.items.map((i) => ({ itemId: i.id, finalQuantity: i.quantity })),
+            },
+          }),
+          'pesos',
+        );
       if (!out) {
         await step('packed');
         await must(
-          call('POST', `/v1/admin/orders/${orderId}/assign-driver`, { token: adminToken, body: { driverId: driver!.id } }),
+          call('POST', `/v1/admin/orders/${orderId}/assign-driver`, {
+            token: adminToken,
+            body: { driverId: driver!.id },
+          }),
           'asignar repartidor',
         );
         await step('out_for_delivery');
@@ -160,7 +183,9 @@ export async function startReal(): Promise<Api & { app: FastifyInstance }> {
       }
       if (to === 'out_for_delivery') return;
       const row = (await db.select().from(orders).where(eq(orders.id, orderId)))[0]!;
-      const detail = (await must(call('GET', `/v1/admin/orders/${orderId}`, { token: adminToken }), 'detalle')).body as {
+      const detail = (
+        await must(call('GET', `/v1/admin/orders/${orderId}`, { token: adminToken }), 'detalle')
+      ).body as {
         finalTotal: number | null;
         total: number;
       };
@@ -187,7 +212,10 @@ export async function startReal(): Promise<Api & { app: FastifyInstance }> {
 }
 
 export async function startDemo(
-  tamper?: (res: { status: number; headers: Record<string, string>; body: string }, req: { method: string; url: string }) => void,
+  tamper?: (
+    res: { status: number; headers: Record<string, string>; body: string },
+    req: { method: string; url: string },
+  ) => void,
 ): Promise<Api> {
   const demoClock = fakeClock(T0);
   const target = { fetch: (() => Promise.reject(new Error('sin red'))) as unknown as typeof fetch };
@@ -212,9 +240,17 @@ export async function startDemo(
       const r = await httpCall(BASE, target.fetch, m, p, o);
       if (!tamper) return r;
       // Solo para la prueba de mutación: "rompe" la respuesta como si el simulador se hubiera desviado.
-      const res = { status: r.status, headers: { ...r.headers }, body: r.body === null ? '' : JSON.stringify(r.body) };
+      const res = {
+        status: r.status,
+        headers: { ...r.headers },
+        body: r.body === null ? '' : JSON.stringify(r.body),
+      };
       tamper(res, { method: m, url: p });
-      return { status: res.status, headers: res.headers, body: res.body ? JSON.parse(res.body) : null };
+      return {
+        status: res.status,
+        headers: res.headers,
+        body: res.body ? JSON.parse(res.body) : null,
+      };
     },
     otp: async () => '123456',
     async setStock(sku, onHand) {
@@ -269,7 +305,9 @@ export async function scenario(api: Api): Promise<Run> {
   await step('producto inexistente', 'GET', '/v1/products/nada');
 
   const sku = (s: string): { id: string; price: number } => {
-    for (const p of list.body.items as { variants: { sku: string; id: string; price: number }[] }[]) {
+    for (const p of list.body.items as {
+      variants: { sku: string; id: string; price: number }[];
+    }[]) {
       const v = p.variants.find((x) => x.sku === s);
       if (v) return v;
     }
@@ -279,7 +317,8 @@ export async function scenario(api: Api): Promise<Run> {
   const calamar = sku('JF-MAR-001');
   const combo = list.body.items
     .flatMap((p: { variants: { sku: string; id: string; pricingUnit: string }[] }) => p.variants)
-    .find((v: { pricingUnit: string }) => v.pricingUnit === 'unit') as { sku: string; id: string } | undefined;
+    .find((v: { pricingUnit: string }) => v.pricingUnit === 'unit') as
+    { sku: string; id: string } | undefined;
 
   // ── entrega ──
   await step('zona cubierta', 'GET', '/v1/delivery/zone?sector=Piantini&city=Santo%20Domingo');
@@ -298,7 +337,10 @@ export async function scenario(api: Api): Promise<Run> {
     body: { items: [{ variantId: shrimp.id, quantity: 400 }] },
   });
   await step('cotización fuera de zona', 'POST', '/v1/quote', {
-    body: { items: [{ variantId: shrimp.id, quantity: 400 }], address: { sector: 'Los Alcarrizos', city: 'Santiago' } },
+    body: {
+      items: [{ variantId: shrimp.id, quantity: 400 }],
+      address: { sector: 'Los Alcarrizos', city: 'Santiago' },
+    },
   });
   await step('cotización con envío gratis', 'POST', '/v1/quote', {
     body: { items: [{ variantId: shrimp.id, quantity: 1700 }], address: addrOk },
@@ -314,35 +356,58 @@ export async function scenario(api: Api): Promise<Run> {
     },
   });
   await step('cotización: carrito vacío', 'POST', '/v1/quote', { body: { items: [] } });
-  await step('cotización: variante inválida', 'POST', '/v1/quote', { body: { items: [{ variantId: 'x', quantity: 1 }] } });
+  await step('cotización: variante inválida', 'POST', '/v1/quote', {
+    body: { items: [{ variantId: 'x', quantity: 1 }] },
+  });
   await step('cotización: variante inexistente', 'POST', '/v1/quote', {
     body: { items: [{ variantId: '00000000-0000-4000-8000-000000000000', quantity: 100 }] },
   });
-  await step('cotización: bajo el mínimo del artículo', 'POST', '/v1/quote', { body: { items: [{ variantId: shrimp.id, quantity: 50 }] } });
-  await step('cotización: no es múltiplo del paso', 'POST', '/v1/quote', { body: { items: [{ variantId: shrimp.id, quantity: 125 }] } });
-  await step('cotización: sobre el máximo', 'POST', '/v1/quote', { body: { items: [{ variantId: shrimp.id, quantity: 10_100 }] } });
+  await step('cotización: bajo el mínimo del artículo', 'POST', '/v1/quote', {
+    body: { items: [{ variantId: shrimp.id, quantity: 50 }] },
+  });
+  await step('cotización: no es múltiplo del paso', 'POST', '/v1/quote', {
+    body: { items: [{ variantId: shrimp.id, quantity: 125 }] },
+  });
+  await step('cotización: sobre el máximo', 'POST', '/v1/quote', {
+    body: { items: [{ variantId: shrimp.id, quantity: 10_100 }] },
+  });
   if (combo) {
-    await step('cotización: demasiadas unidades', 'POST', '/v1/quote', { body: { items: [{ variantId: combo.id, quantity: 21 }] } });
+    await step('cotización: demasiadas unidades', 'POST', '/v1/quote', {
+      body: { items: [{ variantId: combo.id, quantity: 21 }] },
+    });
   }
 
   // ── error de stock ──
   const tight = sku('JF-MAR-003');
   await api.setStock('JF-MAR-003', 300);
-  await step('cotización: solo quedan 3 lb', 'POST', '/v1/quote', { body: { items: [{ variantId: tight.id, quantity: 500 }] } });
+  await step('cotización: solo quedan 3 lb', 'POST', '/v1/quote', {
+    body: { items: [{ variantId: tight.id, quantity: 500 }] },
+  });
   await api.setStock('JF-MAR-003', 0);
-  await step('cotización: agotado', 'POST', '/v1/quote', { body: { items: [{ variantId: tight.id, quantity: 100 }] } });
+  await step('cotización: agotado', 'POST', '/v1/quote', {
+    body: { items: [{ variantId: tight.id, quantity: 100 }] },
+  });
   await step('producto agotado en la lista', 'GET', '/v1/products/camaron');
 
   // ── cuenta ──
   const phone = '809-555-0111';
-  await step('código: teléfono inválido', 'POST', '/v1/auth/otp/request', { body: { phone: '305-555-0101' } });
+  await step('código: teléfono inválido', 'POST', '/v1/auth/otp/request', {
+    body: { phone: '305-555-0101' },
+  });
   await step('código: pedir', 'POST', '/v1/auth/otp/request', { body: { phone } });
-  await step('código: formato inválido', 'POST', '/v1/auth/otp/verify', { body: { phone, code: '12' } });
-  const verified = await step('código: verificar', 'POST', '/v1/auth/otp/verify', { body: { phone, code: await api.otp(phone) } });
+  await step('código: formato inválido', 'POST', '/v1/auth/otp/verify', {
+    body: { phone, code: '12' },
+  });
+  const verified = await step('código: verificar', 'POST', '/v1/auth/otp/verify', {
+    body: { phone, code: await api.otp(phone) },
+  });
   const token = verified.body.token as string;
   await step('yo (sin sesión)', 'GET', '/v1/me');
   await step('yo', 'GET', '/v1/me', { token });
-  await step('yo: cambiar nombre y correo', 'PATCH', '/v1/me', { token, body: { name: '  Andrés Prueba ', email: 'andres@ejemplo.do' } });
+  await step('yo: cambiar nombre y correo', 'PATCH', '/v1/me', {
+    token,
+    body: { name: '  Andrés Prueba ', email: 'andres@ejemplo.do' },
+  });
   await step('yo: correo inválido', 'PATCH', '/v1/me', { token, body: { email: 'no-es-correo' } });
   await step('yo: sin cambios', 'PATCH', '/v1/me', { token, body: {} });
 
@@ -356,15 +421,29 @@ export async function scenario(api: Api): Promise<Run> {
     latitude: 18.4861,
     longitude: -69.9312,
   };
-  const a1 = await step('dirección: crear la primera', 'POST', '/v1/me/addresses', { token, body: addrBody });
+  const a1 = await step('dirección: crear la primera', 'POST', '/v1/me/addresses', {
+    token,
+    body: addrBody,
+  });
   const a2 = await step('dirección: crear otra predeterminada', 'POST', '/v1/me/addresses', {
     token,
     body: { ...addrBody, label: 'Trabajo', sector: 'Piantini', isDefault: true },
   });
   await step('dirección: lista', 'GET', '/v1/me/addresses', { token });
-  await step('dirección: editar', 'PUT', `/v1/me/addresses/${a1.body.id}`, { token, body: { ...addrBody, line1: 'Otra calle 5', isDefault: true } });
-  await step('dirección: datos inválidos', 'POST', '/v1/me/addresses', { token, body: { ...addrBody, line1: 'x', latitude: 40.7 } });
-  await step('dirección: borrar inexistente', 'DELETE', '/v1/me/addresses/00000000-0000-4000-8000-000000000000', { token });
+  await step('dirección: editar', 'PUT', `/v1/me/addresses/${a1.body.id}`, {
+    token,
+    body: { ...addrBody, line1: 'Otra calle 5', isDefault: true },
+  });
+  await step('dirección: datos inválidos', 'POST', '/v1/me/addresses', {
+    token,
+    body: { ...addrBody, line1: 'x', latitude: 40.7 },
+  });
+  await step(
+    'dirección: borrar inexistente',
+    'DELETE',
+    '/v1/me/addresses/00000000-0000-4000-8000-000000000000',
+    { token },
+  );
   await step('dirección: borrar', 'DELETE', `/v1/me/addresses/${a2.body.id}`, { token });
   await step('dirección: sin sesión', 'GET', '/v1/me/addresses');
 
@@ -378,57 +457,162 @@ export async function scenario(api: Api): Promise<Run> {
     ...over,
   });
   const idem = (k: string) => ({ 'Idempotency-Key': k });
-  const cash = await step('pedido efectivo: crear', 'POST', '/v1/orders', { token, headers: idem('contrato-cash-01'), body: cashBody({ notes: 'Sin hielo seco', substitutionPolicy: 'refund' }) });
-  const again = await step('pedido efectivo: reintento con la misma clave', 'POST', '/v1/orders', { token, headers: idem('contrato-cash-01'), body: cashBody({ notes: 'Sin hielo seco', substitutionPolicy: 'refund' }) });
-  recs.push({ label: 'pedido efectivo: el reintento devuelve el mismo pedido', status: again.body.id === cash.body.id ? 200 : 500, body: null });
+  const cash = await step('pedido efectivo: crear', 'POST', '/v1/orders', {
+    token,
+    headers: idem('contrato-cash-01'),
+    body: cashBody({ notes: 'Sin hielo seco', substitutionPolicy: 'refund' }),
+  });
+  const again = await step('pedido efectivo: reintento con la misma clave', 'POST', '/v1/orders', {
+    token,
+    headers: idem('contrato-cash-01'),
+    body: cashBody({ notes: 'Sin hielo seco', substitutionPolicy: 'refund' }),
+  });
+  recs.push({
+    label: 'pedido efectivo: el reintento devuelve el mismo pedido',
+    status: again.body.id === cash.body.id ? 200 : 500,
+    body: null,
+  });
   await step('pedido efectivo: detalle', 'GET', `/v1/orders/${cash.body.id}`, { token });
   await step('pedidos: lista', 'GET', '/v1/orders', { token });
   await step('pedido: id inválido', 'GET', '/v1/orders/abc', { token });
-  await step('pedido: inexistente', 'GET', '/v1/orders/00000000-0000-4000-8000-000000000000', { token });
+  await step('pedido: inexistente', 'GET', '/v1/orders/00000000-0000-4000-8000-000000000000', {
+    token,
+  });
   await step('pedido: sin sesión', 'GET', `/v1/orders/${cash.body.id}`);
   await step('pedir de nuevo', 'GET', `/v1/orders/${cash.body.id}/reorder`, { token });
   await step('seguimiento antes de salir', 'GET', `/v1/orders/${cash.body.id}/tracking`, { token });
   await step('pedido: no es de tarjeta', 'POST', `/v1/orders/${cash.body.id}/pay`, { token });
-  await step('pedido: no es de transferencia', 'POST', `/v1/orders/${cash.body.id}/transfer-proof`, { token, body: { reference: 'abc123' } });
-  const cancelled = await step('cancelar (confirmado)', 'POST', `/v1/orders/${cash.body.id}/cancel`, { token, body: { reason: 'Cambié de idea' } });
+  await step(
+    'pedido: no es de transferencia',
+    'POST',
+    `/v1/orders/${cash.body.id}/transfer-proof`,
+    { token, body: { reference: 'abc123' } },
+  );
+  const cancelled = await step(
+    'cancelar (confirmado)',
+    'POST',
+    `/v1/orders/${cash.body.id}/cancel`,
+    { token, body: { reason: 'Cambié de idea' } },
+  );
   await step('cancelar otra vez', 'POST', `/v1/orders/${cash.body.id}/cancel`, { token, body: {} });
-  recs.push({ label: 'cancelar: el stock vuelve', status: cancelled.body.status === 'cancelled' ? 200 : 500, body: null });
+  recs.push({
+    label: 'cancelar: el stock vuelve',
+    status: cancelled.body.status === 'cancelled' ? 200 : 500,
+    body: null,
+  });
   await step('el stock vuelve tras cancelar', 'GET', '/v1/products/camaron');
 
   // ── errores al crear un pedido ──
-  await step('pedido: sin dirección', 'POST', '/v1/orders', { token, body: cashBody({ addressId: undefined }) });
-  await step('pedido: clave de idempotencia corta', 'POST', '/v1/orders', { token, headers: idem('corta'), body: cashBody() });
-  await step('pedido: dirección inexistente', 'POST', '/v1/orders', { token, body: cashBody({ addressId: '00000000-0000-4000-8000-000000000000' }) });
-  await step('pedido: fuera de zona', 'POST', '/v1/orders', { token, body: cashBody({ addressId: undefined, address: { ...addrBody, sector: 'Los Alcarrizos', city: 'Santiago' } }) });
-  await step('pedido: bajo el mínimo de la zona', 'POST', '/v1/orders', { token, body: cashBody({ items: [{ variantId: shrimp.id, quantity: 100 }] }) });
-  await step('pedido: franja que no existe', 'POST', '/v1/orders', { token, body: cashBody({ slotStart: '2026-10-07T05:00:00.000Z' }) });
-  await step('pedido: método inválido', 'POST', '/v1/orders', { token, body: cashBody({ paymentMethod: 'bitcoin' }) });
-  await step('pedido: sin stock', 'POST', '/v1/orders', { token, body: cashBody({ items: [{ variantId: tight.id, quantity: 100 }] }) });
+  await step('pedido: sin dirección', 'POST', '/v1/orders', {
+    token,
+    body: cashBody({ addressId: undefined }),
+  });
+  await step('pedido: clave de idempotencia corta', 'POST', '/v1/orders', {
+    token,
+    headers: idem('corta'),
+    body: cashBody(),
+  });
+  await step('pedido: dirección inexistente', 'POST', '/v1/orders', {
+    token,
+    body: cashBody({ addressId: '00000000-0000-4000-8000-000000000000' }),
+  });
+  await step('pedido: fuera de zona', 'POST', '/v1/orders', {
+    token,
+    body: cashBody({
+      addressId: undefined,
+      address: { ...addrBody, sector: 'Los Alcarrizos', city: 'Santiago' },
+    }),
+  });
+  await step('pedido: bajo el mínimo de la zona', 'POST', '/v1/orders', {
+    token,
+    body: cashBody({ items: [{ variantId: shrimp.id, quantity: 100 }] }),
+  });
+  await step('pedido: franja que no existe', 'POST', '/v1/orders', {
+    token,
+    body: cashBody({ slotStart: '2026-10-07T05:00:00.000Z' }),
+  });
+  await step('pedido: método inválido', 'POST', '/v1/orders', {
+    token,
+    body: cashBody({ paymentMethod: 'bitcoin' }),
+  });
+  await step('pedido: sin stock', 'POST', '/v1/orders', {
+    token,
+    body: cashBody({ items: [{ variantId: tight.id, quantity: 100 }] }),
+  });
 
   // ── tarjeta ──
-  const card = await step('pedido tarjeta: crear', 'POST', '/v1/orders', { token, headers: idem('contrato-card-01'), body: cashBody({ paymentMethod: 'card', slotStart: slot(1) }) });
-  const pay = await step('pedido tarjeta: iniciar el pago', 'POST', `/v1/orders/${card.body.id}/pay`, { token });
-  recs.push({ label: 'pedido tarjeta: la dirección de pago es una URL', status: /^https?:\/\//.test(pay.body.redirectUrl) ? 200 : 500, body: null });
-  await step('pedido tarjeta: detalle con el intento pendiente', 'GET', `/v1/orders/${card.body.id}`, { token });
+  const card = await step('pedido tarjeta: crear', 'POST', '/v1/orders', {
+    token,
+    headers: idem('contrato-card-01'),
+    body: cashBody({ paymentMethod: 'card', slotStart: slot(1) }),
+  });
+  const pay = await step(
+    'pedido tarjeta: iniciar el pago',
+    'POST',
+    `/v1/orders/${card.body.id}/pay`,
+    { token },
+  );
+  recs.push({
+    label: 'pedido tarjeta: la dirección de pago es una URL',
+    status: /^https?:\/\//.test(pay.body.redirectUrl) ? 200 : 500,
+    body: null,
+  });
+  await step(
+    'pedido tarjeta: detalle con el intento pendiente',
+    'GET',
+    `/v1/orders/${card.body.id}`,
+    { token },
+  );
   await step('pedido tarjeta: otro pago de otra persona', 'POST', `/v1/orders/${card.body.id}/pay`);
 
   // ── transferencia ──
-  const transfer = await step('pedido transferencia: crear', 'POST', '/v1/orders', { token, headers: idem('contrato-transfer-1'), body: cashBody({ paymentMethod: 'transfer', slotStart: slot(2) }) });
+  const transfer = await step('pedido transferencia: crear', 'POST', '/v1/orders', {
+    token,
+    headers: idem('contrato-transfer-1'),
+    body: cashBody({ paymentMethod: 'transfer', slotStart: slot(2) }),
+  });
   await step('transferencia: datos bancarios', 'GET', '/v1/payments/transfer-info', { token });
-  await step('transferencia: referencia inválida', 'POST', `/v1/orders/${transfer.body.id}/transfer-proof`, { token, body: { reference: 'x' } });
-  await step('transferencia: enviar la referencia', 'POST', `/v1/orders/${transfer.body.id}/transfer-proof`, { token, body: { reference: '889900123', note: 'Banco Popular' } });
+  await step(
+    'transferencia: referencia inválida',
+    'POST',
+    `/v1/orders/${transfer.body.id}/transfer-proof`,
+    { token, body: { reference: 'x' } },
+  );
+  await step(
+    'transferencia: enviar la referencia',
+    'POST',
+    `/v1/orders/${transfer.body.id}/transfer-proof`,
+    { token, body: { reference: '889900123', note: 'Banco Popular' } },
+  );
 
   // El tiempo solo corre en la demostración (en el API real lo mueve el personal), así que antes de
   // avanzar el reloj se cancelan los pedidos que esperan pago: los dos lados llegan al mismo estado.
-  await step('cancelar el pedido de tarjeta que esperaba pago', 'POST', `/v1/orders/${card.body.id}/cancel`, { token, body: {} });
-  await step('cancelar el pedido de transferencia que esperaba pago', 'POST', `/v1/orders/${transfer.body.id}/cancel`, { token, body: { reason: 'Prueba' } });
+  await step(
+    'cancelar el pedido de tarjeta que esperaba pago',
+    'POST',
+    `/v1/orders/${card.body.id}/cancel`,
+    { token, body: {} },
+  );
+  await step(
+    'cancelar el pedido de transferencia que esperaba pago',
+    'POST',
+    `/v1/orders/${transfer.body.id}/cancel`,
+    { token, body: { reason: 'Prueba' } },
+  );
 
   // ── ciclo de vida: en camino y entregado ──
-  const ride = await step('pedido para entregar: crear', 'POST', '/v1/orders', { token, headers: idem('contrato-ride-001'), body: cashBody({ slotStart: slot(3) }) });
+  const ride = await step('pedido para entregar: crear', 'POST', '/v1/orders', {
+    token,
+    headers: idem('contrato-ride-001'),
+    body: cashBody({ slotStart: slot(3) }),
+  });
   await api.progress(ride.body.id, 'out_for_delivery');
   await step('en camino: detalle (PIN visible)', 'GET', `/v1/orders/${ride.body.id}`, { token });
   await step('en camino: seguimiento', 'GET', `/v1/orders/${ride.body.id}/tracking`, { token });
-  await step('en camino: ya no se puede cancelar', 'POST', `/v1/orders/${ride.body.id}/cancel`, { token, body: {} });
+  await step('en camino: ya no se puede cancelar', 'POST', `/v1/orders/${ride.body.id}/cancel`, {
+    token,
+    body: {},
+  });
   await api.progress(ride.body.id, 'delivered');
   await step('entregado: detalle', 'GET', `/v1/orders/${ride.body.id}`, { token });
   await step('entregado: seguimiento', 'GET', `/v1/orders/${ride.body.id}/tracking`, { token });
@@ -447,16 +631,48 @@ export async function scenario(api: Api): Promise<Run> {
   await q('ENVIOGRATIS');
   await q('AHORRA200');
   await q('BIENVENIDO10', token, 350);
-  await step('cupón: pedido con cupón', 'POST', '/v1/orders', { token, headers: idem('contrato-cupon-01'), body: cashBody({ items: [{ variantId: shrimp.id, quantity: 800 }], couponCode: 'BIENVENIDO10', slotStart: slot(4) }) });
-  await step('cupón: pedido con cupón inválido', 'POST', '/v1/orders', { token, headers: idem('contrato-cupon-02'), body: cashBody({ items: [{ variantId: shrimp.id, quantity: 800 }], couponCode: 'NOEXISTE', slotStart: slot(4) }) });
+  await step('cupón: pedido con cupón', 'POST', '/v1/orders', {
+    token,
+    headers: idem('contrato-cupon-01'),
+    body: cashBody({
+      items: [{ variantId: shrimp.id, quantity: 800 }],
+      couponCode: 'BIENVENIDO10',
+      slotStart: slot(4),
+    }),
+  });
+  await step('cupón: pedido con cupón inválido', 'POST', '/v1/orders', {
+    token,
+    headers: idem('contrato-cupon-02'),
+    body: cashBody({
+      items: [{ variantId: shrimp.id, quantity: 800 }],
+      couponCode: 'NOEXISTE',
+      slotStart: slot(4),
+    }),
+  });
 
   // ── dispositivos (push) ──
   const device = 'ExponentPushToken[abcdefghijklmnop]';
-  await step('dispositivo: registrar', 'POST', '/v1/me/devices', { token, body: { token: device, platform: 'ios' } });
-  await step('dispositivo: token inválido', 'POST', '/v1/me/devices', { token, body: { token: 'malo', platform: 'ios' } });
-  await step('dispositivo: plataforma inválida', 'POST', '/v1/me/devices', { token, body: { token: device, platform: 'palm' } });
-  await step('dispositivo: dar de baja', 'DELETE', `/v1/me/devices/${encodeURIComponent(device)}`, { token });
-  await step('dispositivo: dar de baja otra vez', 'DELETE', `/v1/me/devices/${encodeURIComponent(device)}`, { token });
+  await step('dispositivo: registrar', 'POST', '/v1/me/devices', {
+    token,
+    body: { token: device, platform: 'ios' },
+  });
+  await step('dispositivo: token inválido', 'POST', '/v1/me/devices', {
+    token,
+    body: { token: 'malo', platform: 'ios' },
+  });
+  await step('dispositivo: plataforma inválida', 'POST', '/v1/me/devices', {
+    token,
+    body: { token: device, platform: 'palm' },
+  });
+  await step('dispositivo: dar de baja', 'DELETE', `/v1/me/devices/${encodeURIComponent(device)}`, {
+    token,
+  });
+  await step(
+    'dispositivo: dar de baja otra vez',
+    'DELETE',
+    `/v1/me/devices/${encodeURIComponent(device)}`,
+    { token },
+  );
 
   // ── ruta que no existe y borrar la cuenta ──
   await step('ruta inexistente', 'GET', '/v1/no-existe');
@@ -465,25 +681,71 @@ export async function scenario(api: Api): Promise<Run> {
   return { recs };
 }
 
-
 /** Valores que deben ser idénticos en ambos (mismo código de dinero, mismas franjas, mismos textos). */
 export const SAME_VALUES: Record<string, string[]> = {
-  'franjas': ['0.start', '0.end', '0.remaining', '1.start'],
+  franjas: ['0.start', '0.end', '0.remaining', '1.start'],
   'zona cubierta': ['covered', 'feeCentavos', 'minOrderCentavos', 'freeOverCentavos', 'zone.name'],
-  'cotización con dirección': ['subtotal', 'itbis', 'deliveryFee', 'total', 'authorizedAmount', 'missingForMinimum', 'coverage', 'demo'],
-  'cotización sin dirección': ['subtotal', 'itbis', 'deliveryFee', 'total', 'authorizedAmount', 'coverage'],
-  'cotización con envío gratis': ['subtotal', 'deliveryFee', 'freeDelivery', 'total', 'missingForFreeDelivery'],
-  'cotización con dos líneas': ['subtotal', 'itbis', 'total', 'lines.0.net', 'lines.1.net', 'lines.0.itbis'],
-  'cupón BIENVENIDO10': ['subtotal', 'discount', 'deliveryFee', 'total', 'coupon.code', 'coupon.discount', 'coupon.description', 'couponError'],
+  'cotización con dirección': [
+    'subtotal',
+    'itbis',
+    'deliveryFee',
+    'total',
+    'authorizedAmount',
+    'missingForMinimum',
+    'coverage',
+    'demo',
+  ],
+  'cotización sin dirección': [
+    'subtotal',
+    'itbis',
+    'deliveryFee',
+    'total',
+    'authorizedAmount',
+    'coverage',
+  ],
+  'cotización con envío gratis': [
+    'subtotal',
+    'deliveryFee',
+    'freeDelivery',
+    'total',
+    'missingForFreeDelivery',
+  ],
+  'cotización con dos líneas': [
+    'subtotal',
+    'itbis',
+    'total',
+    'lines.0.net',
+    'lines.1.net',
+    'lines.0.itbis',
+  ],
+  'cupón BIENVENIDO10': [
+    'subtotal',
+    'discount',
+    'deliveryFee',
+    'total',
+    'coupon.code',
+    'coupon.discount',
+    'coupon.description',
+    'couponError',
+  ],
   'cupón ENVIOGRATIS': ['deliveryFee', 'freeDelivery', 'coupon.discount', 'coupon.description'],
   'cupón AHORRA200': ['subtotal', 'discount', 'total', 'coupon.description', 'couponError'],
   'cupón bienvenido10 sin sesión': ['couponError'],
   'cupón NOEXISTE': ['couponError'],
-  'pedido efectivo: crear': ['subtotal', 'itbis', 'deliveryFee', 'total', 'authorizedAmount', 'status', 'code', 'items.0.lineTotal', 'items.0.unitPrice'],
+  'pedido efectivo: crear': [
+    'subtotal',
+    'itbis',
+    'deliveryFee',
+    'total',
+    'authorizedAmount',
+    'status',
+    'code',
+    'items.0.lineTotal',
+    'items.0.unitPrice',
+  ],
   'pedido tarjeta: crear': ['status', 'total', 'deliveryPin'],
   'cupón: pedido con cupón': ['discount', 'couponCode', 'total'],
 };
-
 
 /** Todas las diferencias entre las dos corridas (forma + valores obligatorios). Vacío = el contrato se cumple. */
 export function compareRuns(real: Run, demo: Run, opts: { values?: boolean } = {}): string[] {

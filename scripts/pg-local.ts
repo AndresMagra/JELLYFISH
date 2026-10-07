@@ -62,7 +62,8 @@ function versionDirs(base: string): string[] {
 export function findPgBin(): { dir: string; origin: string } {
   const tried: string[] = [];
   const candidates: { dir: string; origin: string }[] = [];
-  if (process.env.PG_BIN_DIR) candidates.push({ dir: process.env.PG_BIN_DIR, origin: 'PG_BIN_DIR' });
+  if (process.env.PG_BIN_DIR)
+    candidates.push({ dir: process.env.PG_BIN_DIR, origin: 'PG_BIN_DIR' });
   candidates.push({
     dir: join(
       root,
@@ -77,12 +78,7 @@ export function findPgBin(): { dir: string; origin: string } {
   for (const d of (process.env.PATH ?? '').split(process.platform === 'win32' ? ';' : ':')) {
     if (d) candidates.push({ dir: d, origin: 'PATH' });
   }
-  for (const base of [
-    '/usr/lib/postgresql',
-    '/usr/local/opt',
-    '/opt/homebrew/opt',
-    '/usr/pgsql',
-  ]) {
+  for (const base of ['/usr/lib/postgresql', '/usr/local/opt', '/opt/homebrew/opt', '/usr/pgsql']) {
     for (const d of versionDirs(base)) candidates.push({ dir: d, origin: base });
   }
   for (const c of candidates) {
@@ -251,7 +247,13 @@ export async function startServer(dir: string): Promise<Server> {
 
 export function stopServer(s: Server) {
   const ext = process.platform === 'win32' ? '.exe' : '';
-  exec(s.runAs, join(s.bin, `pg_ctl${ext}`), ['-D', join(s.dir, 'data'), '-m', 'immediate', 'stop']);
+  exec(s.runAs, join(s.bin, `pg_ctl${ext}`), [
+    '-D',
+    join(s.dir, 'data'),
+    '-m',
+    'immediate',
+    'stop',
+  ]);
   if (process.env.PG_LOCAL_KEEP === '1') {
     console.error(`Datos conservados en ${s.dir}`);
     return;
@@ -293,7 +295,11 @@ async function runTests(extra: string[]): Promise<number> {
   }
   try {
     server = await startServer(dir);
-    const vitest = join(root, 'node_modules/.bin', process.platform === 'win32' ? 'vitest.cmd' : 'vitest');
+    const vitest = join(
+      root,
+      'node_modules/.bin',
+      process.platform === 'win32' ? 'vitest.cmd' : 'vitest',
+    );
     return await new Promise<number>((done, fail) => {
       child = spawn(vitest, vitestArgs(extra), {
         cwd: root,

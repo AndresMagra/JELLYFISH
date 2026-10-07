@@ -108,12 +108,8 @@
           "name": "addresses_user_id_users_id_fk",
           "tableFrom": "addresses",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -331,12 +327,8 @@
           "name": "cash_settlements_driver_id_users_id_fk",
           "tableFrom": "cash_settlements",
           "tableTo": "users",
-          "columnsFrom": [
-            "driver_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["driver_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -344,12 +336,8 @@
           "name": "cash_settlements_settled_by_users_id_fk",
           "tableFrom": "cash_settlements",
           "tableTo": "users",
-          "columnsFrom": [
-            "settled_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["settled_by"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -490,12 +478,8 @@
           "name": "coupon_redemptions_coupon_id_coupons_id_fk",
           "tableFrom": "coupon_redemptions",
           "tableTo": "coupons",
-          "columnsFrom": [
-            "coupon_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["coupon_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -503,12 +487,8 @@
           "name": "coupon_redemptions_user_id_users_id_fk",
           "tableFrom": "coupon_redemptions",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -516,12 +496,8 @@
           "name": "coupon_redemptions_order_id_orders_id_fk",
           "tableFrom": "coupon_redemptions",
           "tableTo": "orders",
-          "columnsFrom": [
-            "order_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["order_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -792,12 +768,8 @@
           "name": "device_tokens_user_id_users_id_fk",
           "tableFrom": "device_tokens",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -856,12 +828,8 @@
           "name": "driver_locations_driver_id_users_id_fk",
           "tableFrom": "driver_locations",
           "tableTo": "users",
-          "columnsFrom": [
-            "driver_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["driver_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -869,12 +837,8 @@
           "name": "driver_locations_order_id_orders_id_fk",
           "tableFrom": "driver_locations",
           "tableTo": "orders",
-          "columnsFrom": [
-            "order_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["order_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -969,12 +933,8 @@
           "name": "inventory_movements_variant_id_variants_id_fk",
           "tableFrom": "inventory_movements",
           "tableTo": "variants",
-          "columnsFrom": [
-            "variant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["variant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1063,12 +1023,8 @@
           "name": "order_events_order_id_orders_id_fk",
           "tableFrom": "order_events",
           "tableTo": "orders",
-          "columnsFrom": [
-            "order_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["order_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1193,12 +1149,8 @@
           "name": "order_items_order_id_orders_id_fk",
           "tableFrom": "order_items",
           "tableTo": "orders",
-          "columnsFrom": [
-            "order_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["order_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -1206,12 +1158,8 @@
           "name": "order_items_variant_id_variants_id_fk",
           "tableFrom": "order_items",
           "tableTo": "variants",
-          "columnsFrom": [
-            "variant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["variant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1507,12 +1455,8 @@
           "name": "orders_user_id_users_id_fk",
           "tableFrom": "orders",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -1520,12 +1464,8 @@
           "name": "orders_zone_id_delivery_zones_id_fk",
           "tableFrom": "orders",
           "tableTo": "delivery_zones",
-          "columnsFrom": [
-            "zone_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["zone_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -1533,12 +1473,8 @@
           "name": "orders_driver_id_users_id_fk",
           "tableFrom": "orders",
           "tableTo": "users",
-          "columnsFrom": [
-            "driver_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["driver_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1779,12 +1715,8 @@
           "name": "payments_order_id_orders_id_fk",
           "tableFrom": "payments",
           "tableTo": "orders",
-          "columnsFrom": [
-            "order_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["order_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -1792,12 +1724,8 @@
           "name": "payments_collected_by_users_id_fk",
           "tableFrom": "payments",
           "tableTo": "users",
-          "columnsFrom": [
-            "collected_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["collected_by"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1950,12 +1878,8 @@
           "name": "products_category_slug_categories_slug_fk",
           "tableFrom": "products",
           "tableTo": "categories",
-          "columnsFrom": [
-            "category_slug"
-          ],
-          "columnsTo": [
-            "slug"
-          ],
+          "columnsFrom": ["category_slug"],
+          "columnsTo": ["slug"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2062,12 +1986,8 @@
           "name": "stock_lots_variant_id_variants_id_fk",
           "tableFrom": "stock_lots",
           "tableTo": "variants",
-          "columnsFrom": [
-            "variant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["variant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -2075,12 +1995,8 @@
           "name": "stock_lots_received_by_users_id_fk",
           "tableFrom": "stock_lots",
           "tableTo": "users",
-          "columnsFrom": [
-            "received_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["received_by"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -2371,12 +2287,8 @@
           "name": "variants_product_id_products_id_fk",
           "tableFrom": "variants",
           "tableTo": "products",
-          "columnsFrom": [
-            "product_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["product_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }

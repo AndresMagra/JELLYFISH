@@ -746,6 +746,33 @@ describe('bitácora de auditoría', () => {
       expect(seen.filter((i) => i.createdAt === instant)).toHaveLength(7);
     });
 
+    it('el servicio nunca entrega más de 200 filas por página, aunque se lo pidan', async () => {
+      const base = nextTime().getTime();
+      await w.handle.db.insert(auditLog).values(
+        Array.from({ length: 205 }, (_, i) => ({
+          method: 'POST',
+          path: '/v1/admin/relleno',
+          action: 'relleno.create',
+          status: 200,
+          createdAt: new Date(base + i),
+        })),
+      );
+      try {
+        const page = await app.audit.list({ limit: 1000, action: 'relleno.create' });
+        expect(page.items).toHaveLength(200);
+        expect(page.nextCursor).toEqual(expect.any(String));
+        const rest = await app.audit.list({ before: page.nextCursor!, action: 'relleno.create' });
+        expect(rest.items).toHaveLength(5);
+        expect(rest.nextCursor).toBeNull();
+        expect((await app.audit.list({ limit: 0, action: 'relleno.create' })).items).toHaveLength(
+          1,
+        );
+      } finally {
+        // no deja filas "del futuro" que alteren el orden de las demás pruebas
+        await w.handle.db.delete(auditLog).where(eq(auditLog.action, 'relleno.create'));
+      }
+    });
+
     it('filtra por persona y por acción (exacta o por prefijo)', async () => {
       const byStaff = json(
         await app.inject({ url: `/v1/admin/audit?actorId=${staffId}&limit=200`, headers: admin }),

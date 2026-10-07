@@ -91,4 +91,3 @@ describe('contrato: el servidor de demostración responde como el API real', () 
     expect(PENDING_IN_REAL_API).toEqual([]);
   });
 });
-
