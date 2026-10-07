@@ -1,5 +1,4 @@
 import type { ApiErrorBody } from '@jellyfish/shared';
-import { API_URL } from '../lib/config';
 
 export class ApiError extends Error {
   constructor(
@@ -13,11 +12,17 @@ export class ApiError extends Error {
   }
 }
 
+let baseUrl = '';
 let getToken: () => string | null = () => null;
 let onUnauthorized: () => void = () => {};
 
-/** La sesión registra aquí cómo obtener el token y qué hacer si el servidor responde 401. */
-export function configureApi(opts: { getToken: () => string | null; onUnauthorized: () => void }) {
+/** Cada app fija su URL del API y cómo obtener el token / reaccionar a un 401. */
+export function configureApi(opts: {
+  baseUrl: string;
+  getToken: () => string | null;
+  onUnauthorized: () => void;
+}) {
+  baseUrl = opts.baseUrl.replace(/\/+$/, '');
   getToken = opts.getToken;
   onUnauthorized = opts.onUnauthorized;
 }
@@ -32,7 +37,7 @@ interface RequestOptions {
 }
 
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const url = new URL(`${API_URL}${path}`);
+  const url = new URL(`${baseUrl}${path}`);
   for (const [k, v] of Object.entries(opts.query ?? {})) {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }

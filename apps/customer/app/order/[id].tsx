@@ -3,7 +3,24 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Alert, Platform, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { errorMessage } from '../../src/api/client';
+import {
+  Badge,
+  Button,
+  Card,
+  Divider,
+  ErrorState,
+  Header,
+  Icon,
+  Row,
+  Skeleton,
+  Text,
+  TextField,
+  dateTimeLabel,
+  errorMessage,
+  quantityLabel,
+  slotLabel,
+  useTheme,
+} from '@jellyfish/mobile-core';
 import {
   useCancelOrder,
   useOrder,
@@ -11,21 +28,7 @@ import {
   useSubmitTransferProof,
   useTransferInfo,
 } from '../../src/api/hooks';
-import { dateTimeLabel, quantityLabel, slotLabel } from '../../src/components/format';
-import { Header } from '../../src/components/Header';
-import { Icon } from '../../src/components/Icon';
-import {
-  Badge,
-  Button,
-  Card,
-  Divider,
-  ErrorState,
-  Row,
-  Skeleton,
-  TextField,
-} from '../../src/components/ui';
 import { openCardCheckout } from '../../src/lib/pay';
-import { Text, useTheme } from '../../src/theme';
 
 const STEPS: { status: OrderStatus; label: string; icon: Parameters<typeof Icon>[0]['name'] }[] = [
   { status: 'confirmed', label: 'Confirmado', icon: 'check-circle' },

@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useSession } from '../store/session';
+import { useSession } from '@jellyfish/mobile-core';
 
 /**
  * Lleva a iniciar sesión (y vuelve a `next` al terminar). Devuelve true si ya hay sesión.

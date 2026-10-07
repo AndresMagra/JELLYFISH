@@ -9,7 +9,7 @@ import {
 } from '@jellyfish/shared';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { plainStorage } from '../lib/storage';
+import { plainStorage } from '@jellyfish/mobile-core';
 
 export interface CartLine extends QuantityRules {
   variantId: string;

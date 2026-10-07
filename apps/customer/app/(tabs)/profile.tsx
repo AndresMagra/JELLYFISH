@@ -2,8 +2,20 @@ import { formatDominicanPhone } from '@jellyfish/shared';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Alert, Platform, View } from 'react-native';
-import { errorMessage } from '../../src/api/client';
-import { queryClient } from '../../src/api/query-client';
+import {
+  Button,
+  Card,
+  EmptyState,
+  Icon,
+  Screen,
+  SectionHeader,
+  Text,
+  TextField,
+  errorMessage,
+  queryClient,
+  useSession,
+  useTheme,
+} from '@jellyfish/mobile-core';
 import {
   useAddresses,
   useDeleteAccount,
@@ -11,17 +23,6 @@ import {
   useMe,
   useUpdateMe,
 } from '../../src/api/hooks';
-import { Icon } from '../../src/components/Icon';
-import {
-  Button,
-  Card,
-  EmptyState,
-  Screen,
-  SectionHeader,
-  TextField,
-} from '../../src/components/ui';
-import { useSession } from '../../src/store/session';
-import { Text, useTheme } from '../../src/theme';
 
 function confirm(title: string, message: string, onYes: () => void, yes: string) {
   if (Platform.OS === 'web') {

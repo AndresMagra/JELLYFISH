@@ -1,8 +1,8 @@
 import type { UserDTO } from '@jellyfish/shared';
 import { create } from 'zustand';
-import { configureApi } from '../api/client';
-import { queryClient } from '../api/query-client';
-import { secureStorage } from '../lib/storage';
+import { configureApi } from './api';
+import { queryClient } from './query-client';
+import { secureStorage } from './storage';
 
 const TOKEN_KEY = 'jellyfish.token';
 
@@ -38,9 +38,13 @@ export const useSession = create<SessionState>((set) => ({
   },
 }));
 
-configureApi({
-  getToken: () => useSession.getState().token,
-  onUnauthorized: () => {
-    void useSession.getState().signOut();
-  },
-});
+/** Cada app la llama una vez al arrancar con la URL de su API. */
+export function configureApp(opts: { apiUrl: string }) {
+  configureApi({
+    baseUrl: opts.apiUrl,
+    getToken: () => useSession.getState().token,
+    onUnauthorized: () => {
+      void useSession.getState().signOut();
+    },
+  });
+}

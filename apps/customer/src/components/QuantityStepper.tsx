@@ -1,9 +1,6 @@
 import { type QuantityRules, stepDown, stepUp } from '@jellyfish/shared';
 import { Pressable, View } from 'react-native';
-import { Text, useTheme } from '../theme';
-import { quantityLabel } from './format';
-import { Icon } from './Icon';
-import { tap } from './ui';
+import { Icon, Text, quantityLabel, tap, useTheme } from '@jellyfish/mobile-core';
 
 interface Props {
   rules: QuantityRules;

@@ -11,10 +11,17 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { queryClient } from '../src/api/query-client';
-import { useSession } from '../src/store/session';
-import { ThemeProvider, useTheme } from '../src/theme';
+import {
+  ThemeProvider,
+  configureApp,
+  queryClient,
+  useSession,
+  useTheme,
+} from '@jellyfish/mobile-core';
+import { API_URL } from '../src/lib/config';
 
+// Antes de cualquier pantalla: a qué API se conecta esta app y cómo reacciona a una sesión vencida.
+configureApp({ apiUrl: API_URL });
 void SplashScreen.preventAutoHideAsync();
 
 function Shell() {

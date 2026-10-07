@@ -14,7 +14,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { fonts, Text, useTheme } from '../theme';
+import { fonts, Text, useTheme } from './theme';
 import { Icon } from './Icon';
 
 export const tap = () => {

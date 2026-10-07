@@ -3,7 +3,25 @@ import { Redirect, router } from 'expo-router';
 import { useMemo, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { errorMessage } from '../src/api/client';
+import {
+  Button,
+  Card,
+  Chip,
+  Divider,
+  FooterBar,
+  Header,
+  Icon,
+  Row,
+  Skeleton,
+  Text,
+  TextField,
+  dayKey,
+  errorMessage,
+  slotLabel,
+  success,
+  useSession,
+  useTheme,
+} from '@jellyfish/mobile-core';
 import {
   useAddresses,
   useCreateOrder,
@@ -14,25 +32,9 @@ import {
   useStartPayment,
   useUpdateMe,
 } from '../src/api/hooks';
-import { dayKey, slotLabel } from '../src/components/format';
-import { Header } from '../src/components/Header';
-import { Icon } from '../src/components/Icon';
-import {
-  Button,
-  Card,
-  Chip,
-  Divider,
-  FooterBar,
-  Row,
-  Skeleton,
-  TextField,
-  success,
-} from '../src/components/ui';
 import { randomKey, shortHash } from '../src/lib/ids';
 import { openCardCheckout } from '../src/lib/pay';
 import { useCart } from '../src/store/cart';
-import { useSession } from '../src/store/session';
-import { Text, useTheme } from '../src/theme';
 
 const METHODS: {
   id: PaymentMethodName;

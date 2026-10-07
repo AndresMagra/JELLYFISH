@@ -4,11 +4,6 @@ import type { ComponentProps } from 'react';
 type Mci = ComponentProps<typeof MaterialCommunityIcons>['name'];
 type Fa6 = ComponentProps<typeof FontAwesome6>['name'];
 
-/** Icono de MaterialCommunityIcons con el nombre tipado. */
-export function Icon({ name, size = 22, color }: { name: Mci; size?: number; color: string }) {
-  return <MaterialCommunityIcons name={name} size={size} color={color} />;
-}
-
 interface CategoryLook {
   icon: { set: 'fa6'; name: Fa6 } | { set: 'mci'; name: Mci };
   /** Degradado del "retrato" del producto mientras no hay foto real. */

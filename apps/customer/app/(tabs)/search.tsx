@@ -3,12 +3,19 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { FlatList, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { errorMessage } from '../../src/api/client';
+import {
+  Chip,
+  EmptyState,
+  ErrorState,
+  Skeleton,
+  Text,
+  TextField,
+  errorMessage,
+  useTheme,
+} from '@jellyfish/mobile-core';
+import { CategoryGlyph } from '../../src/components/CategoryIcon';
 import { useCategories, useProducts } from '../../src/api/hooks';
-import { CategoryGlyph } from '../../src/components/Icon';
 import { ProductCard } from '../../src/components/ProductCard';
-import { Chip, EmptyState, ErrorState, Skeleton, TextField } from '../../src/components/ui';
-import { Text, useTheme } from '../../src/theme';
 
 /** Espera a que la persona deje de escribir antes de consultar. */
 function useDebounced<T>(value: T, ms: number): T {

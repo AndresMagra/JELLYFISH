@@ -3,21 +3,24 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useCategories, useProducts } from '../../src/api/hooks';
-import { CategoryGlyph, Icon, categoryLook } from '../../src/components/Icon';
-import { ProductCard } from '../../src/components/ProductCard';
 import {
   Badge,
   ErrorState,
+  Icon,
   IconButton,
   Screen,
   SectionHeader,
   Skeleton,
+  Text,
+  errorMessage,
+  fonts,
   tap,
-} from '../../src/components/ui';
-import { errorMessage } from '../../src/api/client';
+  useSession,
+  useTheme,
+} from '@jellyfish/mobile-core';
+import { CategoryGlyph, categoryLook } from '../../src/components/CategoryIcon';
+import { ProductCard } from '../../src/components/ProductCard';
 import { selectCount, useCart } from '../../src/store/cart';
-import { useSession } from '../../src/store/session';
-import { fonts, Text, useTheme } from '../../src/theme';
 
 const CARD_W = 158;
 

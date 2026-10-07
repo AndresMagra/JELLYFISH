@@ -3,12 +3,20 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { errorMessage } from '../src/api/client';
+import {
+  Badge,
+  Button,
+  Card,
+  Chip,
+  FooterBar,
+  Header,
+  Icon,
+  Text,
+  TextField,
+  errorMessage,
+  useTheme,
+} from '@jellyfish/mobile-core';
 import { useCreateAddress, useZoneCheck } from '../src/api/hooks';
-import { Header } from '../src/components/Header';
-import { Icon } from '../src/components/Icon';
-import { Badge, Button, Card, Chip, FooterBar, TextField } from '../src/components/ui';
-import { Text, useTheme } from '../src/theme';
 
 const LABELS = ['Casa', 'Trabajo', 'Otro'];
 

@@ -3,12 +3,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { errorMessage } from '../../src/api/client';
-import { useProduct } from '../../src/api/hooks';
-import { priceLabel } from '../../src/components/format';
-import { Icon } from '../../src/components/Icon';
-import { ProductImage } from '../../src/components/ProductImage';
-import { QuantityStepper } from '../../src/components/QuantityStepper';
 import {
   Badge,
   Button,
@@ -16,12 +10,19 @@ import {
   Chip,
   ErrorState,
   FooterBar,
+  Icon,
   IconButton,
   Skeleton,
+  Text,
+  errorMessage,
+  priceLabel,
   success,
-} from '../../src/components/ui';
+  useTheme,
+} from '@jellyfish/mobile-core';
+import { useProduct } from '../../src/api/hooks';
+import { ProductImage } from '../../src/components/ProductImage';
+import { QuantityStepper } from '../../src/components/QuantityStepper';
 import { quantityOf, selectCount, useCart } from '../../src/store/cart';
-import { Text, useTheme } from '../../src/theme';
 
 export default function ProductScreen() {
   const { group } = useLocalSearchParams<{ group: string }>();

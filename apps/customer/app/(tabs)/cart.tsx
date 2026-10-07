@@ -2,25 +2,26 @@ import { formatDOP } from '@jellyfish/shared';
 import { router } from 'expo-router';
 import { View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { errorMessage } from '../../src/api/client';
-import { useAddresses, useQuote } from '../../src/api/hooks';
-import { priceLabel } from '../../src/components/format';
-import { Icon } from '../../src/components/Icon';
-import { ProductImage } from '../../src/components/ProductImage';
-import { QuantityStepper } from '../../src/components/QuantityStepper';
 import {
   Button,
   Card,
   Divider,
   EmptyState,
   FooterBar,
+  Icon,
   Row,
   Skeleton,
-} from '../../src/components/ui';
+  Text,
+  errorMessage,
+  priceLabel,
+  useTheme,
+} from '@jellyfish/mobile-core';
+import { useAddresses, useQuote } from '../../src/api/hooks';
+import { ProductImage } from '../../src/components/ProductImage';
+import { QuantityStepper } from '../../src/components/QuantityStepper';
 import { ScrollView } from 'react-native';
 import { requireSession } from '../../src/lib/auth';
 import { localTotals, useCart } from '../../src/store/cart';
-import { Text, useTheme } from '../../src/theme';
 
 export default function Cart() {
   const { colors, palette, spacing, radii } = useTheme();

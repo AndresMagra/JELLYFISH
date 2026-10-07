@@ -2,7 +2,7 @@ import type { ProductDTO } from '@jellyfish/shared';
 import { formatDOP } from '@jellyfish/shared';
 import { router } from 'expo-router';
 import { Pressable, View } from 'react-native';
-import { Text, useTheme } from '../theme';
+import { Text, useTheme } from '@jellyfish/mobile-core';
 import { ProductImage } from './ProductImage';
 
 interface Props {

@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import type { ReactNode } from 'react';
 import { View } from 'react-native';
-import { Text, useTheme } from '../theme';
+import { Text, useTheme } from './theme';
 import { IconButton } from './ui';
 
 /** Cabecera con botón de volver, para las pantallas fuera de las pestañas. */

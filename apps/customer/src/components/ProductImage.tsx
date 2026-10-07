@@ -2,8 +2,8 @@ import { es } from '@jellyfish/shared';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import { Icon, CategoryGlyph, categoryLook } from './Icon';
-import { Text } from '../theme';
+import { Icon, Text } from '@jellyfish/mobile-core';
+import { CategoryGlyph, categoryLook } from './CategoryIcon';
 
 interface Props {
   category: string;

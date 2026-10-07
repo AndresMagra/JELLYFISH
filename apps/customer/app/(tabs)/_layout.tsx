@@ -1,8 +1,7 @@
 import { Tabs } from 'expo-router';
 import type { ComponentProps } from 'react';
 import { Platform, StyleSheet } from 'react-native';
-import { Icon } from '../../src/components/Icon';
-import { fonts, useTheme } from '../../src/theme';
+import { Icon, fonts, useTheme } from '@jellyfish/mobile-core';
 import { selectCount, useCart } from '../../src/store/cart';
 
 type IconName = Parameters<typeof Icon>[0]['name'];

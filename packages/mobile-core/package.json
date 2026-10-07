@@ -1,0 +1,29 @@
+{
+  "name": "@jellyfish/mobile-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tema, componentes, cliente de API, sesión y login por celular compartidos por las apps móviles",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@jellyfish/shared": "*"
+  },
+  "peerDependencies": {
+    "@expo/vector-icons": "*",
+    "@react-native-async-storage/async-storage": "*",
+    "@tanstack/react-query": "*",
+    "expo-haptics": "*",
+    "expo-router": "*",
+    "expo-secure-store": "*",
+    "react": "*",
+    "react-native": "*",
+    "react-native-safe-area-context": "*",
+    "zustand": "*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
