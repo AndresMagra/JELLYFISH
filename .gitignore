@@ -15,3 +15,5 @@ tmp/
 apps/customer/dist/
 apps/customer/.expo/
 apps/admin/dist/
+apps/driver/dist/
+apps/driver/.expo/

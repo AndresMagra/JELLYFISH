@@ -23,6 +23,7 @@ npm test                 # 190 pruebas (Vitest + PGlite, Postgres real en memori
 npm run typecheck        # API + paquetes + app del cliente
 npm run e2e:customer     # recorre la app en Chromium contra el API real (capturas en tmp/e2e)
 npm run e2e:admin        # recorre el panel (sin modo demo) hasta el cuadre de caja (tmp/e2e-admin)
+npm run e2e:driver       # un repartidor entrega 3 pedidos: efectivo, ya pagado y fallido (tmp/e2e-driver)
 npm run catalog:check    # valida un CSV de inventario sin tocar nada
 ```
 
@@ -93,3 +94,16 @@ npm run dev -w @jellyfish/admin                # http://localhost:5173
 - **Pedidos:** tablero que se actualiza solo; en el detalle se registran los pesos reales, se asigna repartidor, se cobra el efectivo y se cierra la entrega.
 - **Pagos y caja:** devoluciones pendientes, transferencias por verificar y el cuadre de efectivo por repartidor.
 - Producción: define `CORS_ORIGINS=https://tu-panel.example` en el API (por defecto, en producción, no acepta ningún origen web).
+
+## App del repartidor
+
+```bash
+cp apps/driver/.env.example apps/driver/.env     # EXPO_PUBLIC_API_URL
+npm run start -w @jellyfish/driver
+```
+
+Entra con su celular (el administrador lo agrega en **Equipo**). Ve sus entregas asignadas, abre la ruta en **Waze o Google Maps**, llama o escribe por WhatsApp al cliente, **cobra el monto exacto en efectivo** (no puede marcar "entregado" sin cobrar) o reporta por qué no pudo entregar. Comparte tema, componentes, sesión y login con la app del cliente mediante `packages/mobile-core`.
+
+**Todavía no incluye:** foto/PIN de prueba de entrega ni ubicación en vivo.
+
+> **Antes de abrir a clientes reales lee `docs/PRODUCCION.md`.**

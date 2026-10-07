@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "JELLYFISH Repartidor",
+    "slug": "jellyfish-driver",
+    "scheme": "jellyfish-driver",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "backgroundColor": "#050B1F",
+    "ios": { "supportsTablet": false, "bundleIdentifier": "do.jellyfish.driver" },
+    "android": { "package": "do.jellyfish.driver", "backgroundColor": "#050B1F" },
+    "web": { "bundler": "metro", "output": "single", "favicon": "./assets/favicon.png" },
+    "plugins": ["expo-router", "expo-secure-store", "expo-font"],
+    "extra": { "apiUrl": null }
+  }
+}
