@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  date,
   doublePrecision,
   index,
   integer,
@@ -147,6 +148,8 @@ export const variants = pgTable(
     reserved: integer('reserved').notNull().default(0),
     lowStockThreshold: integer('low_stock_threshold').notNull().default(0),
     photo: text('photo').notNull().default(''),
+    /** true = imagen generada/ilustrativa (se rotula así en la app); false = foto real del producto. */
+    photoIllustrative: boolean('photo_illustrative').notNull().default(true),
     active: boolean('active').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -237,6 +240,13 @@ export const orders = pgTable(
     cancelReason: text('cancel_reason'),
     /** Evita pedidos duplicados cuando la app reintenta tras un corte de red. */
     idempotencyKey: text('idempotency_key'),
+    /** Cupón aplicado (código en mayúsculas); el descuento ya está en `discount`. */
+    couponCode: text('coupon_code'),
+    /** PIN de 4 dígitos que el cliente le dice al repartidor para cerrar la entrega. */
+    deliveryPin: text('delivery_pin'),
+    pinVerifiedAt: timestamp('pin_verified_at', { withTimezone: true }),
+    /** Si se entregó sin PIN (cliente sin teléfono, etc.): quién lo autorizó y por qué. */
+    pinOverrideReason: text('pin_override_reason'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deliveredAt: timestamp('delivered_at', { withTimezone: true }),
@@ -371,6 +381,147 @@ export const cashSettlements = pgTable(
   ],
 );
 
+export type DevicePlatform = 'ios' | 'android' | 'web';
+
+/** Dispositivos del usuario para notificaciones push (Expo Push). */
+export const deviceTokens = pgTable(
+  'device_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    token: text('token').notNull(),
+    platform: text('platform').$type<DevicePlatform>().notNull(),
+    createdAt: createdAt(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('device_tokens_token_uq').on(t.token),
+    index('device_tokens_user_idx').on(t.userId),
+  ],
+);
+
+export type CouponKind = 'percent' | 'fixed' | 'free_delivery';
+
+export const coupons = pgTable(
+  'coupons',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Siempre en mayúsculas y sin espacios. */
+    code: text('code').notNull(),
+    description: text('description').notNull().default(''),
+    kind: text('kind').$type<CouponKind>().notNull(),
+    /** percent: puntos básicos (1000 = 10 %); fixed: centavos; free_delivery: se ignora. */
+    value: integer('value').notNull().default(0),
+    /** Subtotal mínimo (centavos) para poder usarlo. */
+    minSubtotal: integer('min_subtotal').notNull().default(0),
+    /** Tope del descuento en centavos (útil con porcentajes). */
+    maxDiscount: integer('max_discount'),
+    startsAt: timestamp('starts_at', { withTimezone: true }),
+    endsAt: timestamp('ends_at', { withTimezone: true }),
+    /** Usos totales permitidos; null = ilimitado. */
+    maxRedemptions: integer('max_redemptions'),
+    perUserLimit: integer('per_user_limit').notNull().default(1),
+    active: boolean('active').notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('coupons_code_uq').on(t.code),
+    check('coupons_value_nonneg', sql`${t.value} >= 0 AND ${t.minSubtotal} >= 0`),
+  ],
+);
+
+export const couponRedemptions = pgTable(
+  'coupon_redemptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    couponId: uuid('coupon_id')
+      .notNull()
+      .references(() => coupons.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id),
+    /** Descuento realmente aplicado (centavos). */
+    amount: integer('amount').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('coupon_redemptions_order_uq').on(t.orderId),
+    index('coupon_redemptions_coupon_user_idx').on(t.couponId, t.userId),
+  ],
+);
+
+/** Última posición conocida de cada repartidor (se sobrescribe; no guardamos historial). */
+export const driverLocations = pgTable('driver_locations', {
+  driverId: uuid('driver_id')
+    .primaryKey()
+    .references(() => users.id),
+  latitude: doublePrecision('latitude').notNull(),
+  longitude: doublePrecision('longitude').notNull(),
+  accuracyM: doublePrecision('accuracy_m'),
+  orderId: uuid('order_id').references(() => orders.id),
+  updatedAt: updatedAt(),
+});
+
+/** Lotes de mercancía con vencimiento (FEFO: primero en vencer, primero en salir). */
+export const stockLots = pgTable(
+  'stock_lots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    variantId: uuid('variant_id')
+      .notNull()
+      .references(() => variants.id),
+    lotCode: text('lot_code').notNull(),
+    /** Fecha de vencimiento (YYYY-MM-DD). */
+    expiresOn: date('expires_on', { mode: 'string' }),
+    /** Centilibras si 'lb'; unidades si 'unit'. */
+    qtyReceived: integer('qty_received').notNull(),
+    qtyRemaining: integer('qty_remaining').notNull(),
+    /** Costo por libra o unidad al recibirlo (centavos). Dato interno. */
+    unitCost: integer('unit_cost'),
+    note: text('note').notNull().default(''),
+    receivedBy: uuid('received_by').references(() => users.id),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('stock_lots_variant_expiry_idx').on(t.variantId, t.expiresOn),
+    check(
+      'stock_lots_qty_range',
+      sql`${t.qtyReceived} > 0 AND ${t.qtyRemaining} >= 0 AND ${t.qtyRemaining} <= ${t.qtyReceived}`,
+    ),
+  ],
+);
+
+/** Quién cambió qué en el panel y la app de repartidores (sin datos sensibles). */
+export const auditLog = pgTable(
+  'audit_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    actorId: uuid('actor_id'),
+    actorRole: text('actor_role').notNull().default(''),
+    method: text('method').notNull(),
+    path: text('path').notNull(),
+    /** Acción legible, p. ej. "catalog.patch_variant". */
+    action: text('action').notNull().default(''),
+    entity: text('entity').notNull().default(''),
+    entityId: text('entity_id').notNull().default(''),
+    status: integer('status').notNull(),
+    summary: text('summary').notNull().default(''),
+    /** Cuerpo de la petición SIN secretos (códigos, tokens, PIN). */
+    payload: jsonb('payload'),
+    ip: text('ip'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('audit_log_created_idx').on(t.createdAt),
+    index('audit_log_actor_idx').on(t.actorId, t.createdAt),
+  ],
+);
+
 export const schema = {
   users,
   otpCodes,
@@ -385,4 +536,10 @@ export const schema = {
   orderEvents,
   payments,
   cashSettlements,
+  deviceTokens,
+  coupons,
+  couponRedemptions,
+  driverLocations,
+  stockLots,
+  auditLog,
 };
