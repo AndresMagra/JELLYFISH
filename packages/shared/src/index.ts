@@ -4,3 +4,4 @@ export * from './pricing';
 export * from './order-status';
 export * from './tokens';
 export * as es from './i18n/es-DO';
+export * from './phone';
