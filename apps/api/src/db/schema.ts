@@ -319,7 +319,15 @@ export const payments = pgTable(
     capturedAmount: integer('captured_amount').notNull().default(0),
     refundedAmount: integer('refunded_amount').notNull().default(0),
     providerRef: text('provider_ref'),
-    /** Evita cobros duplicados ante reintentos. */
+    /** Dinero cobrado que hay que devolver al cliente y todavía no se ha devuelto. */
+    refundPending: integer('refund_pending').notNull().default(0),
+    failureReason: text('failure_reason'),
+    /** Repartidor que cobró en efectivo. */
+    collectedBy: uuid('collected_by').references(() => users.id),
+    /**
+     * Identificador único del intento (para AZUL es el OrderNumber que viaja a la pasarela):
+     * evita cobros duplicados y permite ubicar el pago cuando llega el callback.
+     */
     idempotencyKey: text('idempotency_key').notNull(),
     raw: jsonb('raw'),
     createdAt: createdAt(),
@@ -333,6 +341,28 @@ export const payments = pgTable(
       sql`${t.amount} >= 0 AND ${t.capturedAmount} >= 0 AND ${t.refundedAmount} >= 0`,
     ),
     check('payments_refund_le_captured', sql`${t.refundedAmount} <= ${t.capturedAmount}`),
+    check('payments_refund_pending_nonneg', sql`${t.refundPending} >= 0`),
+  ],
+);
+
+/** Efectivo que un repartidor entregó al negocio (cuadre de caja). */
+export const cashSettlements = pgTable(
+  'cash_settlements',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    driverId: uuid('driver_id')
+      .notNull()
+      .references(() => users.id),
+    amount: integer('amount').notNull(),
+    note: text('note').notNull().default(''),
+    settledBy: uuid('settled_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('cash_settlements_driver_idx').on(t.driverId, t.createdAt),
+    check('cash_settlements_positive', sql`${t.amount} > 0`),
   ],
 );
 
@@ -349,4 +379,5 @@ export const schema = {
   orderItems,
   orderEvents,
   payments,
+  cashSettlements,
 };

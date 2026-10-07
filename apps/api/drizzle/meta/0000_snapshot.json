@@ -1,5 +1,5 @@
 {
-  "id": "a018ed82-11ba-42b3-aeb9-80ac64ae5c33",
+  "id": "51df990d-8570-47ac-b1b1-f5bad05151c4",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -118,6 +118,104 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.cash_settlements": {
+      "name": "cash_settlements",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "driver_id": {
+          "name": "driver_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "settled_by": {
+          "name": "settled_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "cash_settlements_driver_idx": {
+          "name": "cash_settlements_driver_idx",
+          "columns": [
+            {
+              "expression": "driver_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cash_settlements_driver_id_users_id_fk": {
+          "name": "cash_settlements_driver_id_users_id_fk",
+          "tableFrom": "cash_settlements",
+          "tableTo": "users",
+          "columnsFrom": ["driver_id"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "cash_settlements_settled_by_users_id_fk": {
+          "name": "cash_settlements_settled_by_users_id_fk",
+          "tableFrom": "cash_settlements",
+          "tableTo": "users",
+          "columnsFrom": ["settled_by"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "cash_settlements_positive": {
+          "name": "cash_settlements_positive",
+          "value": "\"cash_settlements\".\"amount\" > 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.categories": {
@@ -978,6 +1076,25 @@
           "primaryKey": false,
           "notNull": false
         },
+        "refund_pending": {
+          "name": "refund_pending",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "failure_reason": {
+          "name": "failure_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "collected_by": {
+          "name": "collected_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "idempotency_key": {
           "name": "idempotency_key",
           "type": "text",
@@ -1046,6 +1163,15 @@
           "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "payments_collected_by_users_id_fk": {
+          "name": "payments_collected_by_users_id_fk",
+          "tableFrom": "payments",
+          "tableTo": "users",
+          "columnsFrom": ["collected_by"],
+          "columnsTo": ["id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1059,6 +1185,10 @@
         "payments_refund_le_captured": {
           "name": "payments_refund_le_captured",
           "value": "\"payments\".\"refunded_amount\" <= \"payments\".\"captured_amount\""
+        },
+        "payments_refund_pending_nonneg": {
+          "name": "payments_refund_pending_nonneg",
+          "value": "\"payments\".\"refund_pending\" >= 0"
         }
       },
       "isRLSEnabled": false

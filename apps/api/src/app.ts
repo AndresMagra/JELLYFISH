@@ -13,8 +13,10 @@ import { registerAuthRoutes } from './routes/auth';
 import { registerCatalogRoutes } from './routes/catalog';
 import { registerDriverRoutes } from './routes/driver';
 import { registerOrderRoutes } from './routes/orders';
+import { registerPaymentRoutes } from './routes/payments';
 import type { OtpSender } from './services/auth';
 import type { OrderContext, OrderHooks } from './services/orders';
+import { type PaymentContext, createGateway, paymentHooks } from './services/payments';
 
 export interface AppDeps {
   db: Db;
@@ -49,6 +51,7 @@ declare module 'fastify' {
     ) => (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     deps: AppDeps;
     orderCtx: OrderContext;
+    paymentCtx: PaymentContext;
   }
 }
 
@@ -60,12 +63,25 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(jwt, { secret: deps.config.jwtSecret, sign: { expiresIn: '30d' } });
 
   app.decorate('deps', deps);
-  app.decorate('orderCtx', {
-    db: deps.db,
-    config: deps.config,
-    hooks: deps.hooks,
-    now: deps.now,
-  } satisfies OrderContext);
+  // Las reglas de dinero siempre acompañan al pedido; `deps.hooks` permite añadir más en pruebas.
+  const payHooks = paymentHooks();
+  const hooks: OrderHooks = {
+    afterCreate: async (tx, order) => {
+      await payHooks.afterCreate?.(tx, order);
+      await deps.hooks?.afterCreate?.(tx, order);
+    },
+    beforeTransition: async (tx, order, to) => {
+      await payHooks.beforeTransition?.(tx, order, to);
+      await deps.hooks?.beforeTransition?.(tx, order, to);
+    },
+    afterTransition: async (tx, order, from, to) => {
+      await payHooks.afterTransition?.(tx, order, from, to);
+      await deps.hooks?.afterTransition?.(tx, order, from, to);
+    },
+  };
+  const orderCtx: OrderContext = { db: deps.db, config: deps.config, hooks, now: deps.now };
+  app.decorate('orderCtx', orderCtx);
+  app.decorate('paymentCtx', { ...orderCtx, gateway: createGateway(deps.config) });
 
   // CSV por el cuerpo (administrador sube el inventario).
   app.addContentTypeParser('text/csv', { parseAs: 'string' }, (_req, body, done) =>
@@ -133,6 +149,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await registerAuthRoutes(app);
   await registerCatalogRoutes(app);
   await registerOrderRoutes(app);
+  await registerPaymentRoutes(app);
   await registerAdminRoutes(app);
   await registerDriverRoutes(app);
 

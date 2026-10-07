@@ -12,6 +12,7 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@fastify/cors": "^11.3.0",
+    "@fastify/formbody": "^9.0.0",
     "@fastify/jwt": "*",
     "@fastify/rate-limit": "*",
     "@jellyfish/catalog": "*",

@@ -14,10 +14,12 @@ import type { Db } from '../db/client';
 import {
   type AddressSnapshot,
   type PaymentMethod,
+  type PaymentStatus,
   type SubstitutionPolicy,
   orderEvents,
   orderItems,
   orders,
+  payments,
   products,
   users,
   variants,
@@ -28,14 +30,17 @@ import { variantBlockers } from './catalog';
 import * as inventory from './inventory';
 import { assertSlotAvailable, deliveryPricing, findZone, type Zone } from './zones';
 
+/**
+ * Puntos de extensión que se ejecutan DENTRO de la transacción del pedido. Así el módulo de
+ * pagos reacciona a la creación y a los cambios de estado sin que `orders` dependa de él.
+ */
 export interface OrderHooks {
-  /** Se ejecuta dentro de la transacción, tras cambiar el estado. Úsalo para cobrar/anular/reembolsar. */
-  afterTransition?: (
-    tx: Db,
-    order: typeof orders.$inferSelect,
-    from: OrderStatus,
-    to: OrderStatus,
-  ) => Promise<void>;
+  /** Tras insertar el pedido, sus líneas y las reservas de stock. */
+  afterCreate?: (tx: Db, order: OrderRow) => Promise<void>;
+  /** Antes de aplicar un cambio de estado ya validado. Lanza un error para impedirlo. */
+  beforeTransition?: (tx: Db, order: OrderRow, to: OrderStatus) => Promise<void>;
+  /** Tras aplicar el cambio de estado. */
+  afterTransition?: (tx: Db, order: OrderRow, from: OrderStatus, to: OrderStatus) => Promise<void>;
 }
 
 export interface OrderContext {
@@ -284,6 +289,16 @@ async function createOrderOnce(
       );
     }
 
+    if (input.paymentMethod === 'card' && !config.payments.cardProvider) {
+      throw conflict('method_unavailable', 'El pago con tarjeta no está disponible por ahora');
+    }
+    if (input.paymentMethod === 'transfer' && !config.payments.transfer) {
+      throw conflict(
+        'method_unavailable',
+        'El pago por transferencia no está disponible por ahora',
+      );
+    }
+
     const instantlyConfirmed = input.paymentMethod === 'cash';
     const holdMinutes =
       input.paymentMethod === 'transfer'
@@ -354,6 +369,11 @@ async function createOrderOnce(
       actorId: input.userId,
       note: instantlyConfirmed ? 'Pedido creado (pago contra entrega)' : 'Pedido creado',
     });
+
+    if (ctx.hooks?.afterCreate) {
+      const [created] = await tx.select().from(orders).where(eq(orders.id, order!.id));
+      await ctx.hooks.afterCreate(tx, created!);
+    }
     return order!.id;
   });
 
@@ -365,17 +385,32 @@ async function createOrderOnce(
 export type OrderRow = typeof orders.$inferSelect;
 export type OrderItemRow = typeof orderItems.$inferSelect;
 
+export interface PaymentSummary {
+  id: string;
+  provider: string;
+  method: PaymentMethod;
+  status: PaymentStatus;
+  amount: number;
+  capturedAmount: number;
+  refundedAmount: number;
+  /** Dinero que hay que devolver al cliente y aún no se ha devuelto. */
+  refundPending: number;
+  failureReason: string | null;
+  createdAt: Date;
+}
+
 export interface OrderDTO extends Omit<OrderRow, 'number'> {
   number: number;
   code: string;
   items: OrderItemRow[];
+  payments: PaymentSummary[];
   timeline: (typeof orderEvents.$inferSelect)[];
   /** Estados a los que se puede pasar desde el actual (para el panel admin y el repartidor). */
   next: readonly OrderStatus[];
 }
 
 async function hydrate(db: Db, order: OrderRow): Promise<OrderDTO> {
-  const [items, timeline] = await Promise.all([
+  const [items, timeline, paymentRows] = await Promise.all([
     db
       .select()
       .from(orderItems)
@@ -386,11 +421,28 @@ async function hydrate(db: Db, order: OrderRow): Promise<OrderDTO> {
       .from(orderEvents)
       .where(eq(orderEvents.orderId, order.id))
       .orderBy(asc(orderEvents.createdAt)),
+    db
+      .select({
+        id: payments.id,
+        provider: payments.provider,
+        method: payments.method,
+        status: payments.status,
+        amount: payments.amount,
+        capturedAmount: payments.capturedAmount,
+        refundedAmount: payments.refundedAmount,
+        refundPending: payments.refundPending,
+        failureReason: payments.failureReason,
+        createdAt: payments.createdAt,
+      })
+      .from(payments)
+      .where(eq(payments.orderId, order.id))
+      .orderBy(asc(payments.createdAt)),
   ]);
   return {
     ...order,
     code: formatOrderNumber(order.number),
     items,
+    payments: paymentRows,
     timeline,
     next: nextStatuses(order.status),
   };
@@ -497,127 +549,147 @@ export async function transitionOrder(
   actor: Actor,
   note = '',
 ): Promise<OrderDTO> {
+  await ctx.db.transaction((tx) => transitionOrderInTx(ctx, tx, orderId, to, actor, note));
+  return getOrder(ctx, orderId);
+}
+
+/** Igual que `transitionOrder`, pero dentro de una transacción ya abierta (la usan los pagos). */
+export async function transitionOrderInTx(
+  ctx: OrderContext,
+  tx: Db,
+  orderId: string,
+  to: OrderStatus,
+  actor: Actor,
+  note = '',
+): Promise<void> {
   const now = nowOf(ctx);
-  await ctx.db.transaction(async (tx) => {
-    const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update');
-    if (!order) throw notFound('Pedido');
-    const from = order.status;
+  const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update');
+  if (!order) throw notFound('Pedido');
+  const from = order.status;
 
-    if (actor.role === 'customer') {
-      if (order.userId !== actor.id) throw notFound('Pedido');
-      if (to !== 'cancelled' || (from !== 'pending_payment' && from !== 'confirmed')) {
-        throw forbidden('Solo puedes cancelar un pedido que aún no empezamos a preparar');
-      }
+  if (actor.role === 'customer') {
+    if (order.userId !== actor.id) throw notFound('Pedido');
+    if (to !== 'cancelled' || (from !== 'pending_payment' && from !== 'confirmed')) {
+      throw forbidden('Solo puedes cancelar un pedido que aún no empezamos a preparar');
     }
-    if (actor.role === 'driver') {
-      if (order.driverId !== actor.id) throw forbidden('Este pedido no está asignado a ti');
-      if (to !== 'out_for_delivery' && to !== 'delivered' && to !== 'delivery_failed') {
-        throw forbidden('Un repartidor solo puede marcar salida, entrega o intento fallido');
-      }
+  }
+  if (actor.role === 'driver') {
+    if (order.driverId !== actor.id) throw forbidden('Este pedido no está asignado a ti');
+    if (to !== 'out_for_delivery' && to !== 'delivered' && to !== 'delivery_failed') {
+      throw forbidden('Un repartidor solo puede marcar salida, entrega o intento fallido');
     }
+  }
 
-    try {
-      assertTransition(from, to);
-    } catch (e) {
-      throw conflict('invalid_transition', (e as Error).message);
+  try {
+    assertTransition(from, to);
+  } catch (e) {
+    throw conflict('invalid_transition', (e as Error).message);
+  }
+
+  await ctx.hooks?.beforeTransition?.(tx, order, to);
+
+  const items = await tx.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  const patch: Partial<typeof orders.$inferInsert> = { status: to, updatedAt: now };
+
+  if (to === 'confirmed') patch.reservationExpiresAt = null;
+
+  if (to === 'out_for_delivery' && !order.driverId) {
+    throw conflict('no_driver', 'Asigna un repartidor antes de enviar el pedido');
+  }
+
+  if (to === 'packed') {
+    const missing = items.filter(
+      (i) => i.pricingUnit === 'lb' && i.variableWeight && i.finalQuantity === null,
+    );
+    if (missing.length > 0) {
+      throw conflict('weights_missing', `Falta pesar: ${missing.map((m) => m.name).join(', ')}`, {
+        itemIds: missing.map((m) => m.id),
+      });
     }
-
-    const items = await tx.select().from(orderItems).where(eq(orderItems.orderId, orderId));
-    const patch: Partial<typeof orders.$inferInsert> = { status: to, updatedAt: now };
-
-    if (to === 'confirmed') patch.reservationExpiresAt = null;
-
-    if (to === 'out_for_delivery' && !order.driverId) {
-      throw conflict('no_driver', 'Asigna un repartidor antes de enviar el pedido');
-    }
-
-    if (to === 'packed') {
-      const missing = items.filter(
-        (i) => i.pricingUnit === 'lb' && i.variableWeight && i.finalQuantity === null,
+    const finals = items.map((i) => ({
+      item: i,
+      finalQuantity: i.finalQuantity ?? i.quantity,
+    }));
+    const totals = computeOrderTotals(
+      finals.map(({ item, finalQuantity }) => ({
+        id: item.id,
+        pricingUnit: item.pricingUnit,
+        unitPrice: item.unitPrice,
+        itbisBps: item.itbisBps,
+        quantity: finalQuantity,
+        variableWeight: item.variableWeight,
+      })),
+      { discount: order.discount, deliveryFee: order.deliveryFee },
+    );
+    // El cliente solo autorizó hasta total + colchón: si el peso real lo supera, hay que ajustar.
+    if (totals.total > order.authorizedAmount) {
+      throw conflict(
+        'overweight',
+        `Con el peso real el pedido llega a ${formatDOP(totals.total)}, por encima de lo autorizado (${formatDOP(order.authorizedAmount)}). Ajusta las porciones.`,
+        { finalTotal: totals.total, authorizedAmount: order.authorizedAmount },
       );
-      if (missing.length > 0) {
-        throw conflict('weights_missing', `Falta pesar: ${missing.map((m) => m.name).join(', ')}`, {
-          itemIds: missing.map((m) => m.id),
-        });
-      }
-      const finals = items.map((i) => ({
-        item: i,
-        finalQuantity: i.finalQuantity ?? i.quantity,
-      }));
-      const totals = computeOrderTotals(
-        finals.map(({ item, finalQuantity }) => ({
-          id: item.id,
-          pricingUnit: item.pricingUnit,
-          unitPrice: item.unitPrice,
-          itbisBps: item.itbisBps,
-          quantity: finalQuantity,
-          variableWeight: item.variableWeight,
-        })),
-        { discount: order.discount, deliveryFee: order.deliveryFee },
-      );
-      for (const [idx, { item, finalQuantity }] of finals.entries()) {
-        const line = totals.lines[idx]!;
-        await tx
-          .update(orderItems)
-          .set({ finalQuantity, finalLineTotal: line.net })
-          .where(eq(orderItems.id, item.id));
-      }
-      patch.finalTotal = totals.total;
-      patch.finalItbis = totals.itbis;
+    }
+    for (const [idx, { item, finalQuantity }] of finals.entries()) {
+      const line = totals.lines[idx]!;
+      await tx
+        .update(orderItems)
+        .set({ finalQuantity, finalLineTotal: line.net })
+        .where(eq(orderItems.id, item.id));
+    }
+    patch.finalTotal = totals.total;
+    patch.finalItbis = totals.itbis;
 
-      for (const { item, finalQuantity } of [...finals].sort((a, b) =>
-        a.item.variantId.localeCompare(b.item.variantId),
-      )) {
-        await inventory.pick(tx, item.variantId, item.quantity, finalQuantity, {
+    for (const { item, finalQuantity } of [...finals].sort((a, b) =>
+      a.item.variantId.localeCompare(b.item.variantId),
+    )) {
+      await inventory.pick(tx, item.variantId, item.quantity, finalQuantity, {
+        orderId,
+        actorId: actor.id,
+        note: 'Empacado',
+      });
+    }
+  }
+
+  if (to === 'cancelled') {
+    patch.cancelReason = note || null;
+    const sorted = [...items].sort((a, b) => a.variantId.localeCompare(b.variantId));
+    if (from === 'packed') {
+      // Ya descontado del inventario: vuelve al congelador porque aún no salió.
+      for (const i of sorted) {
+        await inventory.restock(tx, i.variantId, i.finalQuantity ?? i.quantity, {
           orderId,
           actorId: actor.id,
-          note: 'Empacado',
+          note: 'Pedido cancelado antes de salir',
+        });
+      }
+    } else if (from !== 'delivery_failed') {
+      for (const i of sorted) {
+        await inventory.release(tx, i.variantId, i.quantity, {
+          orderId,
+          actorId: actor.id,
+          note: 'Pedido cancelado',
         });
       }
     }
+    // Desde delivery_failed el producto ya salió: no vuelve solo al inventario (cadena de frío).
+    // El administrador decide con un ajuste manual.
+  }
 
-    if (to === 'cancelled') {
-      patch.cancelReason = note || null;
-      const sorted = [...items].sort((a, b) => a.variantId.localeCompare(b.variantId));
-      if (from === 'packed') {
-        // Ya descontado del inventario: vuelve al congelador porque aún no salió.
-        for (const i of sorted) {
-          await inventory.restock(tx, i.variantId, i.finalQuantity ?? i.quantity, {
-            orderId,
-            actorId: actor.id,
-            note: 'Pedido cancelado antes de salir',
-          });
-        }
-      } else if (from !== 'delivery_failed') {
-        for (const i of sorted) {
-          await inventory.release(tx, i.variantId, i.quantity, {
-            orderId,
-            actorId: actor.id,
-            note: 'Pedido cancelado',
-          });
-        }
-      }
-      // Desde delivery_failed el producto ya salió: no vuelve solo al inventario (cadena de frío).
-      // El administrador decide con un ajuste manual.
-    }
+  if (to === 'delivered') patch.deliveredAt = now;
 
-    if (to === 'delivered') patch.deliveredAt = now;
-
-    await tx.update(orders).set(patch).where(eq(orders.id, orderId));
-    await tx.insert(orderEvents).values({
-      orderId,
-      fromStatus: from,
-      toStatus: to,
-      actorId: actor.id,
-      note,
-    });
-
-    if (ctx.hooks?.afterTransition) {
-      const [updated] = await tx.select().from(orders).where(eq(orders.id, orderId));
-      await ctx.hooks.afterTransition(tx, updated!, from, to);
-    }
+  await tx.update(orders).set(patch).where(eq(orders.id, orderId));
+  await tx.insert(orderEvents).values({
+    orderId,
+    fromStatus: from,
+    toStatus: to,
+    actorId: actor.id,
+    note,
   });
-  return getOrder(ctx, orderId);
+
+  if (ctx.hooks?.afterTransition) {
+    const [updated] = await tx.select().from(orders).where(eq(orders.id, orderId));
+    await ctx.hooks.afterTransition(tx, updated!, from, to);
+  }
 }
 
 export async function assignDriver(ctx: OrderContext, orderId: string, driverId: string) {

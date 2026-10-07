@@ -13,6 +13,16 @@ CREATE TABLE "addresses" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "cash_settlements" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"driver_id" uuid NOT NULL,
+	"amount" integer NOT NULL,
+	"note" text DEFAULT '' NOT NULL,
+	"settled_by" uuid NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "cash_settlements_positive" CHECK ("cash_settlements"."amount" > 0)
+);
+--> statement-breakpoint
 CREATE TABLE "categories" (
 	"slug" text PRIMARY KEY NOT NULL,
 	"name" text NOT NULL,
@@ -118,12 +128,16 @@ CREATE TABLE "payments" (
 	"captured_amount" integer DEFAULT 0 NOT NULL,
 	"refunded_amount" integer DEFAULT 0 NOT NULL,
 	"provider_ref" text,
+	"refund_pending" integer DEFAULT 0 NOT NULL,
+	"failure_reason" text,
+	"collected_by" uuid,
 	"idempotency_key" text NOT NULL,
 	"raw" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "payments_amounts_nonneg" CHECK ("payments"."amount" >= 0 AND "payments"."captured_amount" >= 0 AND "payments"."refunded_amount" >= 0),
-	CONSTRAINT "payments_refund_le_captured" CHECK ("payments"."refunded_amount" <= "payments"."captured_amount")
+	CONSTRAINT "payments_refund_le_captured" CHECK ("payments"."refunded_amount" <= "payments"."captured_amount"),
+	CONSTRAINT "payments_refund_pending_nonneg" CHECK ("payments"."refund_pending" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "products" (
@@ -180,6 +194,8 @@ CREATE TABLE "variants" (
 );
 --> statement-breakpoint
 ALTER TABLE "addresses" ADD CONSTRAINT "addresses_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "cash_settlements" ADD CONSTRAINT "cash_settlements_driver_id_users_id_fk" FOREIGN KEY ("driver_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "cash_settlements" ADD CONSTRAINT "cash_settlements_settled_by_users_id_fk" FOREIGN KEY ("settled_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "inventory_movements" ADD CONSTRAINT "inventory_movements_variant_id_variants_id_fk" FOREIGN KEY ("variant_id") REFERENCES "public"."variants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "order_events" ADD CONSTRAINT "order_events_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "order_items" ADD CONSTRAINT "order_items_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -188,9 +204,11 @@ ALTER TABLE "orders" ADD CONSTRAINT "orders_user_id_users_id_fk" FOREIGN KEY ("u
 ALTER TABLE "orders" ADD CONSTRAINT "orders_zone_id_delivery_zones_id_fk" FOREIGN KEY ("zone_id") REFERENCES "public"."delivery_zones"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "orders" ADD CONSTRAINT "orders_driver_id_users_id_fk" FOREIGN KEY ("driver_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "payments" ADD CONSTRAINT "payments_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "payments" ADD CONSTRAINT "payments_collected_by_users_id_fk" FOREIGN KEY ("collected_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "products" ADD CONSTRAINT "products_category_slug_categories_slug_fk" FOREIGN KEY ("category_slug") REFERENCES "public"."categories"("slug") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "variants" ADD CONSTRAINT "variants_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "addresses_user_idx" ON "addresses" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "cash_settlements_driver_idx" ON "cash_settlements" USING btree ("driver_id","created_at");--> statement-breakpoint
 CREATE INDEX "movements_variant_idx" ON "inventory_movements" USING btree ("variant_id","created_at");--> statement-breakpoint
 CREATE INDEX "order_events_order_idx" ON "order_events" USING btree ("order_id","created_at");--> statement-breakpoint
 CREATE INDEX "order_items_order_idx" ON "order_items" USING btree ("order_id");--> statement-breakpoint

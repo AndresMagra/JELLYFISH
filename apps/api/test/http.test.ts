@@ -624,12 +624,31 @@ describe('API HTTP', () => {
         payload: { to: 'out_for_delivery' },
       });
       expect(json(go).status).toBe('out_for_delivery');
-      const done = await app.inject({
-        method: 'POST',
-        url: `/v1/driver/orders/${created.id}/transition`,
-        headers: driver,
-        payload: { to: 'delivered' },
-      });
+      // En efectivo no se puede marcar entregado sin haber cobrado el monto exacto.
+      const deliver = () =>
+        app.inject({
+          method: 'POST',
+          url: `/v1/driver/orders/${created.id}/transition`,
+          headers: driver,
+          payload: { to: 'delivered' },
+        });
+      const early = await deliver();
+      expect(early.statusCode).toBe(409);
+      expect(json(early).error.code).toBe('cash_not_collected');
+
+      const due = json(await app.inject({ url: '/v1/driver/orders', headers: driver }))[0]
+        .finalTotal;
+      const collect = (amount: number) =>
+        app.inject({
+          method: 'POST',
+          url: `/v1/driver/orders/${created.id}/collect`,
+          headers: driver,
+          payload: { amount },
+        });
+      expect((await collect(due - 100)).statusCode).toBe(409);
+      expect((await collect(due)).statusCode).toBe(200);
+
+      const done = await deliver();
       expect(json(done).status).toBe('delivered');
       // entregado: ya no aparece entre las entregas activas
       expect(json(await app.inject({ url: '/v1/driver/orders', headers: driver }))).toEqual([]);

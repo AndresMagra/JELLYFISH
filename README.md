@@ -8,7 +8,7 @@ Comida congelada a domicilio en República Dominicana: carnes (res, cerdo, chivo
 | -------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | `packages/shared` — dinero DOP, ITBIS, pesos en libras, estados del pedido, tokens de diseño | Hecho, con pruebas                           |
 | `packages/catalog` + `data/catalog` — 112 artículos de RD, importador CSV                    | Hecho, con pruebas                           |
-| `apps/api` — catálogo, pedidos, inventario con reservas, zonas/franjas, OTP, roles           | Hecho, con pruebas (134 en total)            |
+| `apps/api` — catálogo, pedidos, inventario con reservas, zonas/franjas, OTP, roles           | Hecho, con pruebas                           |
 | Pagos (AZUL, efectivo, transferencia) — `packages/payments`                                  | **Pendiente** (hito siguiente)               |
 | App del cliente (Expo)                                                                       | **Pendiente**                                |
 | Panel admin web                                                                              | **Pendiente**                                |
@@ -19,7 +19,7 @@ Comida congelada a domicilio en República Dominicana: carnes (res, cerdo, chivo
 
 ```bash
 npm install
-npm test                 # 134 pruebas (Vitest + PGlite, Postgres real en memoria)
+npm test                 # 190 pruebas (Vitest + PGlite, Postgres real en memoria)
 npm run typecheck
 npm run catalog:check    # valida un CSV de inventario sin tocar nada
 ```
@@ -48,3 +48,18 @@ JELLYFISH_DEMO=1 JELLYFISH_SEED=1 PORT=3000 npm run start -w @jellyfish/api
 - **Envío de códigos OTP:** solo existe el canal de consola (desarrollo). En producción el servidor se niega a arrancar hasta conectar SMS/WhatsApp.
 - **Precios:** 13 son "ancla" (hallados vía buscador, sin verificar en tienda) y 99 son estimados. Ninguno es publicable hasta confirmarlo.
 - **AZUL:** requiere afiliación del comercio y credenciales de pruebas.
+
+## Cobro (cómo funciona)
+
+- **Tarjeta:** la app abre la página de pago alojada por la pasarela (AZUL) en un navegador embebido; los datos de tarjeta **nunca pasan por JELLYFISH**. La pasarela redirige al API, que **verifica el hash HMAC-SHA512**, registra el pago de forma idempotente y confirma el pedido.
+- **Cobro inmediato (Sale):** la Payment Page de AZUL cobra al instante, sin retención. Para peso variable se cobra el total estimado; al empacar, si el peso real cuesta menos, la diferencia queda en la cola de **devoluciones pendientes**; si cuesta más (hasta +10 %), el negocio la absorbe; si pasa de ahí, no se puede empacar hasta ajustar porciones.
+- **Pagos tardíos o duplicados:** si el banco aprueba después de que venció la reserva (o hay dos intentos aprobados), el dinero se registra y queda marcado para devolver — nunca se pierde de vista.
+- **Efectivo contra entrega:** el repartidor registra el monto exacto antes de marcar "entregado"; el administrador ve el **cuadre de caja** por repartidor y liquida lo que entregan.
+- **Transferencia:** el cliente sube la referencia y el administrador verifica y confirma.
+- **Reembolsos:** la API de reembolsos de AZUL **no está integrada**; el panel lleva la cola y el administrador registra la devolución hecha en el portal de AZUL (`mark-refunded`).
+
+Variables de entorno de pagos (ver `apps/api/src/config.ts`): `AZUL_MERCHANT_ID`, `AZUL_MERCHANT_NAME`, `AZUL_MERCHANT_TYPE`, `AZUL_AUTH_KEY`, `AZUL_ENV` (`test`|`production`), `AZUL_HASH_ENCODING` (`utf8`|`utf16le`), `PUBLIC_API_URL`, `APP_SCHEME`, `TRANSFER_BANK`, `TRANSFER_ACCOUNT_NUMBER`, `TRANSFER_HOLDER`, `PAYMENTS_MOCK=1` (solo desarrollo).
+
+### ⚠️ AZUL: qué falta verificar antes de cobrar a clientes reales
+
+El orden de campos del hash, los endpoints y el formato de montos coinciden con una implementación pública de terceros, **no con la documentación oficial ni con el ambiente de pruebas de AZUL** (requiere afiliación). Primer paso al tener credenciales: una transacción de prueba en `pruebas.azul.com.do`; si AZUL rechaza el hash, probar `AZUL_HASH_ENCODING=utf16le`.
