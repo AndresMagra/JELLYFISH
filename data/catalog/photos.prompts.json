@@ -1,0 +1,196 @@
+{
+  "stylePrefix": "Professional commercial food product photograph, hero shot of ",
+  "styleSuffix": " Raw, uncooked, premium quality, with only a faint frosty sheen (not buried in ice). Placed on a seamless pure absolute black background (#000000): no table, no surface, no gradient, no vignette, no colored backdrop, no reflections. Dramatic soft studio lighting: large softbox key light from the upper left, a subtle cool rim light along the edges, realistic moist texture and highlights. Subject centered, filling about 65% of the frame width, with generous pure black margin on all four sides, the entire subject fully inside the frame, 3/4 high camera angle, tack sharp, ultra detailed, photorealistic. Absolutely no text, no letters, no numbers, no logos, no watermark, no packaging, no plates, no bowls, no props, no hands, no garnish, no herbs, no lemon, no ice cubes.",
+  "items": [
+    {
+      "sku": "JF-MAR-001",
+      "name": "Anillas de calamar",
+      "subject": "a neat heap of raw cleaned calamari rings (squid rings), pale white with a translucent sheen"
+    },
+    {
+      "sku": "JF-MAR-002",
+      "name": "Camarón 8/12",
+      "subject": "eight raw jumbo headless shell-on shrimp (size 8-12 per pound), very large, loosely fanned, grey-blue translucent shells with a pink tint"
+    },
+    {
+      "sku": "JF-MAR-003",
+      "name": "Camarón 21/25",
+      "subject": "about eighteen raw medium-large headless shell-on shrimp (size 21-25 per pound), loosely piled, grey-blue translucent shells"
+    },
+    {
+      "sku": "JF-MAR-004",
+      "name": "Camarón 16/20",
+      "subject": "about fourteen raw large headless shell-on shrimp (size 16-20 per pound), loosely piled, grey-blue translucent shells"
+    },
+    {
+      "sku": "JF-MAR-005",
+      "name": "Camarón 51/60 crudo",
+      "subject": "a mound of many small raw shrimp (size 51-60 per pound), shell-on, grey translucent shells"
+    },
+    {
+      "sku": "JF-MAR-006",
+      "name": "Mariscada mixta",
+      "subject": "a mixed raw seafood medley (mariscada): small shrimp, calamari rings, baby octopus pieces, mussels and clam meat in a loose pile"
+    },
+    {
+      "sku": "JF-MAR-007",
+      "name": "Mejillón media concha New Zealand",
+      "subject": "a pile of large New Zealand green-lipped mussels on the half shell, bright green rimmed shells with plump orange-cream meat"
+    },
+    {
+      "sku": "JF-MAR-008",
+      "name": "Mejillón media concha",
+      "subject": "a pile of blue mussels on the half shell, dark blue-black shells with plump orange meat"
+    },
+    {
+      "sku": "JF-MAR-009",
+      "name": "Pulpo de 2 a 4 lb",
+      "subject": "one whole cleaned raw octopus of about three pounds, pale mauve skin, tentacles curled with suckers visible"
+    },
+    {
+      "sku": "JF-MAR-010",
+      "name": "Pulpo de 4 a 6 lb",
+      "subject": "one large whole cleaned raw octopus of about five pounds, pale mauve skin, long curled tentacles with suckers visible"
+    },
+    {
+      "sku": "JF-MAR-011",
+      "name": "Tentáculo de calamar",
+      "subject": "a pile of raw cleaned squid tentacles, pinkish-white with visible suckers"
+    },
+    {
+      "sku": "JF-FIL-001",
+      "name": "Filete de chillo del Atlántico",
+      "subject": "two raw skin-on red snapper fillets, pink-red skin with firm pearly white flesh"
+    },
+    {
+      "sku": "JF-FIL-002",
+      "name": "Filete de salmón chileno",
+      "subject": "one raw skin-on Chilean salmon fillet, vivid orange-pink flesh with fine white fat lines"
+    },
+    {
+      "sku": "JF-FIL-003",
+      "name": "Filete de mero basa con glaseo",
+      "subject": "two raw white pangasius (basa) fillets with a thin clear glossy ice glaze, white flesh"
+    },
+    {
+      "sku": "JF-FIL-004",
+      "name": "Filete de mero basa sin glaseo",
+      "subject": "two raw white pangasius (basa) fillets, matte off-white flesh, no glaze"
+    },
+    {
+      "sku": "JF-FIL-005",
+      "name": "Lomo de atún rojo",
+      "subject": "one raw bluefin tuna loin block, deep ruby red rectangular block with one slice cut showing glossy flesh"
+    },
+    {
+      "sku": "JF-PES-001",
+      "name": "Carite sierra",
+      "subject": "one whole gutted king mackerel (carite / sierra), silver body with faint darker spots, slightly curved"
+    },
+    {
+      "sku": "JF-PES-002",
+      "name": "Dorado entero",
+      "subject": "one whole gutted mahi-mahi (dorado) fish with blunt forehead, golden-yellow and green iridescent skin"
+    },
+    {
+      "sku": "JF-PES-003",
+      "name": "Dorada entera",
+      "subject": "one whole gutted scaled gilt-head sea bream (dorada), silver body with a golden mark between the eyes"
+    },
+    {
+      "sku": "JF-PES-004",
+      "name": "Salmón entero chileno",
+      "subject": "one whole gutted head-on salmon, bright silver skin, large fish"
+    },
+    {
+      "sku": "JF-PES-005",
+      "name": "Tilapia roja",
+      "subject": "one whole gutted scaled red tilapia, pinkish-red orange skin"
+    },
+    {
+      "sku": "JF-RES-001",
+      "name": "Ribeye Choice",
+      "subject": "two thick raw boneless USDA Choice ribeye steaks with rich white marbling and a fat cap"
+    },
+    {
+      "sku": "JF-RES-002",
+      "name": "Churrasco Choice",
+      "subject": "two thick-cut raw USDA Choice strip loin steaks (churrasco) with a white fat cap along one edge and fine marbling"
+    },
+    {
+      "sku": "JF-RES-003",
+      "name": "Picaña Choice (culotte)",
+      "subject": "one raw USDA Choice picanha (top sirloin cap) with a thick white fat cap, plus two thick raw slices cut off beside it"
+    },
+    {
+      "sku": "JF-CDO-001",
+      "name": "Lomo de cerdo",
+      "subject": "one raw boneless pork loin roast, pale pink with a thin fat layer"
+    },
+    {
+      "sku": "JF-CDO-002",
+      "name": "Costilla de cerdo fresca",
+      "subject": "one rack of raw fresh pork ribs, pink meat with rib bones visible"
+    },
+    {
+      "sku": "JF-CDO-003",
+      "name": "Costilla sparerib",
+      "subject": "one full slab of raw pork spare ribs, pink meat, bones visible, slightly tapered shape"
+    },
+    {
+      "sku": "JF-CDO-004",
+      "name": "Costilla San Luis",
+      "subject": "one squared-off rectangular slab of raw St. Louis style pork ribs, pink meat, bones visible"
+    },
+    {
+      "sku": "JF-CDO-005",
+      "name": "Chuleta fresca",
+      "subject": "three raw bone-in pork loin chops with a white fat edge, pink meat"
+    },
+    {
+      "sku": "JF-CDO-006",
+      "name": "Tocineta No. 1",
+      "subject": "a slightly fanned stack of raw uncooked bacon strips, pink-red meat streaks with white fat"
+    },
+    {
+      "sku": "JF-CDO-007",
+      "name": "Paleta de cerdo",
+      "subject": "one raw pork shoulder roast, marbled pink meat with a layer of fat on top"
+    },
+    {
+      "sku": "JF-CDO-008",
+      "name": "Panceta de cerdo",
+      "subject": "one raw skinless pork belly slab (panceta) with clearly striped layers of meat and fat"
+    },
+    {
+      "sku": "JF-AVE-001",
+      "name": "Alas de pollo enteras americanas",
+      "subject": "a pile of raw whole chicken wings (three-joint wings with the tips), pale yellow-pink skin"
+    },
+    {
+      "sku": "JF-AVE-002",
+      "name": "Alas de pollo brasileñas",
+      "subject": "a neat overlapping arrangement of raw whole chicken wings with the tips, pale pink skin"
+    },
+    {
+      "sku": "JF-AVE-003",
+      "name": "Pechuga de pollo americana",
+      "subject": "three raw boneless skinless chicken breast fillets, pale pink"
+    },
+    {
+      "sku": "JF-AVE-004",
+      "name": "Pavo entero",
+      "subject": "one whole raw plucked turkey, pale pink skin, legs tucked, large bird"
+    },
+    {
+      "sku": "JF-OTR-001",
+      "name": "Papas precocidas",
+      "subject": "a heap of frozen pre-cooked straight-cut French fries, pale golden yellow, with a few small frost crystals"
+    },
+    {
+      "sku": "JF-OTR-002",
+      "name": "Pierna de cordero",
+      "subject": "one raw bone-in leg of lamb, pink-red meat with a thin white fat cap and the shank bone visible"
+    }
+  ]
+}
