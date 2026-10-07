@@ -2,7 +2,7 @@ import { ORDER_STATUSES } from '@jellyfish/shared';
 import { asc, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { users } from '../db/schema';
+import { orders, users } from '../db/schema';
 import { conflict, notFound } from '../errors';
 import { inviteUser } from '../services/auth';
 import {
@@ -54,8 +54,13 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
   app.post('/v1/admin/orders/:id/transition', staff, async (req) => {
     const { id } = parse(idParams, req.params);
-    const { to, note } = parse(
-      z.object({ to: statusSchema, note: z.string().max(300).default('') }),
+    const { to, note, pinOverrideReason } = parse(
+      z.object({
+        to: statusSchema,
+        note: z.string().max(300).default(''),
+        // Para 'delivered' sin el PIN del cliente: el servicio exige ≥ 8 caracteres y lo deja en el historial.
+        pinOverrideReason: z.string().max(300).optional(),
+      }),
       req.body,
     );
     return transitionOrder(
@@ -64,6 +69,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       to,
       { id: req.session!.id, role: req.session!.role },
       note,
+      { pinOverrideReason },
     );
   });
 
@@ -81,7 +87,14 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   app.post('/v1/admin/orders/:id/assign-driver', staff, async (req) => {
     const { id } = parse(idParams, req.params);
     const { driverId } = parse(z.object({ driverId: uuid }), req.body);
-    return assignDriver(app.orderCtx, id, driverId);
+    const [before] = await deps.db
+      .select({ driverId: orders.driverId })
+      .from(orders)
+      .where(eq(orders.id, id));
+    const order = await assignDriver(app.orderCtx, id, driverId);
+    // Solo avisa si cambió de repartidor (reasignar al mismo no repite la notificación).
+    if (order.driverId && order.driverId !== before?.driverId) app.push.notifyDriverAssigned(id);
+    return order;
   });
 
   // ── Catálogo e importación ──

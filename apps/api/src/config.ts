@@ -44,6 +44,12 @@ export interface Config {
   jwtSecret: string;
   /** Pimienta para hashear los códigos OTP. */
   otpPepper: string;
+  /** Vigencia del código OTP en minutos (la usan el vencimiento y el texto del SMS/WhatsApp). */
+  otpTtlMinutes: number;
+  /** Notificaciones push (Expo). Apagadas por defecto en pruebas; PUSH_ENABLED=0/1 lo fuerza. */
+  pushEnabled: boolean;
+  /** Token de acceso de Expo (opcional; solo si el proyecto exige "enhanced push security"). */
+  expoAccessToken: string | null;
   /** Teléfono que se vuelve administrador al iniciar sesión por primera vez. */
   bootstrapAdminPhone: string | null;
   reservationMinutesCard: number;
@@ -65,6 +71,18 @@ export interface Config {
   corsOrigins: string[] | true;
   /** República Dominicana no usa horario de verano: UTC-4 todo el año. */
   utcOffsetMinutes: number;
+}
+
+/** Vigencia del código OTP. Una sola fuente: el vencimiento y el mensaje al cliente salen de aquí. */
+export const OTP_TTL_MINUTES = 10;
+
+/** PUSH_ENABLED=1|true / 0|false; sin definir, activo salvo en pruebas (NODE_ENV=test). */
+function parsePushEnabled(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.PUSH_ENABLED?.trim().toLowerCase();
+  if (!raw) return env.NODE_ENV !== 'test';
+  if (raw === '1' || raw === 'true') return true;
+  if (raw === '0' || raw === 'false') return false;
+  throw new Error('PUSH_ENABLED debe ser 1/0 o true/false');
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -89,6 +107,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         : true,
     jwtSecret: jwtSecret || randomBytes(32).toString('hex'),
     otpPepper: otpPepper || randomBytes(16).toString('hex'),
+    otpTtlMinutes: OTP_TTL_MINUTES,
+    pushEnabled: parsePushEnabled(env),
+    expoAccessToken: env.EXPO_ACCESS_TOKEN?.trim() || null,
     bootstrapAdminPhone: env.BOOTSTRAP_ADMIN_PHONE ?? null,
     reservationMinutesCard: 15,
     reservationMinutesTransfer: 120,

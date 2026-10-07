@@ -27,6 +27,14 @@ import {
 import { DomainError, conflict, forbidden, invalid, notFound } from '../errors';
 import { formatOrderNumber } from '../text';
 import { variantBlockers } from './catalog';
+import {
+  type DeliveryGateInput,
+  INTERNAL_VIEWER,
+  type OrderViewer,
+  PinRejection,
+  applyDeliveryGate,
+  deliveryFieldsFor,
+} from './delivery';
 import * as inventory from './inventory';
 import { assertSlotAvailable, deliveryPricing, findZone, type Zone } from './zones';
 
@@ -377,7 +385,8 @@ async function createOrderOnce(
     return order!.id;
   });
 
-  return getOrder(ctx, orderId);
+  // Quien crea el pedido es su dueño: ve su PIN de entrega apenas el pedido queda confirmado.
+  return getOrder(ctx, orderId, { userId: input.userId });
 }
 
 // ───────────────────────── consulta ─────────────────────────
@@ -411,9 +420,16 @@ export interface OrderDTO extends Omit<OrderRow, 'number'> {
   timeline: (typeof orderEvents.$inferSelect)[];
   /** Estados a los que se puede pasar desde el actual (para el panel admin y el repartidor). */
   next: readonly OrderStatus[];
+  /**
+   * La entrega se cierra con el PIN del cliente. `deliveryPin` (heredado de la fila) solo trae el
+   * valor en la vista del cliente dueño; para todos los demás es null (ver `deliveryFieldsFor`).
+   */
+  pinRequired: boolean;
+  /** Intentos de PIN que le quedan al repartidor (0 = bloqueado); null si el pedido no usa PIN. */
+  pinAttemptsLeft: number | null;
 }
 
-async function hydrate(db: Db, order: OrderRow): Promise<OrderDTO> {
+async function hydrate(db: Db, order: OrderRow, viewer: OrderViewer): Promise<OrderDTO> {
   const [items, timeline, paymentRows, customerRows] = await Promise.all([
     db
       .select()
@@ -447,20 +463,52 @@ async function hydrate(db: Db, order: OrderRow): Promise<OrderDTO> {
       .from(users)
       .where(eq(users.id, order.userId)),
   ]);
+  return toOrderDTO(
+    order,
+    { items, timeline, payments: paymentRows, customer: customerRows[0] },
+    viewer,
+  );
+}
+
+/**
+ * ÚNICO lugar donde se arma un `OrderDTO`. Recibe quién mira para decidir los campos sensibles
+ * (el PIN de entrega): ningún listado ni ruta debe construir el DTO por su cuenta.
+ */
+export function toOrderDTO(
+  order: OrderRow,
+  parts: {
+    items: OrderItemRow[];
+    timeline: (typeof orderEvents.$inferSelect)[];
+    payments: (Omit<PaymentSummary, 'proofSubmitted'> & { raw: unknown })[];
+    customer: { id: string; name: string; phone: string } | undefined;
+  },
+  viewer: OrderViewer,
+): OrderDTO {
   return {
     ...order,
+    // La dirección siempre trae las coordenadas (null si el cliente no las dio) para el navegador del repartidor.
+    address: {
+      ...order.address,
+      latitude: order.address.latitude ?? null,
+      longitude: order.address.longitude ?? null,
+    },
+    ...deliveryFieldsFor(order, parts.timeline, viewer),
     code: formatOrderNumber(order.number),
-    items,
-    customer: customerRows[0] ?? { id: order.userId, name: '', phone: '' },
-    payments: paymentRows.map(({ raw, ...p }) => ({
+    items: parts.items,
+    customer: parts.customer ?? { id: order.userId, name: '', phone: '' },
+    payments: parts.payments.map(({ raw, ...p }) => ({
       ...p,
       proofSubmitted: !!(raw as { proof?: unknown } | null)?.proof,
     })),
-    timeline,
+    timeline: parts.timeline,
     next: nextStatuses(order.status),
   };
 }
 
+/**
+ * `scope.userId` = el cliente dueño mira su propio pedido (404 si es de otra persona) y es el
+ * único que puede ver el PIN. Sin `scope` la vista es interna (admin, repartidor, pagos): sin PIN.
+ */
 export async function getOrder(
   ctx: OrderContext,
   orderId: string,
@@ -469,7 +517,10 @@ export async function getOrder(
   const [order] = await ctx.db.select().from(orders).where(eq(orders.id, orderId));
   // 404 (no 403) para no revelar que el pedido existe.
   if (!order || (scope.userId && order.userId !== scope.userId)) throw notFound('Pedido');
-  return hydrate(ctx.db, order);
+  const viewer: OrderViewer = scope.userId
+    ? { role: 'customer', userId: scope.userId }
+    : INTERNAL_VIEWER;
+  return hydrate(ctx.db, order, viewer);
 }
 
 export async function listOrdersForUser(ctx: OrderContext, userId: string, limit = 30) {
@@ -479,7 +530,7 @@ export async function listOrdersForUser(ctx: OrderContext, userId: string, limit
     .where(eq(orders.userId, userId))
     .orderBy(desc(orders.createdAt))
     .limit(limit);
-  return Promise.all(rows.map((o) => hydrate(ctx.db, o)));
+  return Promise.all(rows.map((o) => hydrate(ctx.db, o, { role: 'customer', userId })));
 }
 
 export async function listOrdersAdmin(
@@ -495,7 +546,7 @@ export async function listOrdersAdmin(
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(desc(orders.createdAt))
     .limit(Math.min(filter.limit ?? 100, 200));
-  return Promise.all(rows.map((o) => hydrate(ctx.db, o)));
+  return Promise.all(rows.map((o) => hydrate(ctx.db, o, INTERNAL_VIEWER)));
 }
 
 // ───────────────────────── pesaje ─────────────────────────
@@ -561,8 +612,21 @@ export async function transitionOrder(
   to: OrderStatus,
   actor: Actor,
   note = '',
+  /** Solo para 'delivered': el PIN del repartidor o el motivo del personal (ver `delivery.ts`). */
+  delivery: DeliveryGateInput = {},
 ): Promise<OrderDTO> {
-  await ctx.db.transaction((tx) => transitionOrderInTx(ctx, tx, orderId, to, actor, note));
+  let pinRejection: PinRejection | null = null as PinRejection | null;
+  await ctx.db.transaction(async (tx) => {
+    try {
+      await transitionOrderInTx(ctx, tx, orderId, to, actor, note, delivery);
+    } catch (e) {
+      // Un PIN incorrecto rechaza la entrega, pero el intento fallido ya escrito debe quedar
+      // guardado (es lo que cuenta hacia el bloqueo): se confirma la transacción y luego se lanza.
+      if (!(e instanceof PinRejection)) throw e;
+      pinRejection = e;
+    }
+  });
+  if (pinRejection) throw pinRejection;
   return getOrder(ctx, orderId);
 }
 
@@ -574,6 +638,7 @@ export async function transitionOrderInTx(
   to: OrderStatus,
   actor: Actor,
   note = '',
+  delivery: DeliveryGateInput = {},
 ): Promise<void> {
   const now = nowOf(ctx);
   const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update');
@@ -608,6 +673,15 @@ export async function transitionOrderInTx(
 
   if (to === 'out_for_delivery' && !order.driverId) {
     throw conflict('no_driver', 'Asigna un repartidor antes de enviar el pedido');
+  }
+
+  // Puerta de la entrega: va DESPUÉS de las reglas de dinero (cobro en efectivo exacto) y antes de
+  // cualquier otra escritura, porque un PIN incorrecto debe guardar solo su intento fallido.
+  let eventNote = note;
+  if (to === 'delivered') {
+    const gate = await applyDeliveryGate(tx, order, actor, delivery, now);
+    Object.assign(patch, gate.patch);
+    if (gate.note) eventNote = note ? `${gate.note}. ${note}` : gate.note;
   }
 
   if (to === 'packed') {
@@ -696,7 +770,7 @@ export async function transitionOrderInTx(
     fromStatus: from,
     toStatus: to,
     actorId: actor.id,
-    note,
+    note: eventNote,
   });
 
   if (ctx.hooks?.afterTransition) {

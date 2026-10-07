@@ -1,3 +1,4 @@
+import { DR_BOUNDS, OUTSIDE_DR_MESSAGE } from '@jellyfish/shared';
 import { type ZodType, z } from 'zod';
 import { invalid } from '../errors';
 
@@ -24,7 +25,18 @@ export const addressInputSchema = z.object({
   reference: z.string().trim().max(240).default(''),
   sector: z.string().trim().min(2, 'Indica tu sector').max(80),
   city: z.string().trim().min(2, 'Indica tu ciudad').max(80),
-  latitude: z.number().min(-90).max(90).nullable().default(null),
-  longitude: z.number().min(-180).max(180).nullable().default(null),
+  // Coordenadas del punto de entrega (opcionales): deben caer en RD para que el repartidor las siga.
+  latitude: z
+    .number()
+    .min(DR_BOUNDS.minLat, OUTSIDE_DR_MESSAGE)
+    .max(DR_BOUNDS.maxLat, OUTSIDE_DR_MESSAGE)
+    .nullable()
+    .default(null),
+  longitude: z
+    .number()
+    .min(DR_BOUNDS.minLng, OUTSIDE_DR_MESSAGE)
+    .max(DR_BOUNDS.maxLng, OUTSIDE_DR_MESSAGE)
+    .nullable()
+    .default(null),
   contactPhone: z.string().max(30).nullable().default(null),
 });

@@ -11,18 +11,24 @@ import { DomainError, forbidden, unauthorized } from './errors';
 import { registerAdminRoutes } from './routes/admin';
 import { registerAuthRoutes } from './routes/auth';
 import { registerCatalogRoutes } from './routes/catalog';
+import { registerDeliveryRoutes } from './routes/delivery';
 import { registerDriverRoutes } from './routes/driver';
 import { registerOrderRoutes } from './routes/orders';
 import { registerPaymentRoutes } from './routes/payments';
+import { installPushLifecycle, registerPushRoutes } from './routes/push';
 import type { OtpSender } from './services/auth';
+import { deliveryHooks } from './services/delivery';
 import type { OrderContext, OrderHooks } from './services/orders';
 import { type PaymentContext, createGateway, paymentHooks } from './services/payments';
+import { ExpoPushSender, PushService, type PushSender } from './services/push';
 
 export interface AppDeps {
   db: Db;
   config: Config;
   otpSender: OtpSender;
   hooks?: OrderHooks;
+  /** Transporte de notificaciones push; por defecto Expo. Se inyecta un doble en las pruebas. */
+  pushSender?: PushSender;
   now?: () => Date;
   logger?: boolean;
 }
@@ -70,10 +76,26 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate('deps', deps);
   // Las reglas de dinero siempre acompañan al pedido; `deps.hooks` permite añadir más en pruebas.
   const payHooks = paymentHooks();
+  // PIN de entrega al crear el pedido y borrado de la posición del repartidor al terminar la entrega.
+  const delHooks = deliveryHooks();
+  // Avisos push del pedido: los hooks solo anotan dentro de la transacción; el envío ocurre
+  // después del commit (ver services/push.ts).
+  const push = new PushService({
+    db: deps.db,
+    config: deps.config,
+    sender:
+      deps.pushSender ??
+      new ExpoPushSender({ accessToken: deps.config.expoAccessToken, logger: app.log }),
+    logger: app.log,
+  });
+  app.decorate('push', push);
+  installPushLifecycle(app, push);
   const hooks: OrderHooks = {
     afterCreate: async (tx, order) => {
       await payHooks.afterCreate?.(tx, order);
+      await delHooks.afterCreate?.(tx, order);
       await deps.hooks?.afterCreate?.(tx, order);
+      await push.hooks.afterCreate?.(tx, order);
     },
     beforeTransition: async (tx, order, to) => {
       await payHooks.beforeTransition?.(tx, order, to);
@@ -81,7 +103,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
     afterTransition: async (tx, order, from, to) => {
       await payHooks.afterTransition?.(tx, order, from, to);
+      await delHooks.afterTransition?.(tx, order, from, to);
       await deps.hooks?.afterTransition?.(tx, order, from, to);
+      await push.hooks.afterTransition?.(tx, order, from, to);
     },
   };
   const orderCtx: OrderContext = { db: deps.db, config: deps.config, hooks, now: deps.now };
@@ -152,11 +176,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get('/health', async () => ({ status: 'ok', demo: deps.config.demo }));
 
   await registerAuthRoutes(app);
+  await registerPushRoutes(app);
   await registerCatalogRoutes(app);
   await registerOrderRoutes(app);
   await registerPaymentRoutes(app);
   await registerAdminRoutes(app);
   await registerDriverRoutes(app);
+  await registerDeliveryRoutes(app);
 
   return app;
 }

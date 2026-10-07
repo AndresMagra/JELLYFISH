@@ -17,6 +17,14 @@ apps/customer/.expo/
 apps/admin/dist/
 apps/driver/dist/
 apps/driver/.expo/
+# Credenciales de las tiendas y de notificaciones: se guardan en EAS o fuera del repositorio, nunca aquí
+google-services.json
+GoogleService-Info.plist
+*.p8
+*.p12
+*.jks
+*.mobileprovision
+google-play-service-account*.json
 # DATOS INTERNOS DEL NEGOCIO: listados de precios/costos y archivos de Excel no se suben nunca
 data/private/
 *.xlsx

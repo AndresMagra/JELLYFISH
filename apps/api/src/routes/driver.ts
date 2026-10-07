@@ -25,13 +25,20 @@ export async function registerDriverRoutes(app: FastifyInstance) {
 
   app.post('/v1/driver/orders/:id/transition', driver, async (req) => {
     const { id } = parse(z.object({ id: uuid }), req.params);
-    const { to, note } = parse(
+    const { to, note, pin } = parse(
       z.object({
         to: z.enum(['out_for_delivery', 'delivered', 'delivery_failed']),
         note: z.string().max(300).default(''),
+        // Para 'delivered': los 4 dígitos que le dice el cliente (como texto: conserva el cero inicial).
+        pin: z
+          .string()
+          .regex(/^\d{4}$/, 'El PIN son 4 dígitos')
+          .optional(),
       }),
       req.body,
     );
-    return transitionOrder(app.orderCtx, id, to, { id: req.session!.id, role: 'driver' }, note);
+    return transitionOrder(app.orderCtx, id, to, { id: req.session!.id, role: 'driver' }, note, {
+      pin,
+    });
   });
 }

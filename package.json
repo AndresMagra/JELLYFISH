@@ -16,8 +16,11 @@
     "format:check": "prettier --check .",
     "catalog:check": "tsx scripts/catalog-check.ts",
     "catalog:from-xlsx": "tsx scripts/catalog-from-xlsx.ts",
+    "brand:assets": "tsx scripts/make-brand-assets.ts",
+    "brand:check": "tsx scripts/make-brand-assets.ts --check",
     "e2e:customer": "tsx scripts/e2e-customer.ts",
     "e2e:admin": "tsx scripts/e2e-admin.ts",
+    "e2e:pricelist": "tsx scripts/e2e-pricelist.ts",
     "e2e:driver": "tsx scripts/e2e-driver.ts"
   },
   "engines": {

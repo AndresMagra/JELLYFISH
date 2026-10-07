@@ -46,10 +46,16 @@ export async function registerAuthRoutes(app: FastifyInstance) {
       z.object({
         name: z.string().trim().max(80).optional(),
         email: z.string().trim().email('Correo inválido').max(120).nullable().optional(),
-        pushToken: z.string().max(300).nullable().optional(),
       }),
       req.body,
     );
+    // Los tokens de notificaciones ya no viajan por aquí: se registran en POST /v1/me/devices.
+    // Si el cuerpo quedó vacío (p. ej. una app vieja que solo mandaba pushToken) no hay nada que
+    // actualizar y Drizzle rechaza un UPDATE sin columnas.
+    if (Object.keys(body).length === 0) {
+      const [current] = await deps.db.select().from(users).where(eq(users.id, req.session!.id));
+      return publicUser(current!);
+    }
     const [user] = await deps.db
       .update(users)
       .set(body)

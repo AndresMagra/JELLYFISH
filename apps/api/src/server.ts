@@ -3,8 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { buildApp } from './app';
 import { loadConfig } from './config';
 import { createPgliteDb, createPostgresDb } from './db/client';
-import { ConsoleOtpSender } from './services/auth';
 import { importCatalog, seedDemoStock, syncCategories } from './services/catalog';
+import { type Logger, consoleLogger } from './services/http-util';
+import { createOtpSender } from './services/otp-senders';
 import { expireStaleOrders } from './services/orders';
 import { createZone, listZones } from './services/zones';
 
@@ -13,14 +14,18 @@ const catalogDir = `${root}data/catalog`;
 
 async function main() {
   const config = loadConfig();
-  const production = process.env.NODE_ENV === 'production';
 
-  if (production && !process.env.OTP_SENDER) {
-    throw new Error(
-      'Producción requiere un canal real de OTP (SMS/WhatsApp). Aún no está conectado: ' +
-        'implementa OtpSender y regístralo aquí antes de desplegar.',
-    );
-  }
+  // Valida el canal de OTP ANTES de abrir la base: en producción exige twilio o whatsapp con todas
+  // sus credenciales y rechaza 'console'. Los fallos del proveedor se registran por el logger de
+  // la app, que se conecta justo después de crearla.
+  let appLog: Logger | undefined;
+  const otpSender = createOtpSender(process.env, {
+    ttlMinutes: config.otpTtlMinutes,
+    logger: {
+      warn: (o, m) => (appLog ?? consoleLogger).warn(o, m),
+      error: (o, m) => (appLog ?? consoleLogger).error(o, m),
+    },
+  });
 
   const handle = process.env.DATABASE_URL
     ? await createPostgresDb(process.env.DATABASE_URL)
@@ -58,10 +63,16 @@ async function main() {
     });
   }
 
-  const app = await buildApp({ db, config, otpSender: new ConsoleOtpSender(), logger: true });
+  const app = await buildApp({ db, config, otpSender, logger: true });
+  appLog = app.log;
   const ctx = app.orderCtx;
   const timer = setInterval(() => {
-    expireStaleOrders(ctx).catch((e) => app.log.error(e, 'expireStaleOrders falló'));
+    // Dentro de `push.scope` las cancelaciones por reserva vencida también avisan al cliente.
+    app.push
+      .scope(() => expireStaleOrders(ctx))
+      .catch((e) => app.log.error(e, 'expireStaleOrders falló'));
+    // Expo reporta tokens muertos en los recibos, minutos después del envío.
+    app.push.checkReceipts().catch((e) => app.log.error(e, 'checkReceipts falló'));
   }, 60_000);
 
   const port = Number(process.env.PORT ?? 3000);

@@ -4,6 +4,7 @@ import {
   Banknote,
   Boxes,
   ClipboardList,
+  FileSpreadsheet,
   LayoutDashboard,
   LogOut,
   MapPin,
@@ -21,6 +22,7 @@ import { Inventory } from './pages/Inventory';
 import { OrderDetail } from './pages/OrderDetail';
 import { Orders } from './pages/Orders';
 import { Payments } from './pages/Payments';
+import { PriceList } from './pages/PriceList';
 import { Team } from './pages/Team';
 import { Zones } from './pages/Zones';
 
@@ -58,6 +60,9 @@ function Sidebar() {
           'Catálogo y precios',
           data?.catalog.blocked,
         )}
+        {isAdmin
+          ? link('/lista-de-precios', <FileSpreadsheet size={18} />, 'Lista de precios')
+          : null}
         {link('/inventario', <Boxes size={18} />, 'Inventario')}
         {link('/pagos', <Wallet size={18} />, 'Pagos y caja', money)}
         {isAdmin ? link('/zonas', <MapPin size={18} />, 'Zonas de entrega') : null}
@@ -94,6 +99,10 @@ export function App() {
           <Route path="/pedidos" element={<Orders />} />
           <Route path="/pedidos/:id" element={<OrderDetail />} />
           <Route path="/catalogo" element={<Catalog />} />
+          <Route
+            path="/lista-de-precios"
+            element={isAdmin ? <PriceList /> : <Navigate to="/" replace />}
+          />
           <Route path="/inventario" element={<Inventory />} />
           <Route path="/pagos" element={<Payments />} />
           <Route path="/zonas" element={isAdmin ? <Zones /> : <Navigate to="/" replace />} />

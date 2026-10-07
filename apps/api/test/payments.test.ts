@@ -585,7 +585,8 @@ describe('efectivo contra entrega y cuadre de caja', () => {
       method: 'POST',
       url: `/v1/driver/orders/${order.id}/transition`,
       headers: e.driver,
-      payload: { to: 'delivered' },
+      // El pedido nuevo lleva PIN: el cliente se lo dice al repartidor al entregar.
+      payload: { to: 'delivered', pin: other!.deliveryPin },
     });
     expect(json(done).status).toBe('delivered');
   });

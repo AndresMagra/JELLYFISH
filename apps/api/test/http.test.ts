@@ -630,8 +630,10 @@ describe('API HTTP', () => {
           method: 'POST',
           url: `/v1/driver/orders/${created.id}/transition`,
           headers: driver,
-          payload: { to: 'delivered' },
+          // El cliente le dice su PIN al repartidor (lo recibió al crear el pedido).
+          payload: { to: 'delivered', pin: created.deliveryPin },
         });
+      expect(created.deliveryPin).toMatch(/^\d{4}$/);
       const early = await deliver();
       expect(early.statusCode).toBe(409);
       expect(json(early).error.code).toBe('cash_not_collected');

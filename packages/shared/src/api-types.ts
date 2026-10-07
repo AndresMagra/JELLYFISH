@@ -196,6 +196,19 @@ export interface OrderDTO {
   driverId: string | null;
   createdAt: string;
   deliveredAt: string | null;
+  /**
+   * PIN de entrega (4 dígitos). SOLO el cliente dueño lo recibe, y únicamente mientras el pedido
+   * está confirmado, en preparación, empacado, en camino o con entrega fallida. Para repartidor,
+   * personal y administrador siempre es null.
+   */
+  deliveryPin: string | null;
+  /** La entrega se cierra con el PIN del cliente (false en pedidos anteriores al PIN). */
+  pinRequired: boolean;
+  /** Intentos de PIN que le quedan al repartidor; 0 = bloqueado. null si el pedido no usa PIN. */
+  pinAttemptsLeft: number | null;
+  pinVerifiedAt: string | null;
+  /** Solo personal: motivo con el que se entregó sin PIN (null para el cliente). */
+  pinOverrideReason: string | null;
   items: OrderItemDTO[];
   payments: PaymentSummaryDTO[];
   customer: { id: string; name: string; phone: string };
@@ -226,6 +239,77 @@ export interface StartPaymentDTO {
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
+}
+
+// ───────────── Entrega: PIN, ubicación del repartidor y pedir de nuevo ─────────────
+
+/** Cambio de estado de una entrega. `pin` lo manda el repartidor; `pinOverrideReason`, el personal. */
+export interface DeliveryTransitionInput {
+  to: OrderStatus;
+  note?: string;
+  /** Los 4 dígitos que le dice el cliente. Obligatorio para marcar 'delivered' si el pedido tiene PIN. */
+  pin?: string;
+  /** Personal/administrador: motivo (mínimo 8 caracteres) para entregar sin el PIN del cliente. */
+  pinOverrideReason?: string;
+}
+
+/** Posición del repartidor que reporta la app (cada 4 s como mínimo; solo dentro de RD). */
+export interface DriverLocationInput {
+  latitude: number;
+  longitude: number;
+  /** Precisión del GPS en metros. */
+  accuracyM?: number | null;
+  /** Pedido que está llevando; debe estar asignado a este repartidor. */
+  orderId?: string;
+}
+
+export interface DriverLocationAckDTO {
+  ok: true;
+  updatedAt: string;
+}
+
+export type TrackingUnavailableReason =
+  /** El pedido todavía no salió o ya terminó. */
+  | 'not_out_for_delivery'
+  | 'no_driver'
+  /** El repartidor aún no ha enviado su posición (o se borró al terminar la entrega). */
+  | 'no_position'
+  /** La última posición tiene más de 3 minutos. */
+  | 'stale';
+
+export type TrackingDTO =
+  | { available: true; latitude: number; longitude: number; updatedAt: string; ageSeconds: number }
+  | { available: false; reason: TrackingUnavailableReason };
+
+export type ReorderLineStatus = 'ok' | 'reduced' | 'unavailable';
+
+/** Una línea del pedido anterior ya ajustada al catálogo de hoy. */
+export interface ReorderLineDTO {
+  variantId: string;
+  name: string;
+  variant: string;
+  photo: string;
+  /** true = imagen ilustrativa; false = foto real del producto. */
+  photoIllustrative: boolean;
+  pricingUnit: PricingUnit;
+  /** Precio ACTUAL por libra o por unidad, ITBIS incluido (centavos). */
+  unitPrice: number;
+  /** Lo que se pagó la vez anterior, para avisar si el precio cambió. */
+  previousUnitPrice: number;
+  /** Lo que pidió el cliente la vez anterior (centilibras o unidades). */
+  requestedQuantity: number;
+  /** Cantidad sugerida hoy: ajustada a existencias, mínimo y paso (0 si no está disponible). */
+  quantity: number;
+  status: ReorderLineStatus;
+  /** Explicación en español cuando status no es 'ok'. */
+  reason?: string;
+}
+
+export interface ReorderDTO {
+  orderId: string;
+  code: string;
+  demo: boolean;
+  lines: ReorderLineDTO[];
 }
 
 // ───────────── Panel de administración ─────────────
@@ -310,4 +394,26 @@ export interface TeamMemberDTO {
   phone: string;
   name: string;
   role: 'customer' | 'admin' | 'staff' | 'driver';
+}
+
+// ───────────── Notificaciones push ─────────────
+
+export type DevicePlatformName = 'ios' | 'android' | 'web';
+
+/** POST /v1/me/devices. El token tiene la forma ExponentPushToken[…] o ExpoPushToken[…]. */
+export interface RegisterDeviceInput {
+  token: string;
+  platform: DevicePlatformName;
+}
+
+export interface DeviceDTO {
+  token: string;
+  platform: DevicePlatformName;
+  lastSeenAt: string;
+}
+
+/** Contenido `data` de toda notificación de pedido: la app abre esa pantalla al tocarla. */
+export interface OrderPushData {
+  type: 'order';
+  orderId: string;
 }

@@ -3,7 +3,7 @@ import { normalizeDominicanPhone } from '@jellyfish/shared';
 import { and, count, desc, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { Config } from '../config';
 import type { Db } from '../db/client';
-import { addresses, otpCodes, users, type UserRole } from '../db/schema';
+import { addresses, deviceTokens, otpCodes, users, type UserRole } from '../db/schema';
 import { invalid, tooMany } from '../errors';
 
 /** Canal de envío del código (SMS o WhatsApp). La implementación real se conecta en despliegue. */
@@ -36,7 +36,8 @@ export interface AuthContext {
   now?: () => Date;
 }
 
-const OTP_TTL_MS = 10 * 60_000;
+/** Ventana del límite de códigos por teléfono (independiente de la vigencia del código). */
+const OTP_WINDOW_MS = 10 * 60_000;
 const MAX_CODES_PER_WINDOW = 3;
 const MAX_ATTEMPTS = 5;
 
@@ -60,21 +61,25 @@ export async function requestOtp(ctx: AuthContext, rawPhone: string) {
     .select({ n: count() })
     .from(otpCodes)
     .where(
-      and(eq(otpCodes.phone, phone), gt(otpCodes.createdAt, new Date(now.getTime() - OTP_TTL_MS))),
+      and(
+        eq(otpCodes.phone, phone),
+        gt(otpCodes.createdAt, new Date(now.getTime() - OTP_WINDOW_MS)),
+      ),
     );
   if (n >= MAX_CODES_PER_WINDOW) {
     throw tooMany('Pediste demasiados códigos. Intenta de nuevo en unos minutos.');
   }
 
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+  const ttlMs = ctx.config.otpTtlMinutes * 60_000;
   await ctx.db.insert(otpCodes).values({
     phone,
     codeHash: hashCode(ctx, phone, code),
-    expiresAt: new Date(now.getTime() + OTP_TTL_MS),
+    expiresAt: new Date(now.getTime() + ttlMs),
     createdAt: now,
   });
   await ctx.sender.send(phone, code);
-  return { phone, expiresInSeconds: OTP_TTL_MS / 1000 };
+  return { phone, expiresInSeconds: ttlMs / 1000 };
 }
 
 export async function verifyOtp(ctx: AuthContext, rawPhone: string, code: string) {
@@ -140,19 +145,19 @@ async function upsertUser(ctx: AuthContext, phone: string) {
 
 /**
  * Eliminación de cuenta (requisito de Apple y de la Ley 172-13 sobre datos personales).
- * Se anonimiza el perfil y se borran direcciones y token de notificaciones. Los pedidos se
+ * Se anonimiza el perfil y se borran direcciones y dispositivos de notificaciones. Los pedidos se
  * conservan por obligación fiscal/contable, sin vínculo con datos de contacto del perfil.
  */
 export async function deleteAccount(db: Db, userId: string): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.delete(addresses).where(eq(addresses.userId, userId));
+    await tx.delete(deviceTokens).where(eq(deviceTokens.userId, userId));
     await tx
       .update(users)
       .set({
         phone: `deleted:${userId}`,
         name: '',
         email: null,
-        pushToken: null,
         deletedAt: new Date(),
       })
       .where(eq(users.id, userId));

@@ -273,12 +273,12 @@ describe('zonas y cobro de efectivo desde el panel', () => {
         },
       }),
     );
-    const step = (to: string) =>
+    const step = (to: string, extra: Record<string, unknown> = {}) =>
       app.inject({
         method: 'POST',
         url: `/v1/admin/orders/${created.id}/transition`,
         headers: admin,
-        payload: { to },
+        payload: { to, ...extra },
       });
     await step('picking');
     await app.inject({
@@ -315,7 +315,10 @@ describe('zonas y cobro de efectivo desde el panel', () => {
       balance: created.total,
       deliveries: 1,
     });
-    expect((await step('delivered')).statusCode).toBe(200);
+    // Los pedidos nuevos llevan PIN: el personal entrega sin él solo con un motivo escrito.
+    expect(
+      (await step('delivered', { pinOverrideReason: 'Cliente sin teléfono a mano' })).statusCode,
+    ).toBe(200);
     await app.close();
     await w.close();
   });

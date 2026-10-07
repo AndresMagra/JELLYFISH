@@ -7,4 +7,5 @@ export * as es from './i18n/es-DO';
 export * from './phone';
 export * from './limits';
 export * from './quantity';
+export * from './geo';
 export * from './api-types';
