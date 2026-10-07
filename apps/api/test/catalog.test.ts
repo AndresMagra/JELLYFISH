@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { parseCatalogCsv } from '@jellyfish/catalog';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
-import { type DbHandle, createPgliteDb } from '../src/db/client';
+import type { DbHandle } from '../src/db/client';
 import { products, variants } from '../src/db/schema';
 import {
   getProduct,
@@ -12,6 +12,7 @@ import {
   syncCategories,
 } from '../src/services/catalog';
 import { catalogDir, categoriesJson } from './helpers';
+import { createTestDb } from './test-db';
 
 describe('catálogo del negocio en la base de datos', () => {
   let handle: DbHandle;
@@ -23,7 +24,7 @@ describe('catálogo del negocio en la base de datos', () => {
   };
 
   beforeAll(async () => {
-    handle = await createPgliteDb();
+    handle = await createTestDb();
     await syncCategories(handle.db, categoriesJson);
   });
   afterAll(() => handle.close());

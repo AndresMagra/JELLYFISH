@@ -59,6 +59,12 @@ interface ProviderError {
   trace?: string;
 }
 
+/** Deja pasar solo identificadores cortos y sin espacios (números, "190/463", trazas de Meta). */
+function shortId(value: string | number | undefined): string | number | undefined {
+  if (typeof value !== 'string') return value;
+  return /^[\w./-]{1,40}$/.test(value) ? value : '[formato inesperado]';
+}
+
 /**
  * Base común: construye la petición, aplica plazo de 8 s y, solo ante fallas de red o 5xx,
  * reintenta una vez. Los errores 4xx (credenciales, número inválido, plantilla…) no se reintentan.
@@ -125,8 +131,9 @@ abstract class HttpOtpSender implements OtpSender {
         willRetry,
         reason: failure.reason,
         httpStatus: failure.httpStatus,
-        providerCode: failure.detail?.code,
-        providerTrace: failure.detail?.trace,
+        // Códigos y trazas son identificadores cortos: se acotan por si el proveedor mandara otra cosa.
+        providerCode: shortId(failure.detail?.code),
+        providerTrace: shortId(failure.detail?.trace),
         providerMessage: redactText(failure.detail?.message ?? failure.message ?? '', redactions),
         to: maskPhone(phone),
       };

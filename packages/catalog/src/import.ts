@@ -34,6 +34,8 @@ export const CSV_COLUMNS = [
   'como_cocinar',
   'foto',
   'activo',
+  // Columna opcional añadida al final: los CSV anteriores siguen siendo válidos.
+  'foto_ilustrativa',
 ] as const;
 
 export type CsvColumn = (typeof CSV_COLUMNS)[number];
@@ -54,6 +56,12 @@ const ALIASES: Record<string, CsvColumn> = {
   name: 'nombre',
   price: 'precio',
   producto: 'nombre',
+  ilustrativa: 'foto_ilustrativa',
+  ilustrativo: 'foto_ilustrativa',
+  foto_ilustrativo: 'foto_ilustrativa',
+  imagen_ilustrativa: 'foto_ilustrativa',
+  es_ilustrativa: 'foto_ilustrativa',
+  foto_es_ilustrativa: 'foto_ilustrativa',
 };
 
 export function normalizeHeader(raw: string): string {
@@ -287,6 +295,12 @@ export function parseCatalogCsv(text: string, options: ParseOptions): ParsedCata
     );
     const frozen = attempt('congelado', () => parseBool(get('congelado'), true), true);
     const active = attempt('activo', () => parseBool(get('activo'), true), true);
+    // Vacío = "si": sin dato explícito no se promete una foto real.
+    const photoIllustrative = attempt(
+      'foto_ilustrativa',
+      () => parseBool(get('foto_ilustrativa'), true),
+      true,
+    );
 
     if (rowErrors.length > 0) {
       errors.push(...rowErrors);
@@ -300,6 +314,9 @@ export function parseCatalogCsv(text: string, options: ParseOptions): ParsedCata
     if (cost !== null && cost > price) warn('costo', 'El costo supera al precio: margen negativo');
     if (unit === 'unit' && stepRaw !== '')
       warn('paso_lb', 'paso_lb se ignora en productos por unidad');
+    if (!photoIllustrative && get('foto') === '') {
+      warn('foto_ilustrativa', 'Marcada como foto real, pero la fila no tiene foto');
+    }
 
     items.push({
       sku,
@@ -327,6 +344,7 @@ export function parseCatalogCsv(text: string, options: ParseOptions): ParsedCata
       description: get('descripcion'),
       cookingTip: get('como_cocinar'),
       photo: get('foto'),
+      photoIllustrative,
       active,
     });
   });
@@ -438,6 +456,7 @@ export function catalogToCsv(items: readonly CatalogItem[]): string {
       i.cookingTip,
       i.photo,
       i.active ? 'si' : 'no',
+      i.photoIllustrative === false ? 'no' : 'si',
     ]);
   }
   return toCsv(rows);

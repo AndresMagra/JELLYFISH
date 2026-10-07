@@ -15,6 +15,7 @@
     "@fastify/formbody": "^9.0.0",
     "@fastify/jwt": "*",
     "@fastify/rate-limit": "*",
+    "@fastify/static": "^10.1.5",
     "@jellyfish/catalog": "*",
     "@jellyfish/payments": "*",
     "@jellyfish/shared": "*",

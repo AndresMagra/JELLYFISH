@@ -30,7 +30,10 @@ export interface VariantDTO {
   pieceCentilb: number | null;
   available: number;
   inStock: boolean;
+  /** URL absoluta (https://…) o texto heredado; las rutas locales ya vienen absolutas. */
   photo: string;
+  /** true = imagen ilustrativa (la app la rotula así); false = foto real del producto. */
+  photoIllustrative: boolean;
   unconfirmed: boolean;
 }
 

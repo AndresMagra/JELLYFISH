@@ -38,6 +38,11 @@ export interface CatalogItem {
   description: string;
   cookingTip: string;
   photo: string;
+  /**
+   * true = imagen ilustrativa (generada o de referencia): la app la rotula "Imagen ilustrativa".
+   * false = foto real del producto. Ausente equivale a true: lo seguro es no prometer una foto real.
+   */
+  photoIllustrative?: boolean;
   active: boolean;
 }
 

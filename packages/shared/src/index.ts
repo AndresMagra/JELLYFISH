@@ -8,4 +8,5 @@ export * from './phone';
 export * from './limits';
 export * from './quantity';
 export * from './geo';
+export * from './photo';
 export * from './api-types';

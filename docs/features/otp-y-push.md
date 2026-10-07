@@ -4,11 +4,11 @@
 
 **OTP (código de acceso por teléfono).** `createOtpSender(env)` elige el canal con `OTP_SENDER`:
 
-| Valor      | Canal                          | Cuándo                                             |
-| ---------- | ------------------------------ | -------------------------------------------------- |
-| `console`  | Imprime el código en la consola | Solo desarrollo. **Prohibido en producción.**       |
-| `twilio`   | SMS por la API REST de Twilio   | Producción                                         |
-| `whatsapp` | Plantilla de autenticación por WhatsApp Cloud API | Producción                       |
+| Valor      | Canal                                             | Cuándo                                        |
+| ---------- | ------------------------------------------------- | --------------------------------------------- |
+| `console`  | Imprime el código en la consola                   | Solo desarrollo. **Prohibido en producción.** |
+| `twilio`   | SMS por la API REST de Twilio                     | Producción                                    |
+| `whatsapp` | Plantilla de autenticación por WhatsApp Cloud API | Producción                                    |
 
 Sin `OTP_SENDER`: en desarrollo usa `console`; en producción el API **no arranca**. Todas las variables del canal se validan al arrancar y el error nombra cada una que falta (sin imprimir valores). El SMS dice: _"Tu código de JELLYFISH es 123456. Vence en 10 minutos. No lo compartas con nadie."_ La vigencia sale de `config.otpTtlMinutes` (hoy 10), la misma que usa el vencimiento del código.
 
@@ -27,18 +27,18 @@ Los `OrderHooks` corren dentro de la transacción. El hook de push no envía nad
 
 ## Variables de entorno
 
-| Variable | Obligatoria | Para qué |
-| --- | --- | --- |
-| `OTP_SENDER` | sí en producción | `twilio` o `whatsapp` (`console` solo en desarrollo) |
-| `TWILIO_ACCOUNT_SID` | con `twilio` | Empieza con `AC` |
-| `TWILIO_AUTH_TOKEN` | con `twilio` | Secreto |
-| `TWILIO_FROM` **o** `TWILIO_MESSAGING_SERVICE_SID` | con `twilio` | Remitente en E.164 (+1…) o servicio `MG…` (si están los dos, gana el servicio) |
-| `WHATSAPP_PHONE_NUMBER_ID` | con `whatsapp` | ID del número en Meta |
-| `WHATSAPP_ACCESS_TOKEN` | con `whatsapp` | Token de acceso permanente |
-| `WHATSAPP_OTP_TEMPLATE` | con `whatsapp` | Nombre de la plantilla de categoría **autenticación** aprobada |
-| `WHATSAPP_OTP_LANGUAGE` | no (`es`) | Idioma con el que se aprobó la plantilla |
-| `PUSH_ENABLED` | no | `1/0` o `true/false`. Por defecto activo, salvo `NODE_ENV=test` |
-| `EXPO_ACCESS_TOKEN` | no | Solo si el proyecto de Expo exige "enhanced push security" |
+| Variable                                           | Obligatoria      | Para qué                                                                       |
+| -------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------ |
+| `OTP_SENDER`                                       | sí en producción | `twilio` o `whatsapp` (`console` solo en desarrollo)                           |
+| `TWILIO_ACCOUNT_SID`                               | con `twilio`     | Empieza con `AC`                                                               |
+| `TWILIO_AUTH_TOKEN`                                | con `twilio`     | Secreto                                                                        |
+| `TWILIO_FROM` **o** `TWILIO_MESSAGING_SERVICE_SID` | con `twilio`     | Remitente en E.164 (+1…) o servicio `MG…` (si están los dos, gana el servicio) |
+| `WHATSAPP_PHONE_NUMBER_ID`                         | con `whatsapp`   | ID del número en Meta                                                          |
+| `WHATSAPP_ACCESS_TOKEN`                            | con `whatsapp`   | Token de acceso permanente                                                     |
+| `WHATSAPP_OTP_TEMPLATE`                            | con `whatsapp`   | Nombre de la plantilla de categoría **autenticación** aprobada                 |
+| `WHATSAPP_OTP_LANGUAGE`                            | no (`es`)        | Idioma con el que se aprobó la plantilla                                       |
+| `PUSH_ENABLED`                                     | no               | `1/0` o `true/false`. Por defecto activo, salvo `NODE_ENV=test`                |
+| `EXPO_ACCESS_TOKEN`                                | no               | Solo si el proyecto de Expo exige "enhanced push security"                     |
 
 Los secretos van solo por variables de entorno: nada se escribe en archivos ni en logs (no se registran teléfonos completos, códigos, PIN ni tokens).
 
@@ -56,6 +56,7 @@ Las pruebas usan `fetch` y transporte falsos (cuerpo y cabeceras exactos, reinte
 - **Nada se probó contra Twilio, Meta ni Expo reales** (sin credenciales ni red hacia ellos aquí): los formatos de petición siguen la documentación de cada API pero se verificaron solo con dobles. Probar en staging antes de abrir a clientes.
 - **WhatsApp:** el texto que ve el cliente lo fija la plantilla aprobada en Meta, no este código (su vigencia se define al crear la plantilla). Hay que crear la plantilla de autenticación con botón "copiar código" y mantener su vigencia alineada con `OTP_TTL_MINUTES`. Un timeout puede dejar un mensaje ya entregado aunque la persona vea el error (y el reintento duplicarlo).
 - Si el envío del OTP falla, ese código cuenta dentro del límite de 3 por 10 minutos (no se tocó la regla anti-abuso).
+- **Costo del SMS:** el texto lleva tilde ("código"), así que viaja como Unicode: ~81 caracteres son 2 segmentos (se cobra el doble que un SMS de 1 segmento). Quitando la tilde cabe en 1. Se dejó con tilde porque así se pidió el texto; es decisión del dueño según el costo por mensaje.
 - **Recibos de Expo:** los tickets se interpretan al enviar; los recibos (donde Expo suele reportar `DeviceNotRegistered`) se consultan a los 15 min **desde memoria**: si el servidor se reinicia se pierden los pendientes. El token muerto se limpia igual en el siguiente envío.
 - Si el proceso se cae entre el commit y el envío, ese aviso se pierde (no hay cola durable). Los avisos fuera de petición y sin `app.push.scope` esperan ~5 s a ver el commit; una transacción más larga no avisa.
 - Los pedidos que cambian de estado con SQL directo (sin pasar por `transitionOrder`) no generan avisos.

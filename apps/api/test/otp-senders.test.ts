@@ -248,7 +248,8 @@ describe('TwilioSmsSender', () => {
         json(
           {
             code: 21211,
-            message: `The 'To' number ${PHONE} is not valid. Body was "Tu código de JELLYFISH es ${CODE}". Auth ${TOKEN}`,
+            // El proveedor puede repetir el teléfono en otros formatos (no solo el exacto que enviamos).
+            message: `The 'To' number ${PHONE} is not valid (also (809) 555-0123, 809-555-0123, 8095550123). Body was "Tu código de JELLYFISH es ${CODE}". Auth ${TOKEN}`,
             more_info: 'https://www.twilio.com/docs/errors/21211',
             status: 400,
           },
@@ -259,7 +260,16 @@ describe('TwilioSmsSender', () => {
       const err = await rejection(twilio(f.fetch, { logger: log.logger }).send(PHONE, CODE));
 
       const everything = `${log.dump()}${err.message}${JSON.stringify(err.details ?? null)}${err.code}`;
-      for (const secret of [CODE, PHONE, PHONE.slice(1), '8095550123', TOKEN, SID]) {
+      for (const secret of [
+        CODE,
+        PHONE,
+        PHONE.slice(1),
+        '8095550123',
+        '555-0123',
+        '(809)',
+        TOKEN,
+        SID,
+      ]) {
         expect(everything, `contiene ${secret}`).not.toContain(secret);
       }
       // El error al cliente no filtra nada del proveedor.
@@ -407,6 +417,17 @@ describe('WhatsAppCloudSender', () => {
         to: '+1809*****23',
       },
     });
+  });
+
+  it('un "código de error" con formato raro no se copia al log (podría traer datos)', async () => {
+    const f = fakeFetch(
+      json({ error: { code: `invalid number ${PHONE} code ${CODE}`, message: 'x' } }, 400),
+    );
+    const log = recordingLogger();
+    await rejection(whatsapp(f.fetch, { logger: log.logger }).send(PHONE, CODE));
+    expect(log.entries[0]!.obj.providerCode).toBe('[formato inesperado]');
+    expect(log.dump()).not.toContain(CODE);
+    expect(log.dump()).not.toContain('8095550123');
   });
 });
 

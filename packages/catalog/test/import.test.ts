@@ -2,7 +2,14 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { CSV_COLUMNS, catalogToCsv, groupProducts, parseCatalogCsv, publishability } from '../src';
+import {
+  CSV_COLUMNS,
+  catalogToCsv,
+  groupProducts,
+  parseCatalogCsv,
+  parseCsv,
+  publishability,
+} from '../src';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const catalogDir = join(here, '../../../data/catalog');
@@ -116,6 +123,108 @@ describe('importador de catálogo', () => {
     expect(again.errors).toEqual([]);
     expect(again.items).toEqual(original.items);
   });
+
+  it('exporta y reimporta sin pérdida también la foto y si es ilustrativa o real', () => {
+    const original = parse(
+      `${HEADER},foto,foto_ilustrativa\nA,Pollo,aves,lb,100,/photos/A.webp,no\nB,Res,res,lb,200,https://cdn.example.com/b.webp,si\nC,Cerdo,cerdo,lb,150,,\n`,
+    );
+    expect(original.errors).toEqual([]);
+    expect(original.items.map((i) => i.photoIllustrative)).toEqual([false, true, true]);
+    const again = parse(catalogToCsv(original.items));
+    expect(again.errors).toEqual([]);
+    expect(again.items).toEqual(original.items);
+    expect(again.items.map((i) => [i.photo, i.photoIllustrative])).toEqual([
+      ['/photos/A.webp', false],
+      ['https://cdn.example.com/b.webp', true],
+      ['', true],
+    ]);
+  });
+});
+
+describe('columna foto_ilustrativa', () => {
+  it('es la última columna canónica y va después de "foto"', () => {
+    expect(CSV_COLUMNS.at(-1)).toBe('foto_ilustrativa');
+    expect(CSV_COLUMNS.indexOf('foto_ilustrativa')).toBeGreaterThan(CSV_COLUMNS.indexOf('foto'));
+    expect(catalogToCsv([]).split('\n', 1)[0]).toBe(CSV_COLUMNS.join(','));
+  });
+
+  it('sin la columna, o vacía, la foto es ilustrativa (no se promete una foto real)', () => {
+    const sin = parse(`${HEADER},foto\nA,Pollo,aves,lb,100,/photos/A.webp\n`);
+    expect(sin.errors).toEqual([]);
+    expect(sin.items[0]!.photoIllustrative).toBe(true);
+    const vacia = parse(`${HEADER},foto,foto_ilustrativa\nA,Pollo,aves,lb,100,/photos/A.webp,\n`);
+    expect(vacia.items[0]!.photoIllustrative).toBe(true);
+  });
+
+  it('entiende si/no con o sin acentos y mayúsculas, y sus variantes', () => {
+    const csv = `${HEADER},foto,foto_ilustrativa\n${[
+      'A,A,res,lb,100,/photos/A.webp,si',
+      'B,B,res,lb,100,/photos/B.webp,Sí',
+      'C,C,res,lb,100,/photos/C.webp,NO',
+      'D,D,res,lb,100,/photos/D.webp,false',
+      'E,E,res,lb,100,/photos/E.webp,0',
+      'F,F,res,lb,100,/photos/F.webp,true',
+    ].join('\n')}\n`;
+    const r = parse(csv);
+    expect(r.errors).toEqual([]);
+    expect(r.items.map((i) => i.photoIllustrative)).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+    ]);
+  });
+
+  it('acepta la cabecera con acentos y alias, también en CSV de Excel (; y coma decimal)', () => {
+    for (const header of [
+      'Foto ilustrativa',
+      'FOTO_ILUSTRATIVA',
+      'Ilustrativa',
+      'Imagen ilustrativa',
+    ]) {
+      const r = parse(
+        `SKU;Nombre;Categoría;Unidad;Precio;Foto;${header}\nA;Pollo;aves;lb;"174,95";/photos/A.webp;No\n`,
+      );
+      expect(r.errors, header).toEqual([]);
+      expect(r.items[0]!.photoIllustrative, header).toBe(false);
+    }
+  });
+
+  it('rechaza un valor que no es si/no, indicando fila, SKU y campo', () => {
+    const r = parse(
+      `${HEADER},foto_ilustrativa\nA,Pollo,aves,lb,100,quizás\nB,Res,res,lb,100,si\n`,
+    );
+    expect(r.items.map((i) => i.sku)).toEqual(['B']);
+    expect(r.errors).toEqual([
+      expect.objectContaining({ line: 2, sku: 'A', field: 'foto_ilustrativa' }),
+    ]);
+    expect(r.errors[0]!.message).toMatch(/si.*no/);
+  });
+
+  it('avisa si se marca como foto real una fila que no tiene foto', () => {
+    const r = parse(
+      `${HEADER},foto,foto_ilustrativa\nA,Pollo,aves,lb,100,,no\nB,Res,res,lb,100,/photos/B.webp,no\nC,Cerdo,cerdo,lb,100,,si\n`,
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.warnings.filter((w) => w.field === 'foto_ilustrativa').map((w) => w.sku)).toEqual([
+      'A',
+    ]);
+  });
+
+  it('el CSV exportado marca "no" solo cuando la foto es real', () => {
+    const [base] = parse(`${HEADER}\nA,Pollo,aves,lb,100\n`).items;
+    const rows = parseCsv(
+      catalogToCsv([
+        { ...base!, sku: 'A', photo: '/photos/A.webp', photoIllustrative: false },
+        { ...base!, sku: 'B', photo: '/photos/B.webp', photoIllustrative: true },
+        { ...base!, sku: 'C', photo: '/photos/C.webp' },
+      ]),
+    );
+    const col = rows[0]!.indexOf('foto_ilustrativa');
+    expect(rows.slice(1).map((r) => r[col])).toEqual(['no', 'si', 'si']);
+  });
 });
 
 describe('catálogo semilla del negocio', () => {
@@ -126,9 +235,13 @@ describe('catálogo semilla del negocio', () => {
     expect(parsed.errors).toEqual([]);
   });
 
-  it('trae las columnas canónicas', () => {
+  it('trae solo columnas canónicas y en su orden (las opcionales nuevas pueden faltar)', () => {
     const header = seed.split('\n', 1)[0]!.split(',');
-    expect(header).toEqual([...CSV_COLUMNS]);
+    const canonical = CSV_COLUMNS.filter((c) => header.includes(c));
+    expect(header).toEqual(canonical);
+    // Las columnas del orden original (todas las anteriores a foto_ilustrativa) siguen presentes.
+    const original = CSV_COLUMNS.slice(0, CSV_COLUMNS.indexOf('foto_ilustrativa'));
+    expect(header.slice(0, original.length)).toEqual(original);
   });
 
   it('cubre las categorías del negocio con volumen razonable', () => {

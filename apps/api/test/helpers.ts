@@ -3,12 +3,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from '../src/app';
 import { type Config, testConfig } from '../src/config';
-import { type DbHandle, createPgliteDb } from '../src/db/client';
+import type { DbHandle } from '../src/db/client';
 import { users } from '../src/db/schema';
 import { MemoryOtpSender } from '../src/services/auth';
 import { importCatalog, syncCategories } from '../src/services/catalog';
 import type { OrderContext } from '../src/services/orders';
 import { createZone, listSlots } from '../src/services/zones';
+import { createTestDb } from './test-db';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const catalogDir = join(here, '../../../data/catalog');
@@ -44,7 +45,8 @@ export interface World {
 }
 
 export async function makeWorld(overrides: Partial<Config> = {}): Promise<World> {
-  const handle = await createPgliteDb();
+  // PGlite por defecto; con TEST_DATABASE_URL, una base temporal en un Postgres real (test-db.ts).
+  const handle = await createTestDb();
   const { db } = handle;
   const config = testConfig(overrides);
   await syncCategories(db, categoriesJson);

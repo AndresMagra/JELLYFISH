@@ -199,6 +199,7 @@ const stored = (over: Partial<CatalogItem>): CatalogItem => ({
   description: 'Descripción que el dueño editó a mano',
   cookingTip: 'Su propio consejo',
   photo: 'fotos/ya-subida.jpg',
+  photoIllustrative: true,
   active: true,
   ...over,
 });
