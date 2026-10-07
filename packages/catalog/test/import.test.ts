@@ -118,7 +118,7 @@ describe('importador de catálogo', () => {
   });
 });
 
-describe('catálogo semilla de RD', () => {
+describe('catálogo semilla del negocio', () => {
   const seed = readFileSync(join(catalogDir, 'products.seed.csv'), 'utf8');
   const parsed = parse(seed);
 
@@ -131,48 +131,36 @@ describe('catálogo semilla de RD', () => {
     expect(header).toEqual([...CSV_COLUMNS]);
   });
 
-  it('cubre todas las categorías con volumen razonable', () => {
-    expect(parsed.items.length).toBeGreaterThanOrEqual(100);
-    for (const slug of categories) {
-      expect(parsed.items.some((i) => i.category === slug)).toBe(true);
+  it('cubre las categorías del negocio con volumen razonable', () => {
+    expect(parsed.items.length).toBeGreaterThanOrEqual(30);
+    for (const slug of ['res', 'cerdo', 'aves', 'pescados', 'mariscos', 'otros']) {
+      expect(
+        parsed.items.some((i) => i.category === slug),
+        slug,
+      ).toBe(true);
     }
   });
 
   it('usa SKUs únicos y agrupa variantes de camarón por calibre', () => {
     expect(new Set(parsed.items.map((i) => i.sku)).size).toBe(parsed.items.length);
-    const crudo = groupProducts(parsed.items).find((p) => p.group === 'camaron-crudo');
-    expect(crudo?.variants.map((v) => v.variant)).toEqual([
+    const camaron = groupProducts(parsed.items).find((p) => p.group === 'camaron');
+    expect(camaron?.variants.map((v) => v.variant).sort()).toEqual([
       '16/20',
       '21/25',
-      '26/30',
-      '31/40',
-      '41/50',
-      '51/60',
+      '51/60 crudo',
+      '8/12',
     ]);
   });
 
-  it('conserva los precios ancla encontrados en la investigación', () => {
-    const price = (sku: string) => parsed.items.find((i) => i.sku === sku)?.price;
-    const byName = (name: string, variant: string) =>
-      parsed.items.find((i) => i.name === name && i.variant === variant);
-    expect(byName('Camarón precocido congelado', '26/30')?.price).toBe(34995);
-    expect(byName('Camarón crudo congelado', '16/20')?.price).toBe(87995);
-    expect(byName('Pechuga de pollo deshuesada', '')?.price).toBe(17495);
-    expect(byName('Carne molida de res', '96/4 Baja en grasa')?.price).toBe(29995);
-    expect(byName('Carne de res para guisar', 'En cuadritos')?.price).toBe(29500);
-    expect(price('RES-001')).toBeGreaterThan(0);
+  it('todos los precios son confirmados por el dueño y el ITBIS está definido', () => {
+    expect(parsed.items.every((i) => i.priceSource === 'usuario')).toBe(true);
+    expect(parsed.items.every((i) => i.itbisBps === 0 || i.itbisBps === 1800)).toBe(true);
+    expect(parsed.items.every((i) => publishability(i).publishable)).toBe(true);
   });
 
-  it('marca como ancla solo los precios hallados y deja el resto como estimado', () => {
-    const anchors = parsed.items.filter((i) => i.priceSource === 'ancla');
-    // 13 = precios hallados en la investigación. Subir este número es una decisión consciente.
-    expect(anchors).toHaveLength(13);
-    expect(anchors.every((i) => i.priceNote.startsWith('Ancla:'))).toBe(true);
-    expect(parsed.items.every((i) => i.priceSource !== 'usuario')).toBe(true);
-  });
-
-  it('nada del catálogo semilla es publicable hasta confirmar precio e ITBIS', () => {
-    expect(parsed.items.some((i) => publishability(i).publishable)).toBe(false);
+  it('NO guarda costos: el repositorio es público y el listado del dueño es interno', () => {
+    expect(parsed.items.every((i) => i.cost === null)).toBe(true);
+    expect(parsed.items.every((i) => !/RD\$/.test(i.priceNote))).toBe(true);
   });
 
   it('todos los productos traen descripción y consejo de cocina', () => {

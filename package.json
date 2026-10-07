@@ -15,6 +15,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "catalog:check": "tsx scripts/catalog-check.ts",
+    "catalog:from-xlsx": "tsx scripts/catalog-from-xlsx.ts",
     "e2e:customer": "tsx scripts/e2e-customer.ts",
     "e2e:admin": "tsx scripts/e2e-admin.ts",
     "e2e:driver": "tsx scripts/e2e-driver.ts"
@@ -26,6 +27,7 @@
     "@types/node": "^26.6.4",
     "playwright-core": "^1.63.0",
     "prettier": "^3.9.9",
+    "read-excel-file": "^9.3.10",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.3",

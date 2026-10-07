@@ -32,8 +32,38 @@ export async function syncCategories(db: Db, items: readonly CategoryInput[]): P
   }
 }
 
-export async function listCategories(db: Db) {
-  return db.select().from(categories).orderBy(asc(categories.sort), asc(categories.name));
+/**
+ * Categorías en orden de menú. Con `visibleOnly`, solo las que tienen al menos un producto
+ * activo y publicable (los clientes no deben ver categorías vacías).
+ */
+export async function listCategories(db: Db, opts: { visibleOnly?: boolean; demo?: boolean } = {}) {
+  const visible = exists(
+    db
+      .select({ one: sql`1` })
+      .from(products)
+      .where(
+        and(
+          eq(products.categorySlug, categories.slug),
+          eq(products.active, true),
+          exists(
+            db
+              .select({ one: sql`1` })
+              .from(variants)
+              .where(
+                and(
+                  eq(variants.productId, products.id),
+                  publishableVariantOnly(opts.demo ?? false),
+                ),
+              ),
+          ),
+        ),
+      ),
+  );
+  return db
+    .select()
+    .from(categories)
+    .where(opts.visibleOnly ? visible : undefined)
+    .orderBy(asc(categories.sort), asc(categories.name));
 }
 
 // ───────────────────────── publicación ─────────────────────────

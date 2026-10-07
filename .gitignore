@@ -17,3 +17,7 @@ apps/customer/.expo/
 apps/admin/dist/
 apps/driver/dist/
 apps/driver/.expo/
+# DATOS INTERNOS DEL NEGOCIO: listados de precios/costos y archivos de Excel no se suben nunca
+data/private/
+*.xlsx
+*.xls

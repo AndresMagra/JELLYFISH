@@ -42,17 +42,24 @@
     "sort": 5
   },
   {
+    "slug": "otros",
+    "name": "Otros",
+    "tagline": "Cordero, papas y más",
+    "subcategories": ["Cordero", "Papas"],
+    "sort": 6
+  },
+  {
     "slug": "chivo-otras",
     "name": "Chivo y otras carnes",
     "tagline": "Chivo para guisar y asar",
     "subcategories": ["Chivo"],
-    "sort": 6
+    "sort": 7
   },
   {
     "slug": "combos",
     "name": "Combos",
     "tagline": "Sancocho, parrillada, mariscada y temporada",
     "subcategories": ["Combos"],
-    "sort": 7
+    "sort": 8
   }
 ]

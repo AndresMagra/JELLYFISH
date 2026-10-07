@@ -8,7 +8,9 @@ import { addressInputSchema, itemsSchema, parse } from './validate';
 export async function registerCatalogRoutes(app: FastifyInstance) {
   const { deps } = app;
 
-  app.get('/v1/categories', async () => listCategories(deps.db));
+  app.get('/v1/categories', async () =>
+    listCategories(deps.db, { visibleOnly: true, demo: deps.config.demo }),
+  );
 
   app.get('/v1/products', async (req) => {
     const q = parse(
