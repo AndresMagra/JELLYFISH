@@ -1,0 +1,4 @@
+sku,grupo,nombre,variante,categoria,subcategoria,unidad,paso_lb,minimo_lb,peso_pieza_lb,precio,precio_fuente,notas_precio,costo,stock,itbis,variable,congelado,sinonimos,descripcion,como_cocinar,foto,activo
+EJ-001,pechuga-deshuesada,Pechuga de pollo deshuesada,,aves,Pollo,lb,0.5,1,,174.95,usuario,Precio confirmado en tienda,120,250,0,si,si,pechuga;pechuga sin hueso,Sin hueso ni piel,Plancha 6 min por lado,,si
+EJ-002,camaron-crudo,Camarón crudo congelado,26/30,mariscos,Camarones,lb,1,1,,690,usuario,,520,80.5,0,si,si,camarones,Calibre versátil,Al ajillo,,si
+EJ-003,combo-parrillero,Combo Parrillero,≈ 8 lb,combos,Combos,unit,,,8,2450,usuario,,1800,12,18,no,si,parrillada,Churrasco costillas y alitas,Parrilla a fuego medio-alto,,si

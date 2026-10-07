@@ -1,0 +1,58 @@
+[
+  {
+    "slug": "res",
+    "name": "Res",
+    "tagline": "Todos los cortes: parrilla, guisar y molida",
+    "subcategories": ["Parrilla", "Guisar", "Sancocho", "Molida", "Vísceras"],
+    "sort": 1
+  },
+  {
+    "slug": "cerdo",
+    "name": "Cerdo",
+    "tagline": "Chuletas, costillas, pernil y más",
+    "subcategories": ["Fritura", "Parrilla", "Horno", "Desayuno", "Molida", "Sancocho", "Especial"],
+    "sort": 2
+  },
+  {
+    "slug": "aves",
+    "name": "Pollo y pavo",
+    "tagline": "Pechugas, muslos, alitas, pavo y gallina criolla",
+    "subcategories": ["Pollo", "Menudos", "Molida", "Pavo"],
+    "sort": 3
+  },
+  {
+    "slug": "pescados",
+    "name": "Pescados",
+    "tagline": "Chillo, dorado, salmón, bacalao y más",
+    "subcategories": ["Entero", "Filete", "Steak", "Bacalao", "Ahumados"],
+    "sort": 4
+  },
+  {
+    "slug": "mariscos",
+    "name": "Mariscos",
+    "tagline": "Camarones, langosta, pulpo, cangrejo y más",
+    "subcategories": [
+      "Camarones",
+      "Langosta",
+      "Pulpos y calamares",
+      "Cangrejos",
+      "Moluscos",
+      "Mixes"
+    ],
+    "sort": 5
+  },
+  {
+    "slug": "chivo-otras",
+    "name": "Chivo y otras carnes",
+    "tagline": "Chivo para guisar y asar",
+    "subcategories": ["Chivo"],
+    "sort": 6
+  },
+  {
+    "slug": "combos",
+    "name": "Combos",
+    "tagline": "Sancocho, parrillada, mariscada y temporada",
+    "subcategories": ["Combos"],
+    "sort": 7
+  }
+]

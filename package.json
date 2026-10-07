@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "catalog:check": "tsx scripts/catalog-check.ts"
   },
   "engines": {
     "node": ">=20"
