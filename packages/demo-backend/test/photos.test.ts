@@ -25,7 +25,13 @@ function photoSuite(api: typeof photos): void {
     'javascript:alert(1)',
   ])
     expect(isExternalPhoto(url), url).toBe(true);
-  for (const url of ['photos/a.webp', '/photos/a.webp', 'data:image/webp;base64,AAAA', 'blob:abc', 'DATA:image/png;base64,AA'])
+  for (const url of [
+    'photos/a.webp',
+    '/photos/a.webp',
+    'data:image/webp;base64,AAAA',
+    'blob:abc',
+    'DATA:image/png;base64,AA',
+  ])
     expect(isExternalPhoto(url), url).toBe(false);
 
   // Vista previa (localOnly): ningún servidor externo, jamás.
@@ -39,7 +45,9 @@ function photoSuite(api: typeof photos): void {
   expect(resolvePhoto(undefined)).toBe('');
   expect(resolvePhoto(null)).toBe('');
   // data: y blob: viajan tal cual.
-  expect(resolvePhoto('data:image/webp;base64,AAAA', { localOnly: true, photoBase: BASE })).toBe('data:image/webp;base64,AAAA');
+  expect(resolvePhoto('data:image/webp;base64,AAAA', { localOnly: true, photoBase: BASE })).toBe(
+    'data:image/webp;base64,AAAA',
+  );
   // Ruta propia: se resuelve contra la carpeta de la página, con o sin barra inicial.
   expect(resolvePhoto('photos/JF-MAR-002.thumb.webp', { localOnly: true, photoBase: BASE })).toBe(
     'https://visor.example/x/y/z/photos/JF-MAR-002.thumb.webp',
@@ -48,7 +56,9 @@ function photoSuite(api: typeof photos): void {
     'https://visor.example/x/y/z/photos/JF-MAR-002.thumb.webp',
   );
   // En la raíz, y en una carpeta con espacio (ya codificada por el navegador).
-  expect(resolvePhoto('photos/a.webp', { photoBase: 'https://h.example/' })).toBe('https://h.example/photos/a.webp');
+  expect(resolvePhoto('photos/a.webp', { photoBase: 'https://h.example/' })).toBe(
+    'https://h.example/photos/a.webp',
+  );
   expect(resolvePhoto('photos/a.webp', { photoBase: 'https://h.example/mi%20vista/' })).toBe(
     'https://h.example/mi%20vista/photos/a.webp',
   );
@@ -66,13 +76,25 @@ describe('fotos de la vista previa', () => {
   it('detecta cada mutación de la política de fotos', async () => {
     const file = new URL('../src/photos.ts', import.meta.url).pathname;
     const mutants: [string, Parameters<typeof loadMutant>[1]][] = [
-      ['la URL con // ya no es externa', [[String.raw`/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i`, String.raw`/^(?:[a-z][a-z0-9+.-]*:)/i`]]],
-      ['localOnly deja pasar el CDN', [['return policy.localOnly ? \'\' : url;', 'return url;']]],
+      [
+        'la URL con // ya no es externa',
+        [[String.raw`/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i`, String.raw`/^(?:[a-z][a-z0-9+.-]*:)/i`]],
+      ],
+      ['localOnly deja pasar el CDN', [["return policy.localOnly ? '' : url;", 'return url;']]],
       ['data: y blob: se tratan como externos', [[String.raw`/^(data|blob):/i.test(u)`, 'false']]],
       ['no se quita la barra inicial', [[String.raw`url.replace(/^\/+/, '')`, 'url']]],
-      ['se ignora la carpeta de la página', [['new URL(relative, policy.photoBase).href', 'relative']]],
-      ['el nombre de la miniatura cambia', [['`photos/${sku}.thumb.webp`', '`photos/${sku}.webp`']]],
-      ['una carpeta inválida devuelve la ruta', [[`    return '';\n  }\n}`, `    return relative;\n  }\n}`]]],
+      [
+        'se ignora la carpeta de la página',
+        [['new URL(relative, policy.photoBase).href', 'relative']],
+      ],
+      [
+        'el nombre de la miniatura cambia',
+        [['`photos/${sku}.thumb.webp`', '`photos/${sku}.webp`']],
+      ],
+      [
+        'una carpeta inválida devuelve la ruta',
+        [[`    return '';\n  }\n}`, `    return relative;\n  }\n}`]],
+      ],
     ];
     for (const [name, edits] of mutants) {
       const mutant = await loadMutant<typeof photos>(file, edits);
@@ -84,9 +106,16 @@ describe('fotos de la vista previa', () => {
 describe('catálogo de la vista previa: fotos por variante', () => {
   const root = new URL('../../../data/catalog/', import.meta.url).pathname;
   const catalogCsv = readFileSync(`${root}products.seed.csv`, 'utf8');
-  const categories = JSON.parse(readFileSync(`${root}categories.json`, 'utf8')) as { slug: string; name: string }[];
+  const categories = JSON.parse(readFileSync(`${root}categories.json`, 'utf8')) as {
+    slug: string;
+    name: string;
+  }[];
   const withPhoto = ['JF-MAR-002', 'JF-RES-001'];
-  const seeds = withPhoto.map((sku) => ({ sku, url: `photos/${sku}.thumb.webp`, illustrative: true }));
+  const seeds = withPhoto.map((sku) => ({
+    sku,
+    url: `photos/${sku}.thumb.webp`,
+    illustrative: true,
+  }));
   /** El CSV con la foto "real" (no ilustrativa) de un SKU apuntando a otro servidor. */
   const withExternalPhoto = (sku: string, url: string, from = catalogCsv) => {
     const rows = parseCsv(from);
@@ -102,7 +131,15 @@ describe('catálogo de la vista previa: fotos por variante', () => {
     );
   };
   const build = (opts: object = {}) =>
-    buildCatalog({ catalogCsv, categories, photos: seeds, localPhotosOnly: true, photoBase: BASE, ...opts });
+    buildCatalog({
+      baseUrl: 'https://demo.jellyfish.local',
+      catalogCsv,
+      categories,
+      photos: seeds,
+      localPhotosOnly: true,
+      photoBase: BASE,
+      ...opts,
+    });
 
   it('la foto de cada variante es photos/<sku>.thumb.webp resuelta contra la base; sin archivo, vacía', () => {
     const catalog = build();
@@ -122,7 +159,9 @@ describe('catálogo de la vista previa: fotos por variante', () => {
   });
 
   it('ninguna variante apunta a otro origen, ni siquiera si el CSV trae una foto real de otro servidor', () => {
-    const catalog = build({ catalogCsv: withExternalPhoto('JF-RES-001', 'https://cdn.example/real.jpg') });
+    const catalog = build({
+      catalogCsv: withExternalPhoto('JF-RES-001', 'https://cdn.example/real.jpg'),
+    });
     for (const v of catalog.variantsById.values()) {
       if (v.photo) expect(new URL(v.photo).origin, v.sku).toBe('https://visor.example');
     }
@@ -146,12 +185,27 @@ describe('catálogo de la vista previa: fotos por variante', () => {
     const file = new URL('../src/catalog.ts', import.meta.url).pathname;
     const suite = (api: { buildCatalog: typeof buildCatalog }) => {
       // Una variante con manifiesto y otra SIN manifiesto, las dos con una foto real del CSV en otro servidor.
-      const csv = withExternalPhoto('JF-AVE-001', 'https://cdn.example/otra.jpg', withExternalPhoto('JF-RES-001', 'https://cdn.example/real.jpg'));
-      const catalog = api.buildCatalog({ catalogCsv: csv, categories, photos: seeds, localPhotosOnly: true, photoBase: BASE });
+      const csv = withExternalPhoto(
+        'JF-AVE-001',
+        'https://cdn.example/otra.jpg',
+        withExternalPhoto('JF-RES-001', 'https://cdn.example/real.jpg'),
+      );
+      const catalog = api.buildCatalog({
+        baseUrl: 'https://demo.jellyfish.local',
+        catalogCsv: csv,
+        categories,
+        photos: seeds,
+        localPhotosOnly: true,
+        photoBase: BASE,
+      });
       for (const v of catalog.variantsById.values()) {
-        expect(v.photo.startsWith('https://cdn.example'), `${v.sku} no puede servir fotos de otro servidor`).toBe(false);
+        expect(
+          v.photo.startsWith('https://cdn.example'),
+          `${v.sku} no puede servir fotos de otro servidor`,
+        ).toBe(false);
       }
-      const byPhoto = (sku: string) => [...catalog.variantsById.values()].find((v) => v.sku === sku)!;
+      const byPhoto = (sku: string) =>
+        [...catalog.variantsById.values()].find((v) => v.sku === sku)!;
       expect(byPhoto('JF-MAR-002').photo).toBe(`${BASE}photos/JF-MAR-002.thumb.webp`);
       // La foto "real" del CSV apunta a otro servidor: se sirve la propia del manifiesto, no se queda sin foto.
       expect(byPhoto('JF-RES-001').photo).toBe(`${BASE}photos/JF-RES-001.thumb.webp`);
@@ -159,23 +213,46 @@ describe('catálogo de la vista previa: fotos por variante', () => {
       expect(byPhoto('JF-RES-001').photoIllustrative).toBe(true);
       // Sin foto propia, la variante queda sin foto (nunca la del otro servidor).
       expect(byPhoto('JF-AVE-001').photo).toBe('');
-      const other = api.buildCatalog({ catalogCsv, categories, photos: seeds, localPhotosOnly: true, photoBase: 'https://x.example/q/' });
-      const same = api.buildCatalog({ catalogCsv, categories, photos: seeds, localPhotosOnly: true, photoBase: BASE });
+      const other = api.buildCatalog({
+        baseUrl: 'https://demo.jellyfish.local',
+        catalogCsv,
+        categories,
+        photos: seeds,
+        localPhotosOnly: true,
+        photoBase: 'https://x.example/q/',
+      });
+      const same = api.buildCatalog({
+        baseUrl: 'https://demo.jellyfish.local',
+        catalogCsv,
+        categories,
+        photos: seeds,
+        localPhotosOnly: true,
+        photoBase: BASE,
+      });
       expect(other.signature).toBe(same.signature);
     };
     suite({ buildCatalog });
     const mutants: [string, Parameters<typeof loadMutant>[1]][] = [
-      ['la foto del CSV cuenta en la vista previa', [['const keepOwn = !options.localPhotosOnly && ', 'const keepOwn = ']]],
+      [
+        'la foto del CSV cuenta en la vista previa',
+        [['const keepOwn = !options.localPhotosOnly && ', 'const keepOwn = ']],
+      ],
       [
         'una variante sin foto propia sirve la foto de otro servidor del CSV',
         [
           ['localOnly: options.localPhotosOnly,', 'localOnly: false,'],
-          [`const photoSource = options.localPhotosOnly
+          [
+            `const photoSource = options.localPhotosOnly
         ? (manifest?.url ?? '')
-        : keepOwn`, `const photoSource = keepOwn`],
+        : keepOwn`,
+            `const photoSource = keepOwn`,
+          ],
         ],
       ],
-      ['la carpeta de la página no se pasa a resolvePhoto', [['photoBase: options.photoBase,', 'photoBase: undefined,']]],
+      [
+        'la carpeta de la página no se pasa a resolvePhoto',
+        [['photoBase: options.photoBase,', 'photoBase: undefined,']],
+      ],
       ['la huella usa la foto ya resuelta', [['v.photoSource])]', 'v.photo])]']]],
     ];
     for (const [name, edits] of mutants) {

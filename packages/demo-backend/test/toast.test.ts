@@ -13,7 +13,7 @@ class FakeEl {
   children: FakeEl[] = [];
   onclick: (() => void) | null = null;
   constructor(public tag: string) {}
-  get firstChild() {
+  get firstChild(): FakeEl | null {
     return this.children[0] ?? null;
   }
   setAttribute(k: string, v: string) {
@@ -34,7 +34,8 @@ function fakeDoc(withToast: boolean) {
   const doc = {
     body,
     createElement: (tag: string) => new FakeEl(tag),
-    getElementById: (id: string) => (id === 'jf-toast' && body.children.find((c) => c.id === 'jf-toast')) || null,
+    getElementById: (id: string) =>
+      (id === 'jf-toast' && body.children.find((c) => c.id === 'jf-toast')) || null,
   };
   if (withToast) {
     const el = new FakeEl('div');
@@ -73,13 +74,21 @@ function suite(api: Api): void {
   const { doc, body } = fakeDoc(true);
   const t = fakeTimers();
   const show = api.createNoticeToast(doc as never, t.timers);
-  show({ text: 'Vista previa: no se abre el mapa.', href: 'https://maps.example/x', linkLabel: 'Abrir el mapa' });
+  show({
+    text: 'Vista previa: no se abre el mapa.',
+    href: 'https://maps.example/x',
+    linkLabel: 'Abrir el mapa',
+  });
   const el = body.children[0]!;
   expect(body.children).toHaveLength(1);
   expect(el.hidden).toBe(false);
   expect(el.children.map((c) => c.tag)).toEqual(['span', 'a', 'button']);
   expect(el.children[0]!.textContent).toBe('Vista previa: no se abre el mapa.');
-  expect(el.children[1]!.attrs).toEqual({ href: 'https://maps.example/x', target: '_blank', rel: 'noopener noreferrer' });
+  expect(el.children[1]!.attrs).toEqual({
+    href: 'https://maps.example/x',
+    target: '_blank',
+    rel: 'noopener noreferrer',
+  });
   expect(el.children[1]!.textContent).toBe('Abrir el mapa');
   expect(el.children[2]!.attrs['aria-label']).toBe('Cerrar aviso');
   // El texto va como texto (nunca como HTML).
@@ -99,7 +108,10 @@ function suite(api: Api): void {
 
   // Si la página no trae el elemento, se crea (accesible).
   const empty = fakeDoc(false);
-  api.createNoticeToast(empty.doc as never, fakeTimers().timers)({ text: 'hola', href: null, linkLabel: '' });
+  api.createNoticeToast(
+    empty.doc as never,
+    fakeTimers().timers,
+  )({ text: 'hola', href: null, linkLabel: '' });
   const created = empty.body.children[0]!;
   expect(created.id).toBe('jf-toast');
   expect(created.attrs).toMatchObject({ role: 'status', 'aria-live': 'polite' });
@@ -115,13 +127,49 @@ describe('aviso de la vista previa', () => {
     const file = new URL('../src/toast.ts', import.meta.url).pathname;
     const mutants: [string, Parameters<typeof loadMutant>[1]][] = [
       ['el aviso queda oculto', [['    el.hidden = false;\n    if (handle', '    if (handle']]],
-      ['el texto se inserta sin escapar', [['text.textContent = notice.text;', '(text as unknown as { innerHTML: string }).innerHTML = notice.text; text.textContent = null;']]],
-      ['el enlace no lleva rel=noopener', [["link.setAttribute('rel', 'noopener noreferrer');", '']]],
-      ['el enlace se muestra aunque no haya dirección web', [['if (notice.href) {', 'if (true) {']]],
-      ['el aviso no se cierra solo', [['    handle = timers.set(() => {\n      shown.hidden = true;\n    }, TOAST_MS);', '    handle = null;']]],
-      ['el temporizador viejo cierra el aviso nuevo', [['if (handle !== null) timers.clear(handle);', '']]],
-      ['la × no cierra', [['      shown.hidden = true;\n    };\n    el.appendChild(close);', '    };\n    el.appendChild(close);']]],
-      ['el aviso anterior se queda debajo del nuevo', [['while (el.firstChild) el.removeChild(el.firstChild);', '']]],
+      [
+        'el texto se inserta sin escapar',
+        [
+          [
+            'text.textContent = notice.text;',
+            '(text as unknown as { innerHTML: string }).innerHTML = notice.text; text.textContent = null;',
+          ],
+        ],
+      ],
+      [
+        'el enlace no lleva rel=noopener',
+        [["link.setAttribute('rel', 'noopener noreferrer');", '']],
+      ],
+      [
+        'el enlace se muestra aunque no haya dirección web',
+        [['if (notice.href) {', 'if (true) {']],
+      ],
+      [
+        'el aviso no se cierra solo',
+        [
+          [
+            '    handle = timers.set(() => {\n      shown.hidden = true;\n    }, TOAST_MS);',
+            '    handle = null;',
+          ],
+        ],
+      ],
+      [
+        'el temporizador viejo cierra el aviso nuevo',
+        [['if (handle !== null) timers.clear(handle);', '']],
+      ],
+      [
+        'la × no cierra',
+        [
+          [
+            '      shown.hidden = true;\n    };\n    el.appendChild(close);',
+            '    };\n    el.appendChild(close);',
+          ],
+        ],
+      ],
+      [
+        'el aviso anterior se queda debajo del nuevo',
+        [['while (el.firstChild) el.removeChild(el.firstChild);', '']],
+      ],
       ['no se crea el elemento si falta', [['    if (!el) {', '    if (false as boolean) {']]],
     ];
     for (const [name, edits] of mutants) {

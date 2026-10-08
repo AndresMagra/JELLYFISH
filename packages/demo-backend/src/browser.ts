@@ -11,13 +11,7 @@ import './zod-config'; // primero: ver el archivo
 import { installGeolocationDouble, installOpenGuard } from './device-doubles';
 import { type DemoHandle, installDemoBackend } from './install';
 import { DEMO_OTP_CODE } from './server';
-import {
-  applyReset,
-  clearStoredKeys,
-  parseShortcuts,
-  photoBaseFrom,
-  storageOf,
-} from './shortcuts';
+import { applyReset, clearStoredKeys, parseShortcuts, photoBaseFrom, storageOf } from './shortcuts';
 import { type DocumentLike, createNoticeToast } from './toast';
 import type { CategorySeed, PhotoSeed } from './types';
 
@@ -47,7 +41,14 @@ interface Win {
   __JF_DEMO_DATA__?: BrowserDemoData;
   __JF_ASSETS__?: string;
   JellyfishDemo?: JellyfishDemoApi;
-  location: { pathname: string; search: string; hash: string; href: string; reload(): void };
+  location: {
+    pathname: string;
+    search: string;
+    hash: string;
+    href: string;
+    reload(): void;
+    replace?(url: string): void;
+  };
   navigator: object;
   document: DocumentLike;
   history?: { state: unknown; replaceState(state: unknown, title: string, url: string): void };
@@ -61,6 +62,7 @@ function boot(g: Win): void {
     console.error('[JELLYFISH demo] Faltan los datos del catálogo (__JF_DEMO_DATA__).');
     return;
   }
+  const startHref = g.location?.href;
   const { speed, reset } = parseShortcuts(g.location?.search, g.location?.hash);
   // Antes de instalar nada: el simulador y la app leen el estado guardado al arrancar.
   applyReset(reset, g);
@@ -88,7 +90,10 @@ function boot(g: Win): void {
     doubles: geo.installed,
     restart() {
       clearStoredKeys(storageOf(g, 'localStorage'));
-      g.location?.reload();
+      // Se vuelve a la dirección con que se abrió la página, no a la pantalla interna donde esté la
+      // persona: recargar "/profile" daría 404 en un alojamiento sin reescritura de rutas.
+      if (startHref && g.location?.replace) g.location.replace(startHref);
+      else g.location?.reload();
     },
     summary: () => handle.server.summary(),
   };
