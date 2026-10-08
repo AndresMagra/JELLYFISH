@@ -846,11 +846,11 @@ async function longJourney(s: Session, o: LongOptions) {
     'el pago con tarjeta NO abre ninguna pasarela (ni pestaña nueva)',
   );
   check(
-    await page
+    (await page
       .getByText('Pagado')
-      .first()
-      .isVisible()
-      .catch(() => false),
+      .filter({ visible: true })
+      .count()
+      .catch(() => 0)) > 0,
     'el servidor de demostración aprueba el pago y el pedido queda Pagado',
   );
 
