@@ -40,6 +40,20 @@ const OUT = resolve(args.out!);
 mkdirSync(OUT, { recursive: true });
 
 const log = (m: string) => console.log(`• ${m}`);
+/** SKU con miniatura propia en lo que se publica: el recorrido solo exige foto donde la hay (el resto cae al degradado). */
+const HAS_PHOTO = (() => {
+  try {
+    const files = (JSON.parse(readFileSync(`${DIST}/publish-files.json`, 'utf8')) as { files: Record<string, string> }).files;
+    return new Set(
+      Object.keys(files).flatMap((f) => {
+        const m = /^photos\/(JF-[A-Z]{3}-\d{3})\.thumb\.webp$/.exec(f);
+        return m ? [m[1]!] : [];
+      }),
+    );
+  } catch {
+    return new Set<string>();
+  }
+})();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ───────────────────────── comprobaciones ─────────────────────────
@@ -317,14 +331,18 @@ interface PageEnvInfo {
 
 /** Lo que el arranque dedujo de la ruta en que se publicó la página. */
 function expectedEnv(m: Mount): { assets: string; router: string; noslash: boolean } {
-  const assets = m.filesDir.replace(/\/+$/, '');
+  // El navegador entrega la ruta codificada ("/mi vista/" → "/mi%20vista/").
+  const assets = encodeURI(m.filesDir).replace(/\/+$/, '');
   const endsWithSlash = m.page.endsWith('/');
   return {
     assets,
-    router: endsWithSlash ? m.page.replace(/\/+$/, '') : m.page,
+    router: endsWithSlash ? encodeURI(m.page).replace(/\/+$/, '') : encodeURI(m.page),
     noslash: !endsWithSlash,
   };
 }
+
+/** La ruta de la página como la ve el navegador (codificada). */
+const pagePath = (m: Mount) => encodeURI(m.page);
 
 // ───────────────────────── 1. inicio y recorrido corto ─────────────────────────
 
@@ -473,7 +491,9 @@ async function shortJourney(s: Session, url: string, opts: { reset?: boolean } =
     '/v1/products/camaron',
   );
   const seenHero = new Map<string, string>();
-  for (const v of product.product.variants.slice(0, 3)) {
+  const withPhoto = product.product.variants.filter((v) => HAS_PHOTO.has(v.sku));
+  const withoutPhoto = product.product.variants.filter((v) => !HAS_PHOTO.has(v.sku));
+  for (const v of withPhoto.slice(0, 3)) {
     await page.getByRole('button', { name: v.variant }).first().click();
     await waitUntil(
       page,
@@ -482,9 +502,20 @@ async function shortJourney(s: Session, url: string, opts: { reset?: boolean } =
     seenHero.set(v.variant, v.sku);
   }
   check(
-    seenHero.size >= 2,
-    `cada variante del Camarón muestra SU foto (${[...seenHero].map(([a, b]) => `${a}→${b}`).join(', ')})`,
+    seenHero.size >= Math.min(2, withPhoto.length) && withPhoto.length > 0,
+    `cada variante del Camarón con foto muestra SU foto (${[...seenHero].map(([a, b]) => `${a}→${b}`).join(', ')})`,
   );
+  if (withoutPhoto.length > 0) {
+    // Variante sin miniatura en este build: cae al degradado de la categoría, sin imagen rota.
+    await page.getByRole('button', { name: withoutPhoto[0]!.variant }).first().click();
+    await page.waitForTimeout(500);
+    check(
+      (await photosOnScreen(page)).every((p) => p.state !== 'broken') &&
+        !(await page.evaluate(`Array.from(document.querySelectorAll('img')).some(function (i) { return i.src.indexOf(${JSON.stringify(`/photos/${withoutPhoto[0]!.sku}.thumb.webp`)}) !== -1; })`)),
+      `la variante ${withoutPhoto[0]!.variant} (sin foto en este build) no pide ninguna imagen y no se ve rota`,
+    );
+    await page.getByRole('button', { name: withPhoto[0]!.variant }).first().click();
+  }
   await page.getByTestId('photo-illustrative').first().waitFor({ timeout: 10_000 });
   check(
     /Imagen ilustrativa/.test(await page.getByTestId('photo-illustrative').first().innerText()),
@@ -509,7 +540,7 @@ async function reloadAtHome(s: Session): Promise<void> {
   await page.waitForTimeout(400);
   const here = new URL(page.url());
   check(
-    here.pathname === mount.page,
+    here.pathname === pagePath(mount),
     `de vuelta en Inicio la dirección es la de la página (${here.pathname})`,
   );
   await page.reload();
@@ -544,7 +575,8 @@ async function longJourney(s: Session, o: LongOptions) {
   );
 
   // ── Favoritos ──
-  await page.getByTestId('fav-camaron').first().click();
+  // El detalle del producto está encima de la lista (que sigue montada): se toca el corazón que se ve.
+  await page.getByTestId('fav-camaron').filter({ visible: true }).first().click();
   check(true, 'se marca Camarón como favorito (corazón)');
 
   // ── Carrito ──
@@ -738,7 +770,7 @@ async function longJourney(s: Session, o: LongOptions) {
   // ── Recarga: todo persiste ──
   await tab(page, /Inicio/).click();
   await page.waitForTimeout(300);
-  check(new URL(page.url()).pathname === mount.page, `de vuelta en Inicio la dirección es la de la página (${new URL(page.url()).pathname})`);
+  check(new URL(page.url()).pathname === pagePath(mount), `de vuelta en Inicio la dirección es la de la página (${new URL(page.url()).pathname})`);
   await page.reload();
   await tab(page, /Pedidos/).waitFor({ timeout: 45_000 });
   await tab(page, /Pedidos/).click();

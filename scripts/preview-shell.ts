@@ -114,12 +114,16 @@ export interface PageEnv {
 }
 
 const envApi = new Function(
-  `${ENV_SOURCE}; return { jfCandidateBases: jfCandidateBases, jfEnv: jfEnv, jfGuardHistory: jfGuardHistory };`,
+  `${ENV_SOURCE}; return { jfCandidateBases: jfCandidateBases, jfEnv: jfEnv, jfGuardHistory: jfGuardHistory, JF_ROUTES: JF_ROUTES };`,
 )() as {
   jfCandidateBases: (pathname: string) => string[];
   jfEnv: (pathname: string, dir: string) => PageEnv;
   jfGuardHistory: (history: object) => void;
+  JF_ROUTES: string[];
 };
+
+/** Primer segmento de cada pantalla de la app (las rutas de apps/customer/app): una prueba lo compara con el código. */
+export const APP_ROUTES: readonly string[] = envApi.JF_ROUTES;
 
 /** Ver `ENV_SOURCE`. */
 export const candidateBases = envApi.jfCandidateBases;
@@ -419,7 +423,13 @@ var jfDir;
 try { jfDir = new URL('./', document.baseURI).pathname; } catch (e) { jfDir = jfCandidateBases(location.pathname)[0]; }
 window.__JF_TRIED__ = jfDir;
 jfApply(jfEnv(location.pathname, jfDir));
-try { jfGuardHistory(window.history); } catch (e) {}`;
+try { jfGuardHistory(window.history); } catch (e) {}
+// Los <script src> que no cargaron (el error de un archivo no sube por el documento: se oye en la captura).
+window.__JF_FAILED__ = [];
+window.addEventListener('error', function (e) {
+  var t = e && e.target;
+  if (t && t.tagName === 'SCRIPT' && t.src) window.__JF_FAILED__.push(t.src);
+}, true);`;
 }
 
 /** Último script: la cinta, la confirmación de "Reiniciar" y el plan B si los archivos no están donde se esperaba. */
@@ -439,7 +449,7 @@ function shellScript(opts: ShellOptions): string {
   window.addEventListener('resize', fit);
   window.addEventListener('orientationchange', fit);
 
-  // "Reiniciar": una confirmación dentro de la página (el visor no muestra confirm()).
+  // "Reiniciar": una confirmación dentro de la página (el visor no muestra los diálogos del navegador).
   var dialog = document.getElementById('jf-confirm');
   var restart = document.getElementById('jf-restart');
   var lastFocus = null;
@@ -499,13 +509,35 @@ function shellScript(opts: ShellOptions): string {
   // Plan A: los <script src> relativos de arriba ya cargaron (la carpeta de la URL es la de los archivos).
   // Plan B: la página se abrió en otra ruta (una pantalla interna, "/a/b" sin barra…): se buscan los
   // archivos subiendo por las carpetas, pidiendo jf-probe.json, y se cargan desde ahí.
+  // Si ya cargó una parte (los datos sí, la app no), no es un problema de ruta: es una publicación a medias.
   document.addEventListener('DOMContentLoaded', function () {
-    if (window.__JF_DEMO_DATA__) return;
+    var failed = window.__JF_FAILED__ || [];
+    if (window.__JF_DEMO_DATA__ && failed.length === 0) return;
+    if (window.__JF_DEMO_DATA__ || window.JellyfishDemo) {
+      fail('Faltan archivos de la vista previa: ' + failed.join(', '));
+      return;
+    }
     pick(jfCandidateBases(location.pathname), 0).then(function (dir) {
       if (!dir) throw new Error('No se encontraron los archivos de la vista previa');
       jfApply(jfEnv(location.pathname, dir));
       return load(dir, FILES[0]).then(function () { return load(dir, FILES[1]); }).then(function () { return load(dir, FILES[2]); });
     }).catch(function (e) { fail(e && e.message ? e.message : String(e)); });
+  });
+
+  // Si pasa mucho tiempo y la app no apareció (red lenta, un archivo que no termina de bajar), se avisa y se ofrece reintentar.
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      var boot = document.getElementById('jf-boot');
+      if (!boot || document.getElementById('jf-retry')) return;
+      var small = boot.querySelector('small');
+      if (small) small.textContent = 'Está tardando más de lo normal. Revisa tu conexión.';
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.id = 'jf-retry';
+      b.textContent = 'Reintentar';
+      b.onclick = function () { location.reload(); };
+      boot.appendChild(b);
+    }, 30000);
   });
 })();`;
 }
@@ -539,6 +571,52 @@ export function renderFragment(opts: ShellOptions): string {
 <script>${shellScript(opts)}
 </script>
 `;
+}
+
+/** Límite del archivo principal de una publicación. */
+const MAX_FRAGMENT_BYTES = 16 * 1024 * 1024;
+
+/**
+ * ¿El fragmento cumple el formato de una página publicada con la herramienta de Artifacts? Lista vacía =
+ * cumple. La plataforma envuelve el archivo principal en su propio esqueleto, así que NO puede traer
+ * <!doctype>, <html>, <head> ni <body>; debe empezar con <title> y un <style> con tokens de color en :root
+ * y fondo explícito (opaco) en body; el contenido va en <div id="root"> y los scripts son archivos
+ * propios con ruta relativa. Tampoco debe tocar service workers, manifest, <base> ni hojas de estilo o
+ * scripts de otros servidores, ni usar diálogos del navegador.
+ */
+export function fragmentProblems(html: string): string[] {
+  const problems: string[] = [];
+  const need = (ok: boolean, text: string) => {
+    if (!ok) problems.push(text);
+  };
+  // El nombre es parte del contrato (corto y estable): se compara con el literal, no con la constante que lo genera.
+  need(/^<title>JELLYFISH<\/title>\s*<style>/.test(html), 'debe empezar con <title>JELLYFISH</title> y un <style>');
+  for (const tag of ['!doctype', 'html', 'head', 'body']) {
+    need(!new RegExp(`<${tag}[\\s>]`, 'i').test(html), `no puede traer <${tag}>`);
+  }
+  const css = /<style>([\s\S]*?)<\/style>/.exec(html)?.[1] ?? '';
+  const root = /:root\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+  need(
+    /--[\w-]+\s*:\s*#[0-9a-fA-F]{6}\b/.test(root) && !/rgba?\(|#[0-9a-fA-F]{8}\b|\btransparent\b/.test(root),
+    'el :root debe definir tokens de color (#rrggbb, sin transparencia)',
+  );
+  const bodyRules = [...css.matchAll(/(?:^|[\s,}])body\s*\{([^}]*)\}/g)].map((m) => m[1]!);
+  need(
+    bodyRules.some((r) => /background(?:-color)?\s*:\s*(?:var\(--[\w-]+\)|#[0-9a-fA-F]{6})\s*(?:;|$)/.test(r)),
+    'el body debe tener un fondo explícito y opaco',
+  );
+  need(/<div id="root"[ >]/.test(html), 'falta <div id="root">');
+  const srcs = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]*)"/g)].map((m) => m[1]!);
+  need(srcs.length >= 3, 'faltan los <script src> (datos, simulador y app)');
+  for (const src of srcs)
+    need(!/^(?:[a-z][a-z0-9+.-]*:|\/)/i.test(src), `el script "${src}" no es una ruta relativa a un archivo propio`);
+  need(!/<link\b/i.test(html), 'no puede traer <link> (solo hojas de Google Fonts, y no se usan)');
+  need(!/<base\b/i.test(html), 'no puede traer <base>');
+  need(!/https?:\/\//i.test(html), 'no puede nombrar servidores externos');
+  need(!/serviceWorker|rel="manifest"|navigator\.share/.test(html), 'no puede usar service workers ni manifest');
+  need(!/\b(?:alert|confirm|prompt)\s*\(|window\.open\s*\(/.test(html), 'no puede usar alert/confirm/prompt ni window.open');
+  need(Buffer.byteLength(html) <= MAX_FRAGMENT_BYTES, 'el archivo principal pasa de 16 MB');
+  return problems;
 }
 
 /**

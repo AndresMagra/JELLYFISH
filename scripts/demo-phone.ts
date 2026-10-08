@@ -8,8 +8,9 @@
  *   opciones: --ip 192.168.1.20  --api-port 3000  --expo-port 8081  --admin-phone 809-555-0100  --driver-phone 849-555-0177
  *
  * Qué hace: detecta la IP de tu red local (LAN), arranca el API en modo demo con catálogo de
- * ejemplo (JELLYFISH_DEMO=1, JELLYFISH_SEED=1, PAYMENTS_MOCK=1, PUBLIC_API_URL=http://<ip>:<puerto>),
- * espera /health, arranca Expo (expo start --go --lan) con EXPO_PUBLIC_API_URL apuntando a esa IP,
+ * ejemplo (JELLYFISH_DEMO=1, JELLYFISH_SEED=1, PAYMENTS_MOCK=1, PUBLIC_API_URL=http://<ip>:<puerto>) y
+ * con DEMO_OTP_CODE=123456 (el código de entrada es siempre ese: no hace falta mirar la consola),
+ * espera /health, comprueba que el código fijo funciona, arranca Expo (expo start --go --lan) con EXPO_PUBLIC_API_URL apuntando a esa IP,
  * te dice cómo escanear el QR y, al salir (Ctrl+C), apaga todo (grupos de procesos).
  *
  * El teléfono y la computadora deben estar en el MISMO Wi‑Fi.
@@ -319,6 +320,29 @@ async function otpFromLog(out: { text: string }, phoneE164: string): Promise<str
 
 const e164 = (phone: string) => `+1${phone.replace(/\D/g, '').slice(-10)}`;
 
+/**
+ * ¿El API arrancado acepta el código fijo? Se prueba con un teléfono de prueba (crea esa cuenta de ejemplo):
+ * pide el código y entra con 123456. Así las instrucciones nunca prometen algo que no pasa.
+ */
+export async function apiAcceptsFixedCode(api: string, phone = '+18095550199'): Promise<boolean> {
+  try {
+    const post = (path: string, body: object) =>
+      fetch(`${api}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(8000),
+      });
+    const req = await post('/v1/auth/otp/request', { phone });
+    if (!req.ok) return false;
+    const res = await post('/v1/auth/otp/verify', { phone, code: DEMO_CODE });
+    if (!res.ok) return false;
+    return typeof ((await res.json()) as { token?: unknown }).token === 'string';
+  } catch {
+    return false;
+  }
+}
+
 /** Con la app del repartidor hace falta una cuenta de repartidor: la crea un administrador por la API. */
 async function prepareDriver(
   api: string,
@@ -359,13 +383,15 @@ export function instructions(o: {
   ip: string;
   apiPort: number;
   expoPort: number;
-  fixedCode: boolean;
+  /** El API aceptó el código fijo (JELLYFISH_DEMO=1 + DEMO_OTP_CODE). Si no, el código sale en esta consola. */
+  fixedCode?: boolean;
   driverPhone?: string;
 }): string {
   const name = o.app === 'driver' ? 'repartidor' : 'cliente';
-  const code = o.fixedCode
-    ? `Para entrar, el código de verificación es siempre ${DEMO_CODE}.`
-    : `Para entrar, el código de verificación aparece en ESTA consola (busca la línea marcada con ★ "Código para +1809…"). La variable DEMO_OTP_CODE=${DEMO_CODE} todavía no existe en el API: cuando exista, el código será siempre ${DEMO_CODE}.`;
+  const code =
+    o.fixedCode === false
+      ? `Para entrar, el código de verificación aparece en ESTA consola (busca la línea marcada con ★ "Código para +1809…"): el API no aceptó el código fijo ${DEMO_CODE}.`
+      : `Para entrar, el código de verificación es siempre ${DEMO_CODE} (cualquier celular dominicano sirve; no llega ningún SMS).`;
   return `
 ══════════════════════════════════════════════════════════════════
   JELLYFISH · app del ${name} en tu teléfono
@@ -441,15 +467,7 @@ async function main() {
     return;
   }
 
-  // 2) ¿El API ya sabe usar un código fijo? (variable DEMO_OTP_CODE; la agrega otro equipo)
-  const apiSource = ['config.ts', 'services/otp-senders.ts', 'services/auth.ts']
-    .map((f) => resolve(root, 'apps/api/src', f))
-    .filter(existsSync)
-    .map((f) => readFileSync(f, 'utf8'))
-    .join('\n');
-  const fixedCode = /DEMO_OTP_CODE/.test(apiSource);
-
-  // 3) API en modo demo
+  // 2) API en modo demo (JELLYFISH_DEMO=1 + DEMO_OTP_CODE: el código de entrada es siempre 123456)
   const apiUrl = `http://${lan.address}:${apiPort}`;
   console.log(`• Arrancando el API de ejemplo en ${apiUrl} …`);
   const api = launch(
@@ -480,6 +498,12 @@ async function main() {
   });
   await waitFor(`http://127.0.0.1:${apiPort}/health`, 'El API', (r) => r.ok);
   console.log('✔ API listo (/health responde).');
+  const fixedCode = await apiAcceptsFixedCode(`http://127.0.0.1:${apiPort}`);
+  console.log(
+    fixedCode
+      ? `✔ El código de entrada es siempre ${DEMO_CODE} (no hace falta mirar esta consola).`
+      : `⚠ El API no aceptó el código fijo ${DEMO_CODE}: el código de cada entrada sale en esta consola (línea con ★).`,
+  );
 
   // ¿Se alcanza por la IP de la red? Si no, casi seguro es el firewall.
   try {
@@ -509,7 +533,7 @@ async function main() {
     }
   }
 
-  // 4) Expo
+  // 3) Expo
   console.log(`• Arrancando Expo (app del ${app === 'driver' ? 'repartidor' : 'cliente'}) …`);
   const expo = launch(
     'expo',

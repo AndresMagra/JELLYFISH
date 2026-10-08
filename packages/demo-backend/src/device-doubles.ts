@@ -3,7 +3,9 @@
  *
  *  - La ubicación del navegador se rechaza sin avisar → un doble de `navigator.geolocation` y de
  *    `navigator.permissions.query('geolocation')` que responde con un punto fijo de Santo Domingo, para que
- *    "Usar mi ubicación actual" funcione y se pueda enseñar.
+ *    "Usar mi ubicación actual" funcione y se pueda enseñar. Se porta como un navegador de verdad: el permiso
+ *    empieza en 'prompt' (la app muestra su propia explicación antes de pedirlo) y pasa a 'granted' cuando
+ *    se entrega la primera posición.
  *  - `window.open` devuelve `null` casi siempre (y con `noopener` SIEMPRE) → la página no puede depender de
  *    abrir pestañas. Se reemplaza por un aviso claro, con un enlace de verdad cuando hay una dirección web.
  *
@@ -31,7 +33,16 @@ interface PositionLike {
 type Success = (position: PositionLike) => void;
 type Schedule = (fn: () => void, ms: number) => unknown;
 
+/** Estado compartido del permiso de ubicación (lo leen `permissions.query` y lo cambia `geolocation`). */
+export interface PermissionState {
+  state: 'prompt' | 'granted' | 'denied';
+}
+
 export interface GeolocationDoubleOptions {
+  /** Cómo empieza el permiso: 'prompt' (como un navegador nuevo, por defecto) o 'granted'. */
+  initialPermission?: PermissionState['state'];
+  /** Para compartir el estado entre las dos piezas (si no, se crea uno). */
+  permission?: PermissionState;
   now?: () => number;
   /** Para pruebas: en vez de `setTimeout`. */
   schedule?: Schedule;
@@ -54,6 +65,7 @@ function makePosition(now: () => number): PositionLike {
 
 /** Un `navigator.geolocation` falso, siempre con permiso y siempre en el mismo punto. */
 export function createGeolocationDouble(options: GeolocationDoubleOptions = {}) {
+  const permission = options.permission ?? { state: options.initialPermission ?? 'prompt' };
   const now = options.now ?? (() => Date.now());
   const schedule: Schedule = options.schedule ?? ((fn, ms) => setTimeout(fn, ms));
   const every = options.watchEveryMs ?? 5000;
@@ -62,13 +74,17 @@ export function createGeolocationDouble(options: GeolocationDoubleOptions = {}) 
   return {
     getCurrentPosition(success: Success, _error?: unknown, _options?: unknown): void {
       // Una pequeña espera: el GPS de verdad no responde en el mismo instante.
-      schedule(() => success(makePosition(now)), 120);
+      schedule(() => {
+        permission.state = 'granted'; // al dar la primera posición el navegador ya tiene el permiso
+        success(makePosition(now));
+      }, 120);
     },
     watchPosition(success: Success, _error?: unknown, _options?: unknown): number {
       const id = ++counter;
       watchers.set(id, true);
       const tick = () => {
         if (!watchers.get(id)) return;
+        permission.state = 'granted';
         success(makePosition(now));
         schedule(tick, every);
       };
@@ -81,11 +97,11 @@ export function createGeolocationDouble(options: GeolocationDoubleOptions = {}) 
   };
 }
 
-/** Lo que `navigator.permissions.query({ name: 'geolocation' })` responde: permiso concedido. */
-export function createPermissionStatus() {
+/** Lo que `navigator.permissions.query({ name: 'geolocation' })` responde, con el estado de ese momento. */
+export function createPermissionStatus(permission: PermissionState = { state: 'granted' }) {
   const status = {
     name: 'geolocation',
-    state: 'granted' as const,
+    state: permission.state,
     onchange: null as unknown,
     addEventListener(): void {},
     removeEventListener(): void {},
@@ -118,12 +134,13 @@ export function installGeolocationDouble(
   const target = nav as NavigatorLike;
   const installed = { geolocation: false, permissions: false };
   const undo: (() => void)[] = [];
+  const permission: PermissionState = options.permission ?? { state: options.initialPermission ?? 'prompt' };
 
   try {
     const hadOwn = Object.prototype.hasOwnProperty.call(target, 'geolocation');
     const previous = Object.getOwnPropertyDescriptor(target, 'geolocation');
     Object.defineProperty(target, 'geolocation', {
-      value: createGeolocationDouble(options),
+      value: createGeolocationDouble({ ...options, permission }),
       configurable: true,
       enumerable: true,
     });
@@ -141,7 +158,7 @@ export function installGeolocationDouble(
     const original = permissions?.query?.bind(permissions);
     const query = (descriptor: { name?: string }): Promise<unknown> => {
       if (descriptor && descriptor.name === 'geolocation')
-        return Promise.resolve(createPermissionStatus());
+        return Promise.resolve(createPermissionStatus(permission));
       if (original) return original(descriptor);
       return Promise.reject(new TypeError('Permiso no soportado'));
     };

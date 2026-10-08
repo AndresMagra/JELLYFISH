@@ -58,6 +58,10 @@ export const MOUNTS: Mount[] = [
   { name: 'xyz-artifact', page: '/x/y/z/artifact.html', filesDir: '/x/y/z/', mode: 'host' },
   { name: 'x-index', page: '/x/index.html', filesDir: '/x/', mode: 'host' },
   { name: 'raiz-artifact', page: '/artifact.html', filesDir: '/', mode: 'host' },
+  { name: 'raiz-index', page: '/index.html', filesDir: '/', mode: 'host' },
+  { name: 'xyz-index', page: '/x/y/z/index.html', filesDir: '/x/y/z/', mode: 'host' },
+  // Una carpeta con espacio (el navegador la escribe "/mi%20vista/"): las rutas se comparan ya codificadas.
+  { name: 'espacio', page: '/mi vista/', filesDir: '/mi vista/', mode: 'host' },
   // Sin barra final y los archivos en la carpeta hermana: los <script src> relativos aciertan.
   { name: 'sinbarra-hermana', page: '/artifact/abc', filesDir: '/artifact/', mode: 'host' },
   // Sin barra final y los archivos dentro de la ruta: los relativos fallan y el plan B los busca.

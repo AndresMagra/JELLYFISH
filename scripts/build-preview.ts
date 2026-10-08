@@ -35,8 +35,18 @@ import { parseCatalogCsv } from '@jellyfish/catalog';
 import { type Plugin, build as esbuild } from 'esbuild';
 import sharp from 'sharp';
 import {
+  LIMITS,
+  type PhotoPlan,
+  type PublishFiles,
+  planPhotos,
+  sanitizeCatalogCsv,
+  walk,
+  writePublishManifests,
+} from './preview-publish';
+import {
   DEMO_BASE_URL,
   type FontUsage,
+  fragmentProblems,
   iconFamilyOfFile,
   iconNamesIn,
   keepAssetFile,
@@ -50,13 +60,6 @@ import {
 const root = resolve(import.meta.dirname, '..');
 const customerDir = `${root}/apps/customer`;
 const catalogDir = `${root}/data/catalog`;
-
-/** Límites de publicación de una página privada. */
-export const LIMITS = {
-  maxFiles: 255,
-  maxFileBytes: 16 * 1024 * 1024,
-  maxTotalBytes: 64 * 1024 * 1024,
-};
 
 const log = (m: string) => console.log(`• ${m}`);
 const sha = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
@@ -84,16 +87,6 @@ function run(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): 
   });
 }
 
-function walk(dir: string): string[] {
-  const out: string[] = [];
-  for (const name of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, name.name);
-    if (name.isDirectory()) out.push(...walk(full));
-    else out.push(full);
-  }
-  return out;
-}
-
 // ───────────────────────── 1. datos del catálogo y fotos propias ─────────────────────────
 
 interface DemoData {
@@ -104,86 +97,17 @@ interface DemoData {
   buildId: string;
 }
 
-/** Miniaturas del catálogo (480×360, WebP): las copian a `data/catalog/photos/<sku>.thumb.webp`. */
 const PHOTOS_DIR = `${catalogDir}/photos`;
-export const THUMB_SIZE = { width: 480, height: 360 } as const;
-
-export interface PhotoPlan {
-  /** Fotos que el simulador sirve (ruta relativa a la página). */
-  seeds: { sku: string; url: string; illustrative: boolean }[];
-  /** Archivos a copiar a dist-preview/photos. */
-  copy: { from: string; to: string; bytes: number }[];
-  notes: string[];
-}
-
-/**
- * Qué fotos lleva la vista previa. Solo fotos PROPIAS (la página publicada no puede pedir nada a otro
- * servidor, así que ya no se usa el CDN): por cada SKU del manifiesto, si existe su miniatura local
- * `<sku>.thumb.webp`, la variante sirve `photos/<sku>.thumb.webp`; si no existe, queda sin foto y la app
- * muestra el degradado de su categoría.
- */
-export async function planPhotos(opts: {
-  skus: Set<string>;
-  manifestPath: string;
-  photosDir: string;
-}): Promise<PhotoPlan> {
-  const notes: string[] = [];
-  const seeds: PhotoPlan['seeds'] = [];
-  const copy: PhotoPlan['copy'] = [];
-  if (!existsSync(opts.manifestPath)) {
-    notes.push('sin photos.manifest.json: ningún artículo lleva foto');
-    return { seeds, copy, notes };
-  }
-  const manifest = JSON.parse(readFileSync(opts.manifestPath, 'utf8')) as {
-    items: { sku: string; illustrative?: boolean; verified?: boolean }[];
-  };
-  let unverified = 0;
-  const missing: string[] = [];
-  const odd: string[] = [];
-  for (const m of manifest.items) {
-    if (!opts.skus.has(m.sku)) continue;
-    if (m.verified === false) {
-      unverified++;
-      continue;
-    }
-    const file = `${opts.photosDir}/${m.sku}.thumb.webp`;
-    if (!existsSync(file)) {
-      missing.push(m.sku);
-      continue;
-    }
-    try {
-      const meta = await sharp(file).metadata();
-      if (meta.format !== 'webp') throw new Error(`no es WebP (${meta.format ?? 'desconocido'})`);
-      if (meta.width !== THUMB_SIZE.width || meta.height !== THUMB_SIZE.height)
-        odd.push(`${m.sku} ${meta.width}×${meta.height}`);
-    } catch (e) {
-      notes.push(`${m.sku}: la miniatura no se pudo leer (${(e as Error).message}); queda sin foto`);
-      continue;
-    }
-    seeds.push({
-      sku: m.sku,
-      url: `photos/${m.sku}.thumb.webp`,
-      illustrative: m.illustrative !== false,
-    });
-    copy.push({ from: file, to: `photos/${m.sku}.thumb.webp`, bytes: statSync(file).size });
-  }
-  if (unverified > 0) notes.push(`${unverified} fotos sin verificar omitidas`);
-  if (missing.length > 0)
-    notes.push(
-      `${missing.length} artículos sin miniatura local (se ven con el degradado de su categoría): ${missing.slice(0, 6).join(', ')}${missing.length > 6 ? '…' : ''}`,
-    );
-  if (odd.length > 0)
-    notes.push(`miniaturas que no miden ${THUMB_SIZE.width}×${THUMB_SIZE.height}: ${odd.slice(0, 4).join(', ')}`);
-  return { seeds, copy, notes };
-}
 
 async function readCatalogData(
   photosDir: string,
 ): Promise<{ data: Omit<DemoData, 'buildId'>; notes: string[]; copy: PhotoPlan['copy'] }> {
-  const catalogCsv = readFileSync(`${catalogDir}/products.seed.csv`, 'utf8');
+  const rawCsv = readFileSync(`${catalogDir}/products.seed.csv`, 'utf8');
   const categories = JSON.parse(readFileSync(`${catalogDir}/categories.json`, 'utf8')) as {
     slug: string;
   }[];
+  // Lo interno del negocio (costo, notas de cómo se fijó el precio) no viaja dentro de la página.
+  const catalogCsv = sanitizeCatalogCsv(rawCsv);
   const parsed = parseCatalogCsv(catalogCsv, { categories: categories.map((c) => c.slug) });
   if (parsed.errors.length > 0) {
     const e = parsed.errors[0]!;
@@ -352,170 +276,11 @@ async function makeIcons(outDir: string): Promise<void> {
   await png(32).toFile(`${outDir}/icons/favicon-32.png`);
 }
 
-export interface FileEntry {
-  path: string;
-  bytes: number;
-}
-
-/** Archivos del build que NO se publican junto a la página (son para probar en local o describen el build). */
-export const NOT_PUBLISHED = new Set([
-  'artifact.html',
-  'index.html',
-  'favicon.ico',
-  'preview-manifest.json',
-  'publish-files.json',
-]);
-
-const isPublishedAttachment = (path: string) =>
-  !NOT_PUBLISHED.has(path) && !path.startsWith('icons/');
-
-export interface LimitsCheck {
-  fileCount: number;
-  totalBytes: number;
-  largestFile: FileEntry;
-  withinLimits: boolean;
-  problems: string[];
-}
-
-/**
- * Comprueba los límites de UNA publicación: el archivo principal cuenta como un archivo más. Pura (recibe
- * la lista de archivos), así se prueba con tamaños inventados.
- */
-export function checkLimits(main: FileEntry, attachments: FileEntry[]): LimitsCheck {
-  const all = [main, ...attachments];
-  const totalBytes = all.reduce((a, f) => a + f.bytes, 0);
-  const largestFile = all.reduce((m, f) => (f.bytes > m.bytes ? f : m), all[0]!);
-  const problems: string[] = [];
-  if (all.length > LIMITS.maxFiles)
-    problems.push(`${all.length} archivos (el máximo por publicación es ${LIMITS.maxFiles})`);
-  const tooBig = all.filter((f) => f.bytes > LIMITS.maxFileBytes);
-  for (const f of tooBig)
-    problems.push(`${f.path} pesa ${(f.bytes / 1048576).toFixed(1)} MB (el máximo por archivo es 16 MB)`);
-  if (totalBytes > LIMITS.maxTotalBytes)
-    problems.push(
-      `${(totalBytes / 1048576).toFixed(1)} MB en total (el máximo por publicación es 64 MB)`,
-    );
-  return { fileCount: all.length, totalBytes, largestFile, withinLimits: problems.length === 0, problems };
-}
-
-/**
- * Reparte los archivos en grupos que caben cada uno en una publicación (el primero lleva también el
- * archivo principal). Con una carga normal sale un solo grupo; solo se divide si hace falta.
- */
-export function splitForPublishing(main: FileEntry, attachments: FileEntry[]): FileEntry[][] {
-  const groups: FileEntry[][] = [[]];
-  let count = 1;
-  let bytes = main.bytes;
-  for (const f of [...attachments].sort((a, b) => b.bytes - a.bytes)) {
-    if (count + 1 > LIMITS.maxFiles || bytes + f.bytes > LIMITS.maxTotalBytes) {
-      groups.push([]);
-      count = 0;
-      bytes = 0;
-    }
-    groups[groups.length - 1]!.push(f);
-    count++;
-    bytes += f.bytes;
-  }
-  return groups.map((g) => g.sort((a, b) => (a.path < b.path ? -1 : 1)));
-}
-
-function listFiles(outDir: string): FileEntry[] {
-  return walk(outDir)
-    .map((f) => ({ path: relative(outDir, f).split('\\').join('/'), bytes: statSync(f).size }))
-    .sort((a, b) => (a.path < b.path ? -1 : 1));
-}
-
-export interface PublishFiles {
-  /** Archivo principal de la página: el fragmento. Va en `file_path` de la herramienta de publicación. */
-  main: string;
-  /** Mapa exacto para el parámetro `files`: {"ruta publicada": "ruta local absoluta"} (sin el archivo principal). */
-  files: Record<string, string>;
-  /** Todo cuenta el archivo principal. */
-  fileCount: number;
-  attachmentCount: number;
-  totalBytes: number;
-  largestFile: FileEntry;
-  withinLimits: boolean;
-  limits: typeof LIMITS;
-  /** Solo si NO cabe en una publicación: cada grupo es un mapa para una publicación (la primera lleva `main`). */
-  parts?: Record<string, string>[];
-  notes: string[];
-}
-
-export interface PreviewManifest {
-  buildId: string;
-  generatedAt: string;
-  publish: Omit<PublishFiles, 'files' | 'parts'> & { parts?: number };
-  notes: string[];
-  /** Todo lo que hay en la carpeta de salida (incluido lo que no se publica). */
-  files: FileEntry[];
-}
-
 export interface BuildOptions {
   out: string;
   skipExport: boolean;
   /** Carpeta con las miniaturas `<sku>.thumb.webp` (por defecto data/catalog/photos). */
   photos?: string;
-}
-
-/** Escribe publish-files.json y preview-manifest.json a partir de lo que hay en la carpeta de salida. */
-export function writePublishManifests(outDir: string, buildId: string, notes: string[]): PublishFiles {
-  const all = listFiles(outDir);
-  const sizeOf = (path: string) => statSync(`${outDir}/${path}`).size;
-  const main: FileEntry = { path: 'artifact.html', bytes: sizeOf('artifact.html') };
-  const attachments = all.filter((f) => isPublishedAttachment(f.path));
-  const check = checkLimits(main, attachments);
-  const local = (path: string) => `${outDir}/${path}`;
-  const toMap = (list: FileEntry[]) =>
-    Object.fromEntries(list.map((f) => [f.path, local(f.path)])) as Record<string, string>;
-
-  const publishNotes = [...notes];
-  let parts: Record<string, string>[] | undefined;
-  if (!check.withinLimits) {
-    const groups = splitForPublishing(main, attachments);
-    if (groups.length > 1 && !check.problems.some((p) => p.includes('por archivo'))) {
-      parts = groups.map(toMap);
-      publishNotes.push(
-        `NO cabe en una sola publicación (${check.problems.join('; ')}): se divide en ${groups.length} mapas en "parts"; la primera publicación lleva artifact.html y las siguientes se publican a la misma dirección (cada una agrega sus archivos).`,
-      );
-    } else {
-      publishNotes.push(`EXCEDE LOS LÍMITES: ${check.problems.join('; ')}`);
-    }
-  }
-  const publish: PublishFiles = {
-    main: local('artifact.html'),
-    files: toMap(attachments),
-    fileCount: check.fileCount,
-    attachmentCount: attachments.length,
-    totalBytes: check.totalBytes,
-    largestFile: check.largestFile,
-    withinLimits: check.withinLimits,
-    limits: LIMITS,
-    ...(parts ? { parts } : {}),
-    notes: publishNotes,
-  };
-  writeFileSync(`${outDir}/publish-files.json`, `${JSON.stringify(publish, null, 2)}\n`);
-
-  // preview-manifest.json se cuenta a sí mismo (punto fijo: su tamaño no cambia lo que ya está medido).
-  const manifest: PreviewManifest = {
-    buildId,
-    generatedAt: new Date().toISOString(),
-    publish: {
-      main: publish.main,
-      fileCount: publish.fileCount,
-      attachmentCount: publish.attachmentCount,
-      totalBytes: publish.totalBytes,
-      largestFile: publish.largestFile,
-      withinLimits: publish.withinLimits,
-      limits: LIMITS,
-      ...(parts ? { parts: parts.length } : {}),
-      notes: publishNotes,
-    },
-    notes: publishNotes,
-    files: [...listFiles(outDir), { path: 'preview-manifest.json', bytes: 0 }],
-  };
-  writeFileSync(`${outDir}/preview-manifest.json`, `${JSON.stringify(manifest, null, 2)}\n`);
-  return publish;
 }
 
 export async function buildPreview(options: BuildOptions): Promise<PublishFiles> {
@@ -653,7 +418,11 @@ export async function buildPreview(options: BuildOptions): Promise<PublishFiles>
     writeFileSync(`${outDir}/${files.app}`, appJs);
 
     // La página: el fragmento (lo que se publica) y el documento completo (para probar en local).
-    writeFileSync(`${outDir}/artifact.html`, renderFragment({ buildId, files }));
+    const fragment = renderFragment({ buildId, files });
+    const broken = fragmentProblems(fragment);
+    if (broken.length > 0)
+      throw new Error(`artifact.html no cumple el formato de página publicada:\n- ${broken.join('\n- ')}`);
+    writeFileSync(`${outDir}/artifact.html`, fragment);
     writeFileSync(`${outDir}/index.html`, renderIndexHtml({ buildId, files }));
     writeFileSync(`${outDir}/jf-probe.json`, `${JSON.stringify({ jf: buildId })}\n`);
     if (existsSync(`${exportDir}/favicon.ico`))
@@ -694,7 +463,7 @@ async function main() {
     `\n✔ Vista previa lista en ${relative(root, resolve(values.out!)) || '.'} (${((Date.now() - t0) / 1000).toFixed(0)} s)\n` +
       `  Página: artifact.html (fragmento) + ${publish.attachmentCount} archivos adjuntos · ${mb(publish.totalBytes)} en total · el más grande: ` +
       `${publish.largestFile.path} (${mb(publish.largestFile.bytes)})\n` +
-      `  Límites de publicación: ≤ ${LIMITS.maxFiles} archivos, ≤ 16 MB por archivo, ≤ 64 MB en total → ` +
+      `  Límites de publicación: ≤ ${LIMITS.maxFiles} archivos, ≤ 16 MB por archivo de texto (15 MB por binario), ≤ 64 MB en total → ` +
       `${publish.withinLimits ? 'dentro de los límites' : publish.parts ? `NO cabe en una publicación: ${publish.parts.length} mapas en publish-files.json` : 'EXCEDE LOS LÍMITES'}\n` +
       '  Mapa para la herramienta de publicación: dist-preview/publish-files.json  (clave "files"; el archivo principal es "main")\n' +
       '  Para verla en tu computadora: npx tsx scripts/e2e-preview.ts --serve\n',
