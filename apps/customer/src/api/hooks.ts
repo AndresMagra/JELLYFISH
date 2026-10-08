@@ -19,6 +19,7 @@ import {
 } from '@jellyfish/shared';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { TRACKING_POLL_MS, api, planReorder, useSignedIn } from '@jellyfish/mobile-core';
+import { IS_DEMO } from '../lib/config';
 
 // ───────────── catálogo (público) ─────────────
 
@@ -159,7 +160,8 @@ export function useOrder(id: string | undefined) {
     queryFn: () => api<OrderDTO>(`/v1/orders/${id}`),
     refetchInterval: (q) => {
       const status = q.state.data?.status;
-      return status && isTerminal(status) ? false : 8_000;
+      // En la vista previa las etapas duran segundos: se consulta más seguido para que se vean todas.
+      return status && isTerminal(status) ? false : IS_DEMO ? 2_500 : 8_000;
     },
   });
 }

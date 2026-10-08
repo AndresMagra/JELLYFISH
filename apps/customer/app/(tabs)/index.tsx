@@ -297,7 +297,7 @@ export default function Home() {
           }}
         >
           <Text variant="caption" color="#1B1300" style={{ fontFamily: fonts.bold }}>
-            MODO DEMOSTRACIÓN · Precios de ejemplo, sin confirmar. No se entregan pedidos reales.
+            MODO DEMOSTRACIÓN · Los pedidos son de prueba: no se entregan ni se cobran.
           </Text>
         </View>
       ) : null}
