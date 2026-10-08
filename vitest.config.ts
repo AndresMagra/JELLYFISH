@@ -6,6 +6,7 @@ export default defineConfig({
       'packages/*/test/**/*.test.ts',
       'apps/api/test/**/*.test.ts',
       'apps/driver/test/**/*.test.ts',
+      'apps/admin/test/**/*.test.ts',
       'data/catalog/**/*.test.ts',
     ],
     environment: 'node',
