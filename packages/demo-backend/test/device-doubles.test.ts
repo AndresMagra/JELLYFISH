@@ -168,7 +168,7 @@ describe('dobles de lo que el visor no deja hacer', () => {
       ],
       ['clearWatch no detiene nada', [['watchers.delete(id);', '']]],
       ['el permiso nunca pasa a concedido', [["        permission.state = 'granted'; // al dar la primera posición el navegador ya tiene el permiso\n", '']]],
-      ['el permiso empieza concedido (la app no explica nada)', [["options.initialPermission ?? 'prompt' };\n  const now", "options.initialPermission ?? 'granted' };\n  const now"]]],
+      ['el permiso empieza concedido (la app no explica nada)', [["const permission: PermissionState = options.permission ?? { state: options.initialPermission ?? 'prompt' };", "const permission: PermissionState = options.permission ?? { state: options.initialPermission ?? 'granted' };"]]],
       ['la consulta siempre contesta lo mismo', [['state: permission.state,', "state: 'granted' as const,"]]],
       ['se concede cualquier permiso', [["descriptor.name === 'geolocation'", 'true']]],
       ['window.open devuelve algo en vez de null', [["        return null;\n      },\n      configurable", "        return {} as never;\n      },\n      configurable"]]],

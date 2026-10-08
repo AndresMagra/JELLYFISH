@@ -606,12 +606,19 @@ async function longJourney(s: Session, o: LongOptions) {
     'la vista previa instaló el doble de navigator.geolocation y de permissions.query',
   );
   const permission = await page.evaluate(`navigator.permissions.query({ name: 'geolocation' }).then(function (p) { return p.state; })`);
-  check(permission === 'granted', 'navigator.permissions.query("geolocation") responde "granted"');
+  check(
+    permission === 'prompt',
+    'navigator.permissions.query("geolocation") responde "prompt" al principio (como un navegador nuevo: la app explica antes de pedir)',
+  );
   await page.getByTestId('use-location').click();
   await page.getByTestId('location-explain').waitFor({ timeout: 10_000 });
   await shot(page, '09-ubicacion-permiso');
   await page.getByTestId('location-allow').click();
   await page.getByTestId('location-saved').waitFor({ timeout: 15_000 });
+  check(
+    (await page.evaluate(`navigator.permissions.query({ name: 'geolocation' }).then(function (p) { return p.state; })`)) === 'granted',
+    'tras dar la posición, el permiso pasa a "granted"',
+  );
   const savedText = await page.getByTestId('location-saved').innerText();
   check(
     /18\.4861/.test(savedText) && /-69\.9312/.test(savedText),
