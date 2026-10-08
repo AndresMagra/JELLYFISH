@@ -42,11 +42,13 @@ import {
 } from './coupons';
 import {
   type DeliveryGateInput,
+  DRIVER_VIEWER,
   INTERNAL_VIEWER,
   type OrderViewer,
   PinRejection,
   applyDeliveryGate,
   deliveryFieldsFor,
+  timelineFor,
 } from './delivery';
 import * as inventory from './inventory';
 import { assertSlotAvailable, deliveryPricing, findZone, type Zone } from './zones';
@@ -613,27 +615,36 @@ export function toOrderDTO(
       ...p,
       proofSubmitted: !!(raw as { proof?: unknown } | null)?.proof,
     })),
-    timeline: parts.timeline,
+    timeline: timelineFor(parts.timeline, viewer),
     next: nextStatuses(order.status),
   };
 }
 
 /**
  * `scope.userId` = el cliente dueño mira su propio pedido (404 si es de otra persona) y es el
- * único que puede ver el PIN. Sin `scope` la vista es interna (admin, repartidor, pagos): sin PIN.
+ * único que puede ver el PIN. `scope.viewer` = otra vista (el repartidor). Sin `scope` la vista es
+ * interna (admin, personal, pagos): sin PIN, pero con el motivo de una entrega sin PIN.
  */
 export async function getOrder(
   ctx: OrderContext,
   orderId: string,
-  scope: { userId?: string } = {},
+  scope: { userId?: string; viewer?: OrderViewer } = {},
 ): Promise<OrderDTO> {
-  const [order] = await ctx.db.select().from(orders).where(eq(orders.id, orderId));
-  // 404 (no 403) para no revelar que el pedido existe.
-  if (!order || (scope.userId && order.userId !== scope.userId)) throw notFound('Pedido');
   const viewer: OrderViewer = scope.userId
     ? { role: 'customer', userId: scope.userId }
-    : INTERNAL_VIEWER;
+    : (scope.viewer ?? INTERNAL_VIEWER);
+  const [order] = await ctx.db.select().from(orders).where(eq(orders.id, orderId));
+  // 404 (no 403) para no revelar que el pedido existe.
+  if (!order || (viewer.role === 'customer' && order.userId !== viewer.userId)) {
+    throw notFound('Pedido');
+  }
   return hydrate(ctx.db, order, viewer);
+}
+
+/** La respuesta de una acción se arma con la vista de quien la hizo, no con la interna. */
+export function viewerForActor(actor: Actor): OrderViewer {
+  if (actor.role === 'customer') return { role: 'customer', userId: actor.id ?? '' };
+  return actor.role === 'driver' ? DRIVER_VIEWER : INTERNAL_VIEWER;
 }
 
 export async function listOrdersForUser(ctx: OrderContext, userId: string, limit = 30) {
@@ -740,7 +751,7 @@ export async function transitionOrder(
     }
   });
   if (pinRejection) throw pinRejection;
-  return getOrder(ctx, orderId);
+  return getOrder(ctx, orderId, { viewer: viewerForActor(actor) });
 }
 
 /** Igual que `transitionOrder`, pero dentro de una transacción ya abierta (la usan los pagos). */

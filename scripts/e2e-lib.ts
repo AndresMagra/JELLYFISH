@@ -1,15 +1,31 @@
 /** Utilidades comunes de los recorridos e2e: procesos, servidor estático, esperas y OTP. */
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { createServer as createNetServer, connect } from 'node:net';
 import { extname, join, resolve } from 'node:path';
 
 export const root = resolve(import.meta.dirname, '..');
 export const CHROME =
   process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
-const children: ChildProcess[] = [];
+/** `group`: el proceso se lanzó aparte (`detached`) y se cierra junto con todo lo que arrancó. */
+const children: { child: ChildProcess; group: boolean }[] = [];
 export const apiLog = { text: '' };
+
+/**
+ * Variables de la shell que cambiarían la base, el código de acceso, el reporte de errores o las fotos
+ * del API de prueba. Cada recorrido las deja sin definir al arrancarlo: con un `DATABASE_URL` exportado
+ * el API correría contra otra base y el recorrido crearía cupones y pedidos ahí.
+ */
+export const ISOLATED_API_ENV = {
+  DATABASE_URL: undefined,
+  TEST_DATABASE_URL: undefined,
+  PGLITE_DIR: undefined,
+  DEMO_OTP_CODE: undefined,
+  SENTRY_DSN: undefined,
+  PHOTOS_DIR: undefined,
+} satisfies Record<string, undefined>;
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const log = (m: string) => console.log(`• ${m}`);
@@ -27,7 +43,7 @@ export function start(
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  children.push(child);
+  children.push({ child, group: true });
   const sink = (d: Buffer) => {
     if (capture) apiLog.text += d.toString();
   };
@@ -36,14 +52,91 @@ export function start(
   return child;
 }
 
+/** Anota un proceso que no se lanzó con `start` (el empaquetado de Expo) para que `stopAll` también lo cierre. */
+export function track(child: ChildProcess, group = false) {
+  children.push({ child, group });
+  return child;
+}
+
 export function stopAll() {
-  for (const c of children) {
+  for (const { child, group } of children) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
     try {
-      if (c.pid) process.kill(-c.pid, 'SIGTERM');
+      if (group && child.pid) process.kill(-child.pid, 'SIGTERM');
+      else child.kill('SIGTERM');
     } catch {
       /* ya terminó */
     }
   }
+}
+
+// Ctrl+C o un kill al recorrido no deben dejar el API (arrancado aparte, `detached`) corriendo.
+let stopping = false;
+for (const [signal, code] of [
+  ['SIGINT', 130],
+  ['SIGTERM', 143],
+] as const) {
+  process.on(signal, () => {
+    if (stopping) return;
+    stopping = true;
+    stopAll();
+    // Un instante para que Playwright cierre su navegador antes de salir.
+    setTimeout(() => process.exit(code), 400);
+  });
+}
+// Último recurso si el proceso muere por otra vía (una excepción fuera de main).
+process.on('exit', stopAll);
+
+/** ¿Alguien contesta en ese puerto? (un API anterior; algunos sistemas dejan abrir el puerto aunque esté ocupado). */
+function answers(port: number, host: string): Promise<boolean> {
+  return new Promise((ok) => {
+    const socket = connect({ port, host, timeout: 1000 });
+    const done = (answered: boolean) => {
+      socket.destroy();
+      ok(answered);
+    };
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+    socket.once('timeout', () => done(false));
+  });
+}
+
+/** ¿El sistema no deja abrir el puerto? */
+function cannotBind(port: number): Promise<boolean> {
+  return new Promise((ok, fail) => {
+    const probe = createNetServer();
+    probe.once('error', (e: NodeJS.ErrnoException) =>
+      e.code === 'EADDRINUSE' ? ok(true) : fail(e),
+    );
+    probe.listen(port, () => probe.close(() => ok(false)));
+  });
+}
+
+/** Falla antes de arrancar nada si otro proceso (un API que quedó abierto, otro recorrido) ya usa el puerto. */
+export async function assertPortFree(port: number): Promise<void> {
+  const taken = await Promise.all([
+    answers(port, '127.0.0.1'),
+    answers(port, '::1'),
+    cannotBind(port),
+  ]);
+  if (taken.some(Boolean)) {
+    throw new Error(
+      `El puerto ${port} ya está en uso: cierra el proceso anterior (un API que quedó abierto u otro recorrido).`,
+    );
+  }
+}
+
+/** Nombre de las capturas numeradas de un recorrido (01-inicio.png) y de su captura de fallo. */
+export const OWN_SHOT = /^(?:\d\d-[\w-]+|FALLO)\.png$/;
+
+/**
+ * Quita las capturas de una corrida anterior para que no se mezclen con las nuevas. Solo en la carpeta
+ * por defecto del recorrido (bajo tmp/) y solo lo que lleva el nombre de sus capturas: con un
+ * `E2E_OUT` dado por la persona no se borra nada, porque puede ser una carpeta compartida.
+ */
+export function clearOwnShots(outDir: string, defaultDir: string) {
+  if (resolve(outDir) !== resolve(defaultDir)) return;
+  for (const f of readdirSync(outDir)) if (OWN_SHOT.test(f)) rmSync(join(outDir, f));
 }
 
 export async function waitFor(url: string, tries = 90) {
@@ -65,7 +158,7 @@ export function run(
   env: NodeJS.ProcessEnv = {},
 ): Promise<void> {
   return new Promise((ok, fail) => {
-    const p = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: 'ignore' });
+    const p = track(spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: 'ignore' }));
     p.on('exit', (code) =>
       code === 0 ? ok() : fail(new Error(`${cmd} ${args.join(' ')} falló (${code})`)),
     );
@@ -127,4 +220,84 @@ export async function apiLogin(api: string, phone: string): Promise<string> {
     body: JSON.stringify({ phone: e164, code }),
   });
   return ((await res.json()) as { token: string }).token;
+}
+
+// ───────────── Fugas en la bitácora ─────────────
+
+const SECRET_KEYS =
+  /^(code|otp|pin|token|password|secret|authorization|cookie|apikey|deliverypin)$/;
+const FULL_PHONE = /(?:\+?1)?8[024]9\d{7}\b/;
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+
+/** Claves y valores que jamás deben estar en un cuerpo guardado; `allowKeys` = claves públicas en esa ruta. */
+export function leaksIn(
+  value: unknown,
+  secrets: ReadonlySet<string>,
+  path = '$',
+  allowKeys: ReadonlySet<string> = new Set(),
+): string[] {
+  if (typeof value === 'string') {
+    if (secrets.has(value) || /^eyJ[\w-]+\.[\w-]+\.[\w-]*$/.test(value) || FULL_PHONE.test(value))
+      return [`${path} = ${value.slice(0, 12)}…`];
+    return [];
+  }
+  if (Array.isArray(value))
+    return value.flatMap((v, i) => leaksIn(v, secrets, `${path}[${i}]`, allowKeys));
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([k, v]) => {
+      const key = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return [
+        ...(SECRET_KEYS.test(key) && !allowKeys.has(key) ? [`${path}.${k}`] : []),
+        ...leaksIn(v, secrets, `${path}.${k}`, allowKeys),
+      ];
+    });
+  }
+  return [];
+}
+
+/** ¿El secreto aparece suelto en el texto? Los ids no cuentan: 4 dígitos caben por azar en un UUID. */
+export function mentions(text: string, secret: string): boolean {
+  const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![\\w.-])${escaped}(?![\\w.-])`).test(text.replace(UUID, ' '));
+}
+
+/**
+ * Dónde se filtra algo en una entrada de la bitácora: en el cuerpo guardado (claves y valores) o en
+ * sus textos (resumen, ruta, id de la entidad). `textSecrets` son los secretos que se buscan dentro de
+ * los textos; por defecto, todos. Un PIN de 4 dígitos puede coincidir con una cantidad del resumen
+ * ("cantidad 4000"), así que quien lo conoce lo deja fuera de ese conjunto.
+ */
+export function leaksInEntry(
+  entry: { action: string; summary: string; path: string; entityId: string; payload: unknown },
+  secrets: ReadonlySet<string>,
+  textSecrets: ReadonlySet<string> = secrets,
+  allowKeys: ReadonlySet<string> = new Set(),
+): string[] {
+  const texts = { summary: entry.summary, path: entry.path, entityId: entry.entityId };
+  return [
+    ...leaksIn(entry.payload, secrets, `${entry.action}.payload`, allowKeys),
+    ...Object.entries(texts).flatMap(([name, text]) =>
+      [...textSecrets].some((s) => mentions(text, s)) ? [`${entry.action}.${name}`] : [],
+    ),
+  ];
+}
+
+// ───────────── Motivo de "Entregar sin PIN" ─────────────
+
+// Un marcador que no puede aparecer por casualidad: dónde se vea, el motivo interno se filtró.
+export const OVERRIDE_MARKER = 'MOTIVO-INTERNO-QX7';
+/** Lo que ven el cliente y el repartidor en lugar de esa nota. */
+export const OVERRIDE_PUBLIC_NOTE = 'Entrega confirmada por administración';
+
+/** ¿El pedido (tal como lo recibió el cliente o el repartidor) deja ver el motivo interno? */
+export function exposesOverrideReason(order: unknown): boolean {
+  const text = JSON.stringify(order);
+  return text.includes(OVERRIDE_MARKER) || text.includes('Entrega sin PIN autorizada');
+}
+
+/** ¿Su historial trae el texto neutro en el evento de entrega? */
+export function hasNeutralDeliveryNote(order: {
+  timeline: { toStatus: string; note: string }[];
+}): boolean {
+  return order.timeline.some((t) => t.toStatus === 'delivered' && t.note === OVERRIDE_PUBLIC_NOTE);
 }

@@ -13,19 +13,24 @@ import {
   Loading,
   Modal,
   PageHead,
+  StaleNote,
+  Tabs,
   useToast,
 } from '../components/ui';
-import { api } from '../lib/api';
+import { api, errorText } from '../lib/api';
 import { dateTime, lbToCentilb, qtyLabel } from '../lib/format';
 import {
   EXPIRING_WINDOWS,
   LOT_CODE_MAX,
+  LOTS_LIMIT,
   LOT_NOTE_MAX,
   LOT_STATUS,
   checkLotForm,
   daysLeftText,
   expiryDateLabel,
-  matchVariants,
+  lotsLimitNote,
+  searchVariants,
+  truncatedMatchText,
   todayInRD,
 } from '../lib/lots';
 import './panel-extra.css';
@@ -46,7 +51,7 @@ type Tab = 'existencias' | 'lotes';
 export function Inventory() {
   const [params, setParams] = useSearchParams();
   const tab: Tab = params.get('tab') === 'lotes' ? 'lotes' : 'existencias';
-  const tabs: [Tab, string][] = [
+  const tabs: readonly (readonly [Tab, string])[] = [
     ['existencias', 'Existencias'],
     ['lotes', 'Lotes y vencimientos'],
   ];
@@ -56,21 +61,14 @@ export function Inventory() {
         title="Inventario"
         subtitle="Existencias en el congelador. Lo reservado es de pedidos que aún no se empacan."
       />
-      <div className="tabs" role="tablist">
-        {tabs.map(([k, label]) => (
-          <button
-            key={k}
-            role="tab"
-            aria-selected={tab === k}
-            className={`tab ${tab === k ? 'active' : ''}`.trim()}
-            onClick={() => setParams(k === 'lotes' ? { tab: 'lotes' } : {}, { replace: true })}
-            data-testid={`inv-tab-${k}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {tab === 'lotes' ? <Lots /> : <Stock />}
+      <Tabs
+        tabs={tabs}
+        value={tab}
+        onChange={(k) => setParams(k === 'lotes' ? { tab: 'lotes' } : {}, { replace: true })}
+        testIdPrefix="inv-tab-"
+      >
+        {tab === 'lotes' ? <Lots /> : <Stock />}
+      </Tabs>
     </>
   );
 }
@@ -120,9 +118,16 @@ function Stock() {
             {rows.length} {rows.length === 1 ? 'artículo' : 'artículos'}
           </span>
         </div>
+        {list.isError && list.data ? (
+          <StaleNote
+            error={list.error}
+            onRetry={() => void list.refetch()}
+            busy={list.isFetching}
+          />
+        ) : null}
         {list.isLoading ? (
           <Loading />
-        ) : list.isError ? (
+        ) : list.isError && !list.data ? (
           <ErrorBox error={list.error} onRetry={() => void list.refetch()} />
         ) : rows.length === 0 ? (
           <Empty title="Sin resultados" />
@@ -240,6 +245,7 @@ function AdjustDialog({
     <Modal
       title={`${meta.title} · ${row.productName}${row.variant ? ` ${row.variant}` : ''}`}
       onClose={onClose}
+      busy={m.isPending}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -308,7 +314,7 @@ function Lots() {
     queryKey: ['admin', 'lots', includeEmpty],
     queryFn: () =>
       api<StockLotDTO[]>('/v1/admin/inventory/lots', {
-        query: { includeEmpty: includeEmpty ? 1 : 0 },
+        query: { includeEmpty: includeEmpty ? 1 : 0, limit: LOTS_LIMIT },
       }),
   });
   const expiring = useQuery({
@@ -343,9 +349,16 @@ function Lots() {
             Lotes con existencias que vencen en los próximos {days} días, y los que ya vencieron:
             esos hay que sacarlos del congelador.
           </p>
+          {expiring.isError && expiring.data ? (
+            <StaleNote
+              error={expiring.error}
+              onRetry={() => void expiring.refetch()}
+              busy={expiring.isFetching}
+            />
+          ) : null}
           {expiring.isLoading ? (
             <Loading />
-          ) : expiring.isError ? (
+          ) : expiring.isError && !expiring.data ? (
             <ErrorBox error={expiring.error} onRetry={() => void expiring.refetch()} />
           ) : (expiring.data ?? []).length === 0 ? (
             <div className="muted">Nada vence en los próximos {days} días.</div>
@@ -389,9 +402,16 @@ function Lots() {
           Los lotes no bloquean la venta: lo vendible sigue siendo lo que hay menos lo reservado. Al
           empacar un pedido se descuenta primero el lote que vence antes.
         </p>
+        {lots.isError && lots.data ? (
+          <StaleNote
+            error={lots.error}
+            onRetry={() => void lots.refetch()}
+            busy={lots.isFetching}
+          />
+        ) : null}
         {lots.isLoading ? (
           <Loading />
-        ) : lots.isError ? (
+        ) : lots.isError && !lots.data ? (
           <ErrorBox error={lots.error} onRetry={() => void lots.refetch()} />
         ) : (lots.data ?? []).length === 0 ? (
           <Empty
@@ -447,6 +467,11 @@ function Lots() {
             </table>
           </div>
         )}
+        {lotsLimitNote((lots.data ?? []).length) ? (
+          <p className="muted small" style={{ margin: '10px 0 0' }} data-testid="lots-limit-note">
+            {lotsLimitNote((lots.data ?? []).length)}
+          </p>
+        ) : null}
       </Card>
     </>
   );
@@ -465,10 +490,11 @@ function ReceiveLotForm() {
     queryKey: ['admin', 'catalog'],
     queryFn: () => api<AdminVariantDTO[]>('/v1/admin/catalog'),
   });
-  const results = useMemo(
-    () => (picked ? [] : matchVariants(catalog.data ?? [], f.query)),
+  const search = useMemo(
+    () => (picked ? { shown: [], total: 0 } : searchVariants(catalog.data ?? [], f.query)),
     [catalog.data, f.query, picked],
   );
+  const results = search.shown;
 
   const isLb = picked?.pricingUnit === 'lb';
   const { body, errors } = checkLotForm(
@@ -534,7 +560,7 @@ function ReceiveLotForm() {
         }}
       >
         <div className="lot-wide">
-          <Field label="Artículo">
+          <Field label="Artículo" error={catalog.data ? err('variant', f.query) : undefined}>
             <input
               ref={searchRef}
               className="input"
@@ -568,7 +594,30 @@ function ReceiveLotForm() {
                   </li>
                 ))}
               </ul>
-            ) : f.query.trim() && !picked && !catalog.isLoading ? (
+            ) : null}
+            {results.length > 0 && search.total > results.length ? (
+              <span className="muted small" data-testid="lot-variant-truncated">
+                {truncatedMatchText(results.length, search.total)}
+              </span>
+            ) : null}
+            {catalog.isError && !catalog.data ? (
+              <div className="row wrap small" data-testid="lot-catalog-error">
+                <span className="err">
+                  No pudimos cargar los artículos ({errorText(catalog.error)}) Sin ellos no se puede
+                  buscar.
+                </span>
+                <Button
+                  small
+                  variant="secondary"
+                  busy={catalog.isFetching}
+                  onClick={() => void catalog.refetch()}
+                >
+                  Reintentar
+                </Button>
+              </div>
+            ) : catalog.isLoading && f.query.trim() ? (
+              <span className="muted small">Cargando artículos…</span>
+            ) : results.length === 0 && f.query.trim() && !picked && catalog.data ? (
               <span className="muted small">Ningún artículo coincide.</span>
             ) : picked ? (
               <span className="muted small">

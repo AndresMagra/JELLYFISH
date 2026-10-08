@@ -13,17 +13,19 @@ import {
   Loading,
   Modal,
   PageHead,
+  StaleNote,
+  Tabs,
   useToast,
 } from '../components/ui';
 import { api } from '../lib/api';
-import { centavosToPesos, dateTime, formatDOP, pesosToCentavos } from '../lib/format';
+import { MONEY_ERROR, centavosToPesos, dateTime, formatDOP, pesosToCentavos } from '../lib/format';
 
 type Tab = 'refunds' | 'transfers' | 'cash' | 'all';
 
 export function Payments() {
   const { isAdmin } = useAuth();
   const [tab, setTab] = useState<Tab>('refunds');
-  const tabs: [Tab, string][] = [
+  const tabs: readonly (readonly [Tab, string])[] = [
     ['refunds', 'Devoluciones'],
     ['transfers', 'Transferencias'],
     ['cash', 'Efectivo y caja'],
@@ -35,24 +37,12 @@ export function Payments() {
         title="Pagos y caja"
         subtitle="Dinero por devolver, transferencias por verificar y efectivo de los repartidores"
       />
-      <div className="tabs" role="tablist">
-        {tabs.map(([k, label]) => (
-          <button
-            key={k}
-            role="tab"
-            aria-selected={tab === k}
-            className={`tab ${tab === k ? 'active' : ''}`.trim()}
-            onClick={() => setTab(k)}
-            data-testid={`tab-${k}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {tab === 'refunds' ? <Refunds isAdmin={isAdmin} /> : null}
-      {tab === 'transfers' ? <Transfers /> : null}
-      {tab === 'cash' ? <Cash isAdmin={isAdmin} /> : null}
-      {tab === 'all' ? <AllPayments /> : null}
+      <Tabs tabs={tabs} value={tab} onChange={setTab} testIdPrefix="tab-">
+        {tab === 'refunds' ? <Refunds isAdmin={isAdmin} /> : null}
+        {tab === 'transfers' ? <Transfers /> : null}
+        {tab === 'cash' ? <Cash isAdmin={isAdmin} /> : null}
+        {tab === 'all' ? <AllPayments /> : null}
+      </Tabs>
     </>
   );
 }
@@ -75,9 +65,12 @@ function Refunds({ isAdmin }: { isAdmin: boolean }) {
   };
   return (
     <Card title="Dinero por devolver al cliente">
+      {q.isError && q.data ? (
+        <StaleNote error={q.error} onRetry={() => void q.refetch()} busy={q.isFetching} />
+      ) : null}
       {q.isLoading ? (
         <Loading />
-      ) : q.isError ? (
+      ) : q.isError && !q.data ? (
         <ErrorBox error={q.error} onRetry={() => void q.refetch()} />
       ) : (q.data ?? []).length === 0 ? (
         <Empty
@@ -156,6 +149,7 @@ function RefundDialog({ p, onClose }: { p: AdminPaymentDTO; onClose: () => void 
     <Modal
       title={`Devolución · ${p.orderCode}`}
       onClose={onClose}
+      busy={m.isPending}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -178,7 +172,9 @@ function RefundDialog({ p, onClose }: { p: AdminPaymentDTO; onClose: () => void 
       </p>
       <Field
         label="Monto devuelto (RD$)"
-        error={cents && cents > p.refundPending ? 'Es más de lo pendiente' : null}
+        error={
+          cents === null ? MONEY_ERROR : cents > p.refundPending ? 'Es más de lo pendiente' : null
+        }
       >
         <input
           className="input"
@@ -271,6 +267,7 @@ function Transfers() {
         <Modal
           title={`Confirmar transferencia · ${target.orderCode}`}
           onClose={() => setTarget(null)}
+          busy={m.isPending}
           footer={
             <>
               <Button variant="ghost" onClick={() => setTarget(null)}>
@@ -316,13 +313,14 @@ function Cash({ isAdmin }: { isAdmin: boolean }) {
   });
   const [target, setTarget] = useState<CashRowDTO | null>(null);
   const [amount, setAmount] = useState('');
+  const settleCents = pesosToCentavos(amount);
   const m = useMutation({
     mutationFn: (d: CashRowDTO) =>
       api('/v1/admin/cash/settle', {
         method: 'POST',
         body: {
           driverId: d.driverId,
-          amount: pesosToCentavos(amount),
+          amount: settleCents,
           note: 'Entrega de efectivo',
         },
       }),
@@ -394,6 +392,7 @@ function Cash({ isAdmin }: { isAdmin: boolean }) {
         <Modal
           title={`Efectivo de ${target.name || target.phone}`}
           onClose={() => setTarget(null)}
+          busy={m.isPending}
           footer={
             <>
               <Button variant="ghost" onClick={() => setTarget(null)}>
@@ -401,9 +400,7 @@ function Cash({ isAdmin }: { isAdmin: boolean }) {
               </Button>
               <Button
                 busy={m.isPending}
-                disabled={
-                  !pesosToCentavos(amount) || (pesosToCentavos(amount) ?? 0) > target.balance
-                }
+                disabled={!settleCents || settleCents > target.balance}
                 onClick={() => m.mutate(target)}
                 data-testid="dialog-confirm"
               >
@@ -415,7 +412,18 @@ function Cash({ isAdmin }: { isAdmin: boolean }) {
           <p className="muted" style={{ margin: 0 }}>
             Debe entregar {formatDOP(target.balance)}. Registra lo que realmente te entregó.
           </p>
-          <Field label="Monto recibido (RD$)">
+          <Field
+            label="Monto recibido (RD$)"
+            error={
+              settleCents === null
+                ? amount.trim() === ''
+                  ? null
+                  : MONEY_ERROR
+                : settleCents > target.balance
+                  ? 'Es más de lo que debe entregar'
+                  : null
+            }
+          >
             <input
               className="input"
               value={amount}

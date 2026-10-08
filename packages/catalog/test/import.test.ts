@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { photoRefError } from '@jellyfish/shared';
 import { describe, expect, it } from 'vitest';
 import {
   CSV_COLUMNS,
@@ -138,6 +139,84 @@ describe('importador de catálogo', () => {
       ['https://cdn.example.com/b.webp', true],
       ['', true],
     ]);
+  });
+});
+
+describe('columna foto: solo se guarda una referencia válida', () => {
+  /** Entre comillas: una URL `data:` lleva coma y partiría la fila. */
+  const withPhoto = (photo: string, extra = '') =>
+    parse(`${HEADER},foto${extra}\nA,Pollo,aves,lb,100,"${photo.replaceAll('"', '""')}"\n`);
+
+  it('acepta vacía, una ruta local con una sola "/" y una URL http(s); recorta espacios', () => {
+    const good = [
+      '',
+      '/photos/A.webp',
+      'https://d8j0ntlcm91z4.cloudfront.net/user_x/hf_1.png',
+      'http://localhost:3000/a.png',
+    ];
+    for (const photo of good) {
+      const r = withPhoto(photo);
+      expect(r.errors, photo).toEqual([]);
+      expect(r.items[0]!.photo).toBe(photo);
+    }
+    const padded = withPhoto('   /photos/A.webp \t');
+    expect(padded.errors).toEqual([]);
+    expect(padded.items[0]!.photo).toBe('/photos/A.webp');
+  });
+
+  it('rechaza javascript:, data:, //host, rutas sueltas y espacios con un error de fila en "foto"', () => {
+    const bad = [
+      'javascript:alert(1)',
+      'JavaScript:alert(1)',
+      'data:image/png;base64,AAAA',
+      '//evil.example/x.png',
+      'fotos/x.jpg',
+      'x.jpg',
+      'ftp://host/x.png',
+      'file:///etc/passwd',
+      '/photos/con espacio.webp',
+      'https://cdn.example.com/con espacio.png',
+      `/${'a'.repeat(300)}`,
+    ];
+    for (const photo of bad) {
+      const r = withPhoto(photo);
+      expect(r.items, photo).toEqual([]);
+      expect(r.errors, photo).toEqual([
+        { line: 2, sku: 'A', field: 'foto', message: photoRefError(photo)! },
+      ]);
+    }
+    expect(withPhoto('javascript:alert(1)').errors[0]!.message).toMatch(
+      /^Escribe una ruta que empiece con \//,
+    );
+    expect(withPhoto(`/${'a'.repeat(300)}`).errors[0]!.message).toBe('Máximo 300 caracteres');
+  });
+
+  it('el error no echa el valor (puede ser enorme) y una fila mala no esconde las demás', () => {
+    const csv = [
+      `${HEADER},foto`,
+      'A,Pollo,aves,lb,100,/photos/A.webp',
+      'B,Res,res,lb,100,javascript:alert(1)',
+      'C,Cerdo,cerdo,lb,100,https://cdn.example.com/c.webp',
+    ].join('\n');
+    const r = parse(csv);
+    expect(r.items.map((i) => i.sku)).toEqual(['A', 'C']);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]).toMatchObject({ line: 3, sku: 'B', field: 'foto' });
+    expect(r.errors[0]!.message).not.toContain('alert');
+  });
+
+  it('también se valida con punto y coma y con el encabezado en mayúsculas', () => {
+    const r = parseCatalogCsv(
+      'SKU;Nombre;Categoría;Unidad;Precio;Foto\nA;Pollo;aves;lb;"174,95";fotos/a.jpg\n',
+      { categories },
+    );
+    expect(r.errors).toEqual([expect.objectContaining({ line: 2, sku: 'A', field: 'foto' })]);
+  });
+
+  it('el catálogo semilla trae solo fotos válidas', () => {
+    const seed = parse(readFileSync(join(catalogDir, 'products.seed.csv'), 'utf8'));
+    expect(seed.errors.filter((e) => e.field === 'foto')).toEqual([]);
+    expect(seed.items.every((i) => photoRefError(i.photo) === null)).toBe(true);
   });
 });
 

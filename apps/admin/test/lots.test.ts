@@ -1,4 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { testConfig } from '../../api/src/config';
+import {
+  EXPIRING_SOON_DAYS as SERVER_EXPIRING_SOON_DAYS,
+  MAX_DAYS_FUTURE as SERVER_MAX_DAYS_FUTURE,
+  MAX_DAYS_PAST as SERVER_MAX_DAYS_PAST,
+  classifyLot,
+  daysBetween as serverDaysBetween,
+  isCalendarDate as serverIsCalendarDate,
+  localDate,
+} from '../../api/src/services/lots';
 import {
   EXPIRING_SOON_DAYS,
   EXPIRING_WINDOWS,
@@ -12,10 +23,15 @@ import {
   expiryAlertText,
   expiryDateLabel,
   isCalendarDate,
+  LOTS_LIMIT,
+  MATCH_LIMIT,
+  lotsLimitNote,
   matchVariants,
   parseLotCost,
   parseLotQuantity,
+  searchVariants,
   todayInRD,
+  truncatedMatchText,
   type LotFormInput,
 } from '../src/lib/lots';
 
@@ -82,9 +98,21 @@ describe('estado y alertas', () => {
     expect(expiryAlertText('expired', 1)).toBe('1 lote vencido con existencias');
     expect(expiryAlertText('expired', 12)).toBe('12 lotes vencidos con existencias');
   });
-  it('la ventana de "por vencer" coincide con la del API', () => {
-    expect(EXPIRING_SOON_DAYS).toBe(7);
-    expect([...EXPIRING_WINDOWS]).toEqual([7, 30, 60]);
+  it('la ventana de "por vencer" es la del API (importada del servidor)', () => {
+    expect(EXPIRING_SOON_DAYS).toBe(SERVER_EXPIRING_SOON_DAYS);
+    // El Resumen y el selector del panel arrancan en la misma ventana que usa el servidor.
+    expect(EXPIRING_WINDOWS[0]).toBe(SERVER_EXPIRING_SOON_DAYS);
+    expect(Math.max(...EXPIRING_WINDOWS)).toBeLessThanOrEqual(365); // tope de GET /expiring
+  });
+  it('un lote con exactamente EXPIRING_SOON_DAYS días ya cuenta como por vencer en el servidor', () => {
+    const today = '2026-10-08';
+    const edge = (n: number) => {
+      const d = new Date(Date.parse(`${today}T00:00:00Z`) + n * 86_400_000);
+      return d.toISOString().slice(0, 10);
+    };
+    expect(classifyLot(edge(EXPIRING_SOON_DAYS), today).status).toBe('expiring');
+    expect(classifyLot(edge(EXPIRING_SOON_DAYS + 1), today).status).toBe('ok');
+    expect(classifyLot(edge(-1), today).status).toBe('expired');
   });
 });
 
@@ -134,6 +162,9 @@ describe('costo opcional', () => {
     expect(parseLotCost('abc')).toBeUndefined();
     expect(parseLotCost('-5')).toBeUndefined();
     expect(parseLotCost('1.234')).toBeUndefined();
+    expect(parseLotCost('85,50')).toBeUndefined(); // la coma separa miles: no son 85 500 pesos
+    expect(parseLotCost('12,5')).toBeUndefined();
+    expect(parseLotCost('1,250')).toBe(125_000);
     expect(parseLotCost('1000000.01')).toBeUndefined(); // pasa de 100 000 000 centavos
     expect(parseLotCost('1000000')).toBe(100_000_000);
   });
@@ -150,12 +181,37 @@ describe('fecha de vencimiento', () => {
     expect(checkExpiresOn('2026-02-30', TODAY)).toMatch(/válida/);
     expect(checkExpiresOn('08/10/2026', TODAY)).toMatch(/válida/);
   });
-  it('el borde del pasado es de 30 días y el del futuro de 5 años', () => {
-    expect(MAX_DAYS_PAST).toBe(30);
-    expect(MAX_DAYS_FUTURE).toBe(1825);
-    expect(checkExpiresOn('2026-09-07', TODAY)).toMatch(/más de 30 días/); // hace 31
-    expect(checkExpiresOn('2031-10-07', TODAY)).toBeNull(); // 1825 días
-    expect(checkExpiresOn('2031-10-08', TODAY)).toMatch(/demasiado lejos/); // 1826
+  it('los bordes del pasado y del futuro son los del servidor (importados de él)', () => {
+    expect(MAX_DAYS_PAST).toBe(SERVER_MAX_DAYS_PAST);
+    expect(MAX_DAYS_FUTURE).toBe(SERVER_MAX_DAYS_FUTURE);
+    const day = (n: number) =>
+      new Date(Date.parse(`${TODAY}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+    // Justo en el borde vale; un día más allá, no: con los topes del servidor, no con números copiados.
+    expect(checkExpiresOn(day(-SERVER_MAX_DAYS_PAST), TODAY)).toBeNull();
+    expect(checkExpiresOn(day(-SERVER_MAX_DAYS_PAST - 1), TODAY)).toMatch(
+      new RegExp(`más de ${SERVER_MAX_DAYS_PAST} días`),
+    );
+    expect(checkExpiresOn(day(SERVER_MAX_DAYS_FUTURE), TODAY)).toBeNull();
+    expect(checkExpiresOn(day(SERVER_MAX_DAYS_FUTURE + 1), TODAY)).toMatch(/demasiado lejos/);
+  });
+  it('las fechas se leen igual que en el servidor', () => {
+    for (const v of ['2026-02-28', '2028-02-29', '2026-02-29', '2026-13-01', '2026-1-5', '', 'x']) {
+      expect(isCalendarDate(v), v).toBe(serverIsCalendarDate(v));
+    }
+    for (const [a, b] of [
+      ['2026-10-08', '2026-10-08'],
+      ['2026-10-08', '2026-11-05'],
+      ['2026-12-30', '2027-01-02'],
+      ['2028-02-28', '2028-03-01'],
+      ['2026-10-08', '2026-09-07'],
+    ] as const) {
+      expect(daysBetween(a, b)).toBe(serverDaysBetween(a, b));
+    }
+    // "hoy" en RD: el servidor usa el desfase de su configuración
+    const { utcOffsetMinutes } = testConfig();
+    for (const iso of ['2026-10-08T03:59:00Z', '2026-10-08T04:00:00Z', '2026-12-31T23:59:00Z']) {
+      expect(todayInRD(new Date(iso))).toBe(localDate(new Date(iso), utcOffsetMinutes));
+    }
   });
 });
 
@@ -183,6 +239,38 @@ describe('buscar el artículo', () => {
   });
   it('corta en el límite', () => {
     expect(matchVariants(items, 'jf', 2)).toHaveLength(2);
+  });
+});
+
+describe('la lista se corta y se avisa', () => {
+  const many = Array.from({ length: 23 }, (_, i) => ({
+    productName: `Corte ${i}`,
+    variant: '',
+    sku: `JF-${String(i).padStart(3, '0')}`,
+  }));
+  it('searchVariants devuelve los primeros y cuántos coinciden en total', () => {
+    const r = searchVariants(many, 'corte');
+    expect(MATCH_LIMIT).toBe(10);
+    expect(r.shown).toHaveLength(10);
+    expect(r.total).toBe(23);
+    expect(searchVariants(many, 'corte 22')).toEqual({ shown: [many[22]], total: 1 });
+    expect(searchVariants(many, '')).toEqual({ shown: [], total: 0 });
+    expect(searchVariants(many, 'corte', 30).shown).toHaveLength(23);
+  });
+  it('el aviso solo sale cuando la lista se cortó', () => {
+    expect(truncatedMatchText(10, 23)).toBe('Mostrando 10 de 23: afina la búsqueda');
+    expect(truncatedMatchText(10, 10)).toBe('');
+    expect(truncatedMatchText(3, 3)).toBe('');
+  });
+  it('el tope de lotes es el máximo del API y el aviso sale al llegar a él', () => {
+    // El servidor lo tiene solo como literal en el esquema de la ruta: se lee de ahí.
+    const route = readFileSync(new URL('../../api/src/routes/lots.ts', import.meta.url), 'utf8');
+    const max = /limit:\s*z\.coerce\.number\(\)\.int\(\)\.min\(1\)\.max\((\d+)\)/.exec(route)?.[1];
+    expect(max, 'no se encontró el límite en routes/lots.ts').toBeDefined();
+    expect(LOTS_LIMIT).toBe(Number(max));
+    expect(lotsLimitNote(LOTS_LIMIT - 1)).toBe('');
+    expect(lotsLimitNote(LOTS_LIMIT)).toMatch(/solo los 500 lotes/);
+    expect(lotsLimitNote(0)).toBe('');
   });
 });
 
@@ -237,6 +325,11 @@ describe('formulario de recepción', () => {
     expect(checkLotForm({ ...ok, lotCode: 'A'.repeat(40) }, TODAY).body).not.toBeNull();
     expect(checkLotForm({ ...ok, lotCode: 'A'.repeat(41) }, TODAY).errors.lotCode).toBeDefined();
     expect(checkLotForm({ ...ok, lotCode: 'L-1\u0007' }, TODAY).errors.lotCode).toBeDefined();
+  });
+  it('un costo con coma decimal marca el campo en vez de multiplicarlo por cien', () => {
+    const r = checkLotForm({ ...ok, cost: '85,50' }, TODAY);
+    expect(r.body).toBeNull();
+    expect(r.errors.cost).toMatch(/monto en pesos/);
   });
   it('el mensaje de cantidad depende de la unidad', () => {
     const lb = checkLotForm({ ...ok, quantity: 'x' }, TODAY).errors.quantity;

@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { PIN_OVERRIDE_MIN_CHARS as SERVER_PIN_OVERRIDE_MIN_CHARS } from '../../api/src/services/delivery';
 import {
   PIN_OVERRIDE_MAX_CHARS,
   PIN_OVERRIDE_MIN_CHARS,
@@ -11,9 +13,19 @@ import {
 } from '../src/lib/delivery';
 
 describe('motivo para entregar sin PIN', () => {
-  it('los límites son los del API: 8 a 300 caracteres', () => {
-    expect(PIN_OVERRIDE_MIN_CHARS).toBe(8);
-    expect(PIN_OVERRIDE_MAX_CHARS).toBe(300);
+  it('el mínimo es el del servidor (importado de él)', () => {
+    expect(PIN_OVERRIDE_MIN_CHARS).toBe(SERVER_PIN_OVERRIDE_MIN_CHARS);
+    const n = SERVER_PIN_OVERRIDE_MIN_CHARS;
+    expect(checkOverrideReason('x'.repeat(n - 1)).valid).toBe(false);
+    expect(checkOverrideReason('x'.repeat(n)).valid).toBe(true);
+  });
+  it('el máximo es el del esquema de la ruta del servidor', () => {
+    // El servidor lo tiene solo como literal dentro de routes/admin.ts (sin constante exportada):
+    // se lee de ahí para que un cambio allá rompa esta prueba y no se quede desfasado el panel.
+    const route = readFileSync(new URL('../../api/src/routes/admin.ts', import.meta.url), 'utf8');
+    const max = /pinOverrideReason:\s*z\.string\(\)\.max\((\d+)\)/.exec(route)?.[1];
+    expect(max, 'no se encontró pinOverrideReason en routes/admin.ts').toBeDefined();
+    expect(PIN_OVERRIDE_MAX_CHARS).toBe(Number(max));
   });
   it('cuenta después de recortar los espacios', () => {
     const c = checkOverrideReason('   corto   ');

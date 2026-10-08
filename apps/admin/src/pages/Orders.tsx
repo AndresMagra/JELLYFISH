@@ -1,7 +1,7 @@
 import type { OrderDTO, OrderStatus } from '@jellyfish/shared';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Badge, Empty, ErrorBox, Loading, PageHead } from '../components/ui';
+import { Badge, Empty, ErrorBox, Loading, PageHead, StaleNote } from '../components/ui';
 import { api } from '../lib/api';
 import { formatDOP, slot } from '../lib/format';
 
@@ -56,9 +56,12 @@ export function Orders() {
   return (
     <>
       <PageHead title="Pedidos" subtitle="Se actualiza solo cada 10 segundos" />
+      {q.isError && q.data ? (
+        <StaleNote error={q.error} onRetry={() => void q.refetch()} busy={q.isFetching} />
+      ) : null}
       {q.isLoading ? (
         <Loading />
-      ) : q.isError ? (
+      ) : q.isError && !q.data ? (
         <ErrorBox error={q.error} onRetry={() => void q.refetch()} />
       ) : (q.data ?? []).length === 0 ? (
         <Empty

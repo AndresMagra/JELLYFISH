@@ -178,7 +178,8 @@ export function percentToBps(text: string): number | null {
 }
 
 const CODE_ERROR = 'El código debe tener de 3 a 20 caracteres: letras A-Z, números o guion';
-const AMOUNT_ERROR = 'Escribe un monto en pesos, por ejemplo 150 o 150.50';
+const AMOUNT_ERROR =
+  'Escribe un monto en pesos con punto para los centavos, por ejemplo 150 o 150.50';
 const TOO_BIG = 'Ese monto es demasiado grande';
 
 /** Pesos → centavos, o el texto del error. */

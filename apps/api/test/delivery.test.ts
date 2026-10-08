@@ -6,6 +6,7 @@ import { buildApp } from '../src/app';
 import { driverLocations, orderEvents, orders, users, variants } from '../src/db/schema';
 import { MemoryOtpSender } from '../src/services/auth';
 import {
+  DRIVER_VIEWER,
   INTERNAL_VIEWER,
   PIN_MAX_ATTEMPTS,
   PIN_VISIBLE_STATUSES,
@@ -13,8 +14,9 @@ import {
   generateDeliveryPin,
   isPinFailureEvent,
   recordDriverLocation,
+  timelineFor,
 } from '../src/services/delivery';
-import { transitionOrder } from '../src/services/orders';
+import { getOrder, transitionOrder, viewerForActor } from '../src/services/orders';
 import { ADDRESS, NOW, type World, makeWorld } from './helpers';
 
 type Headers = { authorization: string };
@@ -665,6 +667,123 @@ describe('PIN de entrega: anulación del personal', () => {
     await toOut(e, order);
     await collectCash(e, order.id);
     expect((await adminStep(e, order.id, 'delivered')).statusCode).toBe(200);
+  });
+});
+
+// ───────────────────────── A2) el motivo interno no llega al cliente ─────────────────────────
+
+describe('entrega sin PIN: el motivo es interno', () => {
+  const REASON = 'Cliente en silla de ruedas sin celular, lo recibió el vecino';
+  const STAFF_NOTE = 'Firmó doña Carmen del 4B';
+  const NEUTRAL = 'Entrega confirmada por administración';
+
+  async function overridden() {
+    const order = await place(e);
+    await toOut(e, order);
+    await collectCash(e, order.id);
+    const res = await adminStep(e, order.id, 'delivered', {
+      pinOverrideReason: REASON,
+      note: STAFF_NOTE,
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    return order.id as string;
+  }
+  const deliveredEvent = (o: { timeline: { toStatus: string; note: string }[] }) =>
+    o.timeline.find((ev) => ev.toStatus === 'delivered')!;
+
+  it('el cliente dueño ve el evento con un texto neutro, en el pedido y en su lista', async () => {
+    const id = await overridden();
+    const one = await inject(e, 'GET', `/v1/orders/${id}`, e.customer);
+    const list = await inject(e, 'GET', '/v1/orders', e.customer);
+    const fromList = json(list).find((o: { id: string }) => o.id === id);
+    expect(fromList).toBeDefined();
+    for (const o of [json(one), fromList]) {
+      expect(deliveredEvent(o).note).toBe(NEUTRAL);
+      expect(o.pinOverrideReason).toBeNull();
+      // el evento sigue en el historial: solo cambia el texto
+      expect(o.timeline.map((ev: { toStatus: string }) => ev.toStatus)).toContain('delivered');
+    }
+    for (const res of [one, list]) {
+      expect(res.body).not.toContain('silla de ruedas');
+      expect(res.body).not.toContain('doña Carmen');
+      expect(res.body).not.toContain('Entrega sin PIN');
+    }
+  });
+
+  it('el administrador y el personal siguen leyendo el motivo completo', async () => {
+    const id = await overridden();
+    const full = `Entrega sin PIN autorizada: ${REASON}. ${STAFF_NOTE}`;
+    for (const who of [e.admin, e.staff]) {
+      const one = json(await inject(e, 'GET', `/v1/admin/orders/${id}`, who));
+      expect(deliveredEvent(one).note).toBe(full);
+      expect(one.pinOverrideReason).toBe(REASON);
+      const list = json(await inject(e, 'GET', '/v1/admin/orders?status=delivered', who));
+      const fromList = list.find((o: { id: string }) => o.id === id);
+      expect(deliveredEvent(fromList).note).toBe(full);
+    }
+    // y en la base queda intacto
+    const stored = (await events(e, id)).find((ev) => ev.toStatus === 'delivered')!;
+    expect(stored.note).toBe(full);
+  });
+
+  it('otra persona no ve ese pedido (404) ni por la lista', async () => {
+    const id = await overridden();
+    expect((await inject(e, 'GET', `/v1/orders/${id}`, e.other)).statusCode).toBe(404);
+    const list = json(await inject(e, 'GET', '/v1/orders', e.other));
+    expect(JSON.stringify(list)).not.toContain('silla de ruedas');
+  });
+
+  it('la vista del repartidor tampoco lleva el motivo', async () => {
+    const id = await overridden();
+    const asDriver = await getOrder(e.app.orderCtx, id, { viewer: DRIVER_VIEWER });
+    expect(deliveredEvent(asDriver).note).toBe(NEUTRAL);
+    expect(asDriver.pinOverrideReason).toBeNull();
+    expect(JSON.stringify(asDriver)).not.toContain('silla de ruedas');
+    // sin vista indicada es la interna (admin, pagos): con el motivo
+    expect((await getOrder(e.app.orderCtx, id)).pinOverrideReason).toBe(REASON);
+  });
+
+  it('las respuestas de las acciones usan la vista de quien actúa', () => {
+    expect(viewerForActor({ id: 'c1', role: 'customer' })).toEqual({
+      role: 'customer',
+      userId: 'c1',
+    });
+    expect(viewerForActor({ id: 'd1', role: 'driver' })).toEqual(DRIVER_VIEWER);
+    for (const role of ['admin', 'staff', 'system'] as const) {
+      expect(viewerForActor({ id: null, role })).toEqual(INTERNAL_VIEWER);
+    }
+  });
+
+  it('timelineFor: solo la vista interna lee el motivo; lo demás del historial no se toca', () => {
+    const at = new Date(NOW);
+    const ev = (toStatus: OrderStatus, note: string) => ({
+      id: toStatus + note,
+      orderId: 'o',
+      fromStatus: null,
+      toStatus,
+      actorId: null,
+      note,
+      createdAt: at,
+    });
+    const timeline = [
+      ev('confirmed', 'Pedido creado'),
+      ev('delivered', 'Entrega sin PIN autorizada: motivo interno largo'),
+      ev('refunded', 'Entrega sin PIN autorizada: eso no es una entrega'),
+      ev('delivered', 'Entrega confirmada con el PIN del cliente. Lo recibió su hermana'),
+    ];
+    expect(timelineFor(timeline, INTERNAL_VIEWER)).toEqual(timeline);
+    for (const viewer of [DRIVER_VIEWER, { role: 'customer', userId: 'x' } as const]) {
+      const seen = timelineFor(timeline, viewer);
+      expect(seen.map((x) => x.note)).toEqual([
+        'Pedido creado',
+        NEUTRAL,
+        'Entrega sin PIN autorizada: eso no es una entrega',
+        'Entrega confirmada con el PIN del cliente. Lo recibió su hermana',
+      ]);
+      expect(seen[1]).toMatchObject({ toStatus: 'delivered', id: timeline[1]!.id });
+    }
+    // no muta lo que recibe
+    expect(timeline[1]!.note).toBe('Entrega sin PIN autorizada: motivo interno largo');
   });
 });
 

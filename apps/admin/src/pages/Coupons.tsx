@@ -13,6 +13,7 @@ import {
   Loading,
   Modal,
   PageHead,
+  StaleNote,
   useToast,
 } from '../components/ui';
 import { api } from '../lib/api';
@@ -76,9 +77,12 @@ export function Coupons() {
           ) : null
         }
       />
+      {q.isError && q.data ? (
+        <StaleNote error={q.error} onRetry={() => void q.refetch()} busy={q.isFetching} />
+      ) : null}
       {q.isLoading ? (
         <Loading />
-      ) : q.isError ? (
+      ) : q.isError && !q.data ? (
         <ErrorBox error={q.error} onRetry={() => void q.refetch()} />
       ) : (q.data ?? []).length === 0 ? (
         <Empty
@@ -191,6 +195,7 @@ export function Coupons() {
         <Modal
           title={`Pausar ${pausing.code}`}
           onClose={() => setPausing(null)}
+          busy={setActive.isPending}
           footer={
             <>
               <Button variant="ghost" onClick={() => setPausing(null)}>
@@ -282,6 +287,7 @@ function CouponDialog({ coupon, onClose }: { coupon: CouponDTO | null; onClose: 
     <Modal
       title={coupon ? `Editar ${coupon.code}` : 'Nuevo cupón'}
       onClose={onClose}
+      busy={m.isPending}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -433,9 +439,12 @@ function RedemptionsDialog({ coupon, onClose }: { coupon: CouponDTO; onClose: ()
   const total = rows.reduce((sum, r) => sum + r.amount, 0);
   return (
     <Modal title={`Canjes de ${coupon.code}`} onClose={onClose}>
+      {q.isError && q.data ? (
+        <StaleNote error={q.error} onRetry={() => void q.refetch()} busy={q.isFetching} />
+      ) : null}
       {q.isLoading ? (
         <Loading />
-      ) : q.isError ? (
+      ) : q.isError && !q.data ? (
         <ErrorBox error={q.error} onRetry={() => void q.refetch()} />
       ) : rows.length === 0 ? (
         <Empty

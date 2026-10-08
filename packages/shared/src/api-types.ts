@@ -235,11 +235,12 @@ export interface OrderDTO {
   /** Intentos de PIN que le quedan al repartidor; 0 = bloqueado. null si el pedido no usa PIN. */
   pinAttemptsLeft: number | null;
   pinVerifiedAt: string | null;
-  /** Solo personal: motivo con el que se entregó sin PIN (null para el cliente). */
+  /** Solo personal y administrador: motivo con el que se entregó sin PIN (null para los demás). */
   pinOverrideReason: string | null;
   items: OrderItemDTO[];
   payments: PaymentSummaryDTO[];
   customer: { id: string; name: string; phone: string };
+  /** La nota de una entrega sin PIN solo la lee el personal; los demás ven un texto neutro. */
   timeline: OrderEventDTO[];
   next: OrderStatus[];
 }

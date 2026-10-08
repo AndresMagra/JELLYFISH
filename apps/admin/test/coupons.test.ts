@@ -2,6 +2,13 @@ import type { CouponDTO } from '@jellyfish/shared';
 import { formatDOP } from '@jellyfish/shared';
 import { describe, expect, it } from 'vitest';
 import {
+  COUPON_CODE_PATTERN as SERVER_CODE_PATTERN,
+  type CouponTerms,
+  couponTermIssues,
+  normalizeCouponCode as serverNormalize,
+} from '../../api/src/services/coupons';
+import {
+  COUPON_CODE_PATTERN,
   EMPTY_COUPON_FORM,
   LOCKED_MESSAGE,
   STATUS_LABEL,
@@ -142,6 +149,13 @@ describe('monto fijo en pesos', () => {
     expect(inputOf(fixed('174.95')).value).toBe(17_495); // sin error de coma flotante
   });
 
+  it('la coma separa miles: "150,50" no se lee como 15 050 pesos', () => {
+    expect(inputOf(fixed('1,500')).value).toBe(150_000);
+    for (const text of ['150,50', '12,5', '1,23', ',5']) {
+      expect(errorsOf(fixed(text)).value, text).toMatch(/monto en pesos/);
+    }
+  });
+
   it('rechaza cero, negativos, más de dos decimales y vacío', () => {
     expect(errorsOf(fixed('0')).value).toMatch(/mayor que cero/);
     expect(errorsOf(fixed('0.00')).value).toMatch(/mayor que cero/);
@@ -203,6 +217,14 @@ describe('mínimo y tope', () => {
   it('montos inválidos', () => {
     expect(errorsOf(form({ minSubtotal: 'abc' })).minSubtotal).toMatch(/monto en pesos/);
     expect(errorsOf(form({ maxDiscount: '1.234' })).maxDiscount).toMatch(/monto en pesos/);
+  });
+
+  it('la coma decimal se rechaza en la compra mínima y en el tope, no se multiplica por cien', () => {
+    expect(errorsOf(form({ minSubtotal: '150,50' })).minSubtotal).toMatch(/monto en pesos/);
+    expect(errorsOf(form({ maxDiscount: '200,5' })).maxDiscount).toMatch(/monto en pesos/);
+    const i = inputOf(form({ minSubtotal: '1,500', maxDiscount: '2,000.50' }));
+    expect(i.minSubtotal).toBe(150_000);
+    expect(i.maxDiscount).toBe(200_050);
   });
 });
 
@@ -570,5 +592,182 @@ describe('editar un cupón', () => {
         patchOf({ ...couponToForm(locked), value: '10.0', maxDiscount: '200' }, locked),
       ).toEqual({});
     });
+  });
+});
+
+// ───────────── Prueba diferencial: el panel contra las reglas reales del servidor ─────────────
+
+describe('coincide con el servidor (importado de él)', () => {
+  const RAW_CODES = [
+    ' verano 10 ',
+    'mi\u200bcupón',
+    'ahorro\u2014 10',
+    'ahorro\u221210',
+    'ａｂｃ',
+    'a\u00a0b\u2060c',
+    '\ufeffoferta',
+    'ÑANDÚ',
+    'a-b_c',
+    '',
+    '   ',
+    'ab',
+    'abc',
+    'A'.repeat(20),
+    'a'.repeat(21),
+    'pre\u2010fijo',
+    'x\ty\nz',
+    'ǅ',
+    'ﬁn',
+    '١٢٣',
+  ];
+
+  it('el patrón del código es el mismo', () => {
+    expect(COUPON_CODE_PATTERN.source).toBe(SERVER_CODE_PATTERN.source);
+    expect(COUPON_CODE_PATTERN.flags).toBe(SERVER_CODE_PATTERN.flags);
+  });
+
+  it.each(RAW_CODES.map((c) => [JSON.stringify(c), c]))('normaliza %s igual', (_label, raw) => {
+    expect(normalizeCouponCode(raw!)).toBe(serverNormalize(raw!));
+    expect(COUPON_CODE_PATTERN.test(normalizeCouponCode(raw!))).toBe(
+      SERVER_CODE_PATTERN.test(serverNormalize(raw!)),
+    );
+  });
+
+  /** Lo que el servidor recibe tras la validación de la ruta: fechas ya convertidas. */
+  const asServerTerms = (i: ReturnType<typeof inputOf>): CouponTerms => ({
+    code: serverNormalize(i.code),
+    description: i.description ?? '',
+    kind: i.kind,
+    value: i.value ?? 0,
+    minSubtotal: i.minSubtotal ?? 0,
+    maxDiscount: i.maxDiscount ?? null,
+    startsAt: i.startsAt ? new Date(i.startsAt) : null,
+    endsAt: i.endsAt ? new Date(i.endsAt) : null,
+    maxRedemptions: i.maxRedemptions ?? null,
+    perUserLimit: i.perUserLimit ?? 1,
+    active: true,
+  });
+
+  const VALUES: Record<CouponForm['kind'], string[]> = {
+    percent: ['', '0', '0.01', '0.001', '1', '10', '12,5', '99.99', '100', '100.01', '150', 'x'],
+    fixed: [
+      '',
+      '0',
+      '0.01',
+      '1',
+      '150',
+      '150.50',
+      '1,500',
+      '21474836.47',
+      '21474836.48',
+      '1e3',
+      '-5',
+    ],
+    free_delivery: ['', '0', '10'],
+  };
+  const AMOUNTS = [
+    '',
+    '0',
+    '0.01',
+    '500',
+    '1,234.50',
+    '21474836.47',
+    '21474836.48',
+    '150,50',
+    'abc',
+  ];
+  const DATES = [
+    '',
+    '2026-10-15T08:30',
+    '2026-10-15T08:31',
+    '2026-02-30T10:00',
+    '2027-01-01T00:00',
+  ];
+  const COUNTS = ['', '0', '1', '50', '1000', '1001', '2147483647', '2147483648', '5.5', '-1', 'x'];
+  const DESCRIPTIONS = [
+    '',
+    '10 % en todo',
+    'a'.repeat(140),
+    'a'.repeat(141),
+    '  ' + 'b'.repeat(140) + '  ',
+  ];
+
+  // Generador determinista: la misma tabla en cada corrida.
+  const rng = (() => {
+    let x = 20_261_008;
+    return () => (x = (x * 1_664_525 + 1_013_904_223) % 4_294_967_296) / 4_294_967_296;
+  })();
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rng() * xs.length)]!;
+
+  const forms: CouponForm[] = [];
+  // Un campo a la vez sobre un cupón válido…
+  const base = form({ minSubtotal: '500', maxDiscount: '200', maxRedemptions: '100' });
+  for (const code of RAW_CODES) forms.push({ ...base, code });
+  for (const kind of Object.keys(VALUES) as CouponForm['kind'][]) {
+    for (const value of VALUES[kind]) forms.push({ ...base, kind, value });
+  }
+  for (const v of AMOUNTS) {
+    forms.push({ ...base, minSubtotal: v }, { ...base, maxDiscount: v });
+    forms.push({ ...base, kind: 'fixed', value: v });
+  }
+  for (const v of DATES) forms.push({ ...base, startsAt: v }, { ...base, endsAt: v });
+  for (const v of COUNTS) {
+    forms.push({ ...base, maxRedemptions: v }, { ...base, perUserLimit: v });
+  }
+  for (const description of DESCRIPTIONS) forms.push({ ...base, description });
+  // …y combinaciones al azar (3 de cada 4 veces con un valor válido, para que se acepte una buena parte).
+  const mostly = <T>(ok: readonly T[], all: readonly T[]): T => pick(rng() < 0.75 ? ok : all);
+  for (let n = 0; n < 6000; n++) {
+    const kind = pick(Object.keys(VALUES) as CouponForm['kind'][]);
+    forms.push({
+      code: mostly(['verano10', 'PRE-10', 'a'.repeat(20)], RAW_CODES),
+      description: mostly(['', '10 % en todo', 'a'.repeat(140)], DESCRIPTIONS),
+      kind,
+      value: mostly(
+        {
+          percent: ['10', '12.5', '100'],
+          fixed: ['150', '1,500', '21474836.47'],
+          free_delivery: [''],
+        }[kind],
+        VALUES[kind],
+      ),
+      minSubtotal: mostly(['', '0', '500'], AMOUNTS),
+      maxDiscount: mostly(['', '200'], AMOUNTS),
+      startsAt: mostly(['', '2026-10-15T08:30'], DATES),
+      endsAt: mostly(['', '2027-01-01T00:00'], DATES),
+      maxRedemptions: mostly(['', '1', '50'], COUNTS),
+      perUserLimit: mostly(['1', '5', '1000'], COUNTS),
+    });
+  }
+
+  it('si el panel arma un cuerpo, el servidor no le encuentra problemas', () => {
+    let accepted = 0;
+    for (const f of forms) {
+      const r = couponFormToInput(f);
+      if (!r.ok) continue;
+      accepted++;
+      const issues = couponTermIssues(asServerTerms(r.input));
+      expect(issues, JSON.stringify(f)).toEqual([]);
+    }
+    // La prueba no es vacía: acepta y rechaza una buena parte de la tabla.
+    expect(accepted).toBeGreaterThan(300);
+    expect(accepted).toBeLessThan(forms.length - 300);
+  });
+
+  it('los límites que el servidor rechaza en un solo campo, el panel también los rechaza', () => {
+    // El servidor es la autoridad: un cuerpo con un campo inválido para él no debe salir del panel.
+    const bad: [string, Partial<CouponForm>][] = [
+      ['descripción de 141', { description: 'a'.repeat(141) }],
+      ['uso por persona 1001', { perUserLimit: '1001' }],
+      ['uso por persona 0', { perUserLimit: '0' }],
+      ['máximo de usos 0', { maxRedemptions: '0' }],
+      ['porcentaje 100.01', { value: '100.01' }],
+      ['porcentaje 0', { value: '0' }],
+      ['código de 2', { code: 'ab' }],
+      ['código de 21', { code: 'a'.repeat(21) }],
+    ];
+    for (const [name, over] of bad) {
+      expect(couponFormToInput(form(over)).ok, name).toBe(false);
+    }
   });
 });

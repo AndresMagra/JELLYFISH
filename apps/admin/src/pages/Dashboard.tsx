@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Snowflake } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useSummary } from '../App';
-import { Badge, Card, ErrorBox, Loading, PageHead } from '../components/ui';
+import { Badge, Card, ErrorBox, Loading, PageHead, StaleNote } from '../components/ui';
 import { api } from '../lib/api';
 import { dateTime, formatDOP, statusLabel } from '../lib/format';
 import { expiryAlertText } from '../lib/lots';
@@ -47,13 +47,21 @@ export function Dashboard() {
   });
 
   if (summary.isLoading) return <Loading />;
-  if (summary.isError || !summary.data)
+  if (!summary.data)
     return <ErrorBox error={summary.error} onRetry={() => void summary.refetch()} />;
   const s = summary.data;
 
   return (
     <>
       <PageHead title="Resumen" subtitle="Cómo va el día y qué necesita tu atención" />
+
+      {summary.isError ? (
+        <StaleNote
+          error={summary.error}
+          onRetry={() => void summary.refetch()}
+          busy={summary.isFetching}
+        />
+      ) : null}
 
       {s.expired > 0 || s.expiringSoon > 0 ? (
         <div className="stack" style={{ gap: 10, marginBottom: 22 }}>
@@ -143,7 +151,7 @@ export function Dashboard() {
         ) : (recent.data ?? []).length === 0 ? (
           <div className="muted">Todavía no hay pedidos.</div>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap fit-scroll">
             <table>
               <thead>
                 <tr>

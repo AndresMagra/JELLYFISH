@@ -179,11 +179,20 @@ tr.lot-expiring td:first-child {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
-.override-short {
+.override-short,
+.warn-text {
   color: #d97706;
 }
 
 @media (max-width: 520px) {
+  .order-lines th,
+  .order-lines td {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .order-lines .input.num {
+    width: 78px;
+  }
   .lot-form {
     grid-template-columns: 1fr;
   }
@@ -191,4 +200,47 @@ tr.lot-expiring td:first-child {
     width: 96px;
     height: 96px;
   }
+}
+
+/* ── Avisos de refresco fallido ── */
+.stale-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--text);
+  background: color-mix(in srgb, #f59e0b 14%, transparent);
+  border: 1px solid #f59e0b;
+  border-radius: 12px;
+}
+
+/* ── Totales del pedido (siempre a la vista, aunque la tabla de líneas se deslice) ── */
+.order-totals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.order-totals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px 16px;
+  flex-wrap: wrap;
+}
+.order-totals dt,
+.order-totals dd {
+  margin: 0;
+}
+.order-totals dd {
+  text-align: right;
+}
+.order-totals .order-total-row {
+  font-weight: 800;
+  font-size: 16px;
 }

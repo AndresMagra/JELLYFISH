@@ -14,6 +14,7 @@ import {
   type OrderHooks,
   getOrder,
   transitionOrderInTx,
+  viewerForActor,
 } from './orders';
 
 export type PaymentRow = typeof payments.$inferSelect;
@@ -419,7 +420,7 @@ export async function submitTransferProof(
       })
       .where(eq(payments.id, payment.id));
   });
-  return getOrder(ctx, orderId);
+  return getOrder(ctx, orderId, { userId });
 }
 
 /**
@@ -502,7 +503,7 @@ export async function collectCash(
       })
       .where(eq(payments.id, payment.id));
   });
-  return getOrder(ctx, orderId);
+  return getOrder(ctx, orderId, { viewer: viewerForActor(actor) });
 }
 
 // ───────────────────────── reembolsos ─────────────────────────

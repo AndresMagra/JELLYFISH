@@ -6,6 +6,7 @@ import type { Db } from '../db/client';
 import { users } from '../db/schema';
 import {
   AuditService,
+  MAX_STRING,
   buildSummary,
   describeRoute,
   normalizePath,
@@ -34,6 +35,8 @@ const WATCHED_LOGIN_ROLES = new Set(['admin', 'staff']);
 interface Captured {
   entityId?: string;
   errorCode?: string;
+  /** Solo los campos que la ruta pidió con `fromResponse`. */
+  result?: Record<string, string>;
 }
 
 type Kind = 'action' | 'login';
@@ -65,13 +68,25 @@ export function installAudit(
 
   // El id de lo que se creó y el código de error solo existen en la respuesta.
   const captured = new WeakMap<FastifyRequest, Captured>();
-  app.addHook('onSend', async (req, _reply, payload) => {
+  app.addHook('onSend', async (req, reply, payload) => {
     if (classify(req) && typeof payload === 'string' && payload.length <= 64 * 1024) {
       try {
-        const json = JSON.parse(payload) as { id?: unknown; error?: { code?: unknown } };
+        const json = JSON.parse(payload) as Record<string, unknown> & {
+          error?: { code?: unknown };
+        };
+        const wanted =
+          reply.statusCode < 400
+            ? describeRoute(req.method.toUpperCase(), req.routeOptions.url!).spec.fromResponse
+            : undefined;
+        const result: Record<string, string> = {};
+        for (const key of wanted ?? []) {
+          const v = json[key];
+          if (typeof v === 'string') result[key] = v.slice(0, MAX_STRING);
+        }
         captured.set(req, {
           entityId: typeof json.id === 'string' ? json.id : undefined,
           errorCode: typeof json.error?.code === 'string' ? json.error.code : undefined,
+          result,
         });
       } catch {
         // respuesta que no es JSON (CSV, HTML): no hay nada que capturar
@@ -96,10 +111,16 @@ export function installAudit(
       const method = req.method.toUpperCase();
       const desc = describeRoute(method, pattern);
       // Todo lo que se guarda o se usa para el texto sale del cuerpo ya saneado.
-      const payload = sanitizePayload(req.body, req.query, req.headers['content-type']);
+      const payload = sanitizePayload(
+        req.body,
+        req.query,
+        req.headers['content-type'],
+        desc.spec.keepKeys,
+      );
       const input = {
         body: payload ?? {},
         query: (payload?._query ?? {}) as Record<string, unknown>,
+        result: seen.result,
       };
       const params = (req.params ?? {}) as Record<string, unknown>;
       const entityId =

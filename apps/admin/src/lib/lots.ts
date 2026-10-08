@@ -9,6 +9,15 @@ export const LOT_NOTE_MAX = 300;
 const QTY_MAX = 1_000_000_000;
 const COST_MAX_CENTAVOS = 100_000_000;
 
+/** Lo más que devuelve GET /v1/admin/inventory/lots (sin pedir otro tope el API manda 200). */
+export const LOTS_LIMIT = 500;
+
+/** Aviso cuando la lista llegó al tope: el API los ordena por vencimiento, así que faltan los más lejanos. */
+export const lotsLimitNote = (count: number) =>
+  count >= LOTS_LIMIT
+    ? `Se muestran solo los ${LOTS_LIMIT} lotes que vencen primero: puede haber más.`
+    : '';
+
 /** Un lote cuenta como "por vencer" en el Resumen cuando le quedan 7 días o menos. */
 export const EXPIRING_SOON_DAYS = 7;
 export const EXPIRING_WINDOWS = [7, 30, 60] as const;
@@ -100,11 +109,14 @@ const fold = (s: string) =>
     .replace(/\p{Diacritic}/gu, '')
     .toLowerCase();
 
+/** Cuántos artículos se listan al buscar para recibir un lote. */
+export const MATCH_LIMIT = 10;
+
 /** Artículos cuyo nombre, variante o SKU contienen todas las palabras escritas. */
 export function matchVariants<T extends { productName: string; variant: string; sku: string }>(
   items: readonly T[],
   query: string,
-  limit = 10,
+  limit = MATCH_LIMIT,
 ): T[] {
   const words = fold(query).split(/\s+/).filter(Boolean);
   if (words.length === 0) return [];
@@ -118,6 +130,20 @@ export function matchVariants<T extends { productName: string; variant: string; 
   }
   return out;
 }
+
+/** Los primeros `limit` que coinciden y cuántos coinciden en total (para avisar que la lista se cortó). */
+export function searchVariants<T extends { productName: string; variant: string; sku: string }>(
+  items: readonly T[],
+  query: string,
+  limit = MATCH_LIMIT,
+): { shown: T[]; total: number } {
+  const all = matchVariants(items, query, Number.POSITIVE_INFINITY);
+  return { shown: all.slice(0, limit), total: all.length };
+}
+
+/** "Mostrando 10 de 23: afina la búsqueda"; vacío si la lista no se cortó. */
+export const truncatedMatchText = (shown: number, total: number) =>
+  total > shown ? `Mostrando ${shown} de ${total}: afina la búsqueda` : '';
 
 // ───────────── Formulario de recepción ─────────────
 

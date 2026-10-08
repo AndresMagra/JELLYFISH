@@ -11,10 +11,11 @@ import {
   Loading,
   Modal,
   PageHead,
+  StaleNote,
   useToast,
 } from '../components/ui';
 import { api } from '../lib/api';
-import { centavosToPesos, formatDOP, pesosToCentavos } from '../lib/format';
+import { MONEY_ERROR, centavosToPesos, formatDOP, pesosToCentavos } from '../lib/format';
 
 export function Zones() {
   const [editing, setEditing] = useState<ZoneDTO | 'new' | null>(null);
@@ -33,9 +34,12 @@ export function Zones() {
           </Button>
         }
       />
+      {q.isError && q.data ? (
+        <StaleNote error={q.error} onRetry={() => void q.refetch()} busy={q.isFetching} />
+      ) : null}
       {q.isLoading ? (
         <Loading />
-      ) : q.isError ? (
+      ) : q.isError && !q.data ? (
         <ErrorBox error={q.error} onRetry={() => void q.refetch()} />
       ) : (q.data ?? []).length === 0 ? (
         <Empty
@@ -142,6 +146,7 @@ function ZoneDialog({ zone, onClose }: { zone: ZoneDTO | null; onClose: () => vo
     <Modal
       title={zone ? `Editar ${zone.name}` : 'Nueva zona'}
       onClose={onClose}
+      busy={m.isPending}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -181,7 +186,7 @@ function ZoneDialog({ zone, onClose }: { zone: ZoneDTO | null; onClose: () => vo
         />
       </Field>
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-        <Field label="Envío (RD$)" error={feeC === null ? 'Monto inválido' : null}>
+        <Field label="Envío (RD$)" error={feeC === null ? MONEY_ERROR : null}>
           <input
             className="input"
             value={fee}
@@ -190,7 +195,7 @@ function ZoneDialog({ zone, onClose }: { zone: ZoneDTO | null; onClose: () => vo
             data-testid="zone-fee"
           />
         </Field>
-        <Field label="Pedido mínimo (RD$)" error={minC === null ? 'Monto inválido' : null}>
+        <Field label="Pedido mínimo (RD$)" error={minC === null ? MONEY_ERROR : null}>
           <input
             className="input"
             value={min}
@@ -202,7 +207,7 @@ function ZoneDialog({ zone, onClose }: { zone: ZoneDTO | null; onClose: () => vo
         <Field
           label="Envío gratis desde (RD$)"
           hint="Déjalo vacío si no ofreces envío gratis"
-          error={free.trim() !== '' && freeC === null ? 'Monto inválido' : null}
+          error={free.trim() !== '' && freeC === null ? MONEY_ERROR : null}
         >
           <input
             className="input"

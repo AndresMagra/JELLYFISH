@@ -5,7 +5,7 @@ import {
   groupProducts,
   parseCatalogCsv,
 } from '@jellyfish/catalog';
-import { type PricingUnit, absolutePhotoUrl } from '@jellyfish/shared';
+import { type PricingUnit, absolutePhotoUrl, photoRefError } from '@jellyfish/shared';
 import { and, asc, eq, exists, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { categories, inventoryMovements, products, variants } from '../db/schema';
@@ -499,7 +499,13 @@ export async function patchVariant(db: Db, variantId: string, patch: VariantPatc
   ] as const) {
     if (patch[key] !== undefined) set[key] = patch[key];
   }
-  if (patch.photo !== undefined) set.photo = patch.photo.trim();
+  if (patch.photo !== undefined) {
+    // Se publica tal cual en GET /v1/products: solo vacío, una ruta local o una URL http(s).
+    const photo = patch.photo.trim();
+    const problem = photoRefError(photo);
+    if (problem) throw invalid(`photo: ${problem}`);
+    set.photo = photo;
+  }
   const [row] = await db.update(variants).set(set).where(eq(variants.id, variantId)).returning();
   if (!row) throw notFound('Artículo');
   return row;

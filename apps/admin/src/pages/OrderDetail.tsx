@@ -1,10 +1,4 @@
-import {
-  type OrderDTO,
-  type OrderItemDTO,
-  type PaymentSummaryDTO,
-  es,
-  priceForWeight,
-} from '@jellyfish/shared';
+import { type CouponDTO, type OrderDTO, type PaymentSummaryDTO, es } from '@jellyfish/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MessageCircle, Phone } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -19,6 +13,7 @@ import {
   Loading,
   Modal,
   PageHead,
+  StaleNote,
   useToast,
 } from '../components/ui';
 import { api, errorText } from '../lib/api';
@@ -32,6 +27,7 @@ import {
   pinVerifiedText,
 } from '../lib/delivery';
 import {
+  MONEY_ERROR,
   centavosToPesos,
   dateTime,
   formatDOP,
@@ -42,6 +38,7 @@ import {
   statusLabel,
   whatsappLink,
 } from '../lib/format';
+import { type CouponTerms, previewOrderTotals, settledDiscount } from '../lib/orderTotals';
 import './panel-extra.css';
 
 const tone = (s: OrderDTO['status']) =>
@@ -109,7 +106,7 @@ export function OrderDetail() {
   });
 
   if (q.isLoading) return <Loading />;
-  if (q.isError || !q.data) return <ErrorBox error={q.error} onRetry={() => void q.refetch()} />;
+  if (!q.data) return <ErrorBox error={q.error} onRetry={() => void q.refetch()} />;
   const o = q.data;
   const driver = drivers.data?.find((d) => d.id === o.driverId);
   const pendingCash = o.payments.find((p) => p.method === 'cash' && p.status === 'pending');
@@ -129,6 +126,10 @@ export function OrderDetail() {
           </>
         }
       />
+
+      {q.isError ? (
+        <StaleNote error={q.error} onRetry={() => void q.refetch()} busy={q.isFetching} />
+      ) : null}
 
       <div className="grid cols-2">
         <div className="stack">
@@ -525,15 +526,43 @@ function Items({
     onError: fail,
   });
 
-  const lineTotal = (i: OrderItemDTO) => {
-    if (i.pricingUnit === 'lb' && i.variableWeight && editable) {
-      const c = lbToCentilb(text[i.id] ?? '');
-      return c ? priceForWeight(i.unitPrice, c) : i.lineTotal;
-    }
-    return i.finalLineTotal ?? i.lineTotal;
-  };
-  const previewSubtotal = order.items.reduce((a, i) => a + lineTotal(i), 0);
-  const previewTotal = previewSubtotal - order.discount + order.deliveryFee;
+  // El descuento de un cupón porcentual se recalcula con el peso real: hacen falta sus términos.
+  const needsTerms = editable && !!order.couponCode && order.discount > 0;
+  const coupons = useQuery({
+    queryKey: ['admin', 'coupons'],
+    queryFn: () => api<CouponDTO[]>('/v1/admin/coupons'),
+    enabled: needsTerms,
+  });
+  const terms: CouponTerms | null | undefined = !needsTerms
+    ? null
+    : coupons.data
+      ? (coupons.data.find((c) => c.code === order.couponCode) ?? null)
+      : undefined;
+
+  // Cantidad que se cobraría: lo escrito (si es válido) mientras se pesa; si no, lo guardado o lo pedido.
+  const parsed = (i: OrderDTO['items'][number]) =>
+    editable && i.pricingUnit === 'lb' && i.variableWeight ? lbToCentilb(text[i.id] ?? '') : null;
+  const quantities = order.items.map((i) => ({
+    ...i,
+    quantity: parsed(i) || (i.finalQuantity ?? i.quantity),
+  }));
+  const weighing = editable && order.finalTotal === null;
+  const preview = previewOrderTotals(
+    order,
+    quantities,
+    // Fuera del pesaje el descuento no se recalcula: se muestra el que ya tiene el pedido.
+    weighing ? terms : null,
+  );
+  const settled = order.finalTotal !== null;
+  const discount = settled
+    ? settledDiscount(order, preview.gross, order.finalTotal!)
+    : weighing
+      ? preview.discount
+      : order.discount;
+  const total = settled ? order.finalTotal! : weighing ? preview.total : order.total;
+  const estimated = weighing && !preview.exact;
+  const badWeights = weighing && weighable.some((i) => !lbToCentilb(text[i.id] ?? ''));
+  const unsaved = weighing && weighable.some((i) => parsed(i) !== (i.finalQuantity ?? i.quantity));
 
   return (
     <Card
@@ -552,7 +581,7 @@ function Items({
       }
     >
       <div className="table-wrap">
-        <table>
+        <table className="order-lines">
           <thead>
             <tr>
               <th>Producto</th>
@@ -591,39 +620,70 @@ function Items({
                       <span className="muted">—</span>
                     )}
                   </td>
-                  <td className="right nowrap">{formatDOP(lineTotal(i))}</td>
+                  <td className="right nowrap">{formatDOP(preview.lineGross[i.id] ?? 0)}</td>
                 </tr>
               );
             })}
           </tbody>
-          <tfoot>
-            <tr>
-              <td colSpan={3} className="right muted">
-                Envío
-              </td>
-              <td className="right">{formatDOP(order.deliveryFee)}</td>
-            </tr>
-            <tr>
-              <td colSpan={3} className="right">
-                <strong>{order.finalTotal !== null ? 'Total final' : 'Total'}</strong>
-              </td>
-              <td className="right nowrap">
-                <strong data-testid="order-total">
-                  {formatDOP(order.finalTotal ?? (editable ? previewTotal : order.total))}
-                </strong>
-              </td>
-            </tr>
-            {order.finalTotal === null ? (
-              <tr>
-                <td colSpan={4} className="right muted small">
-                  Estimado al pedir: {formatDOP(order.total)} · máximo autorizado:{' '}
-                  {formatDOP(order.authorizedAmount)}
-                </td>
-              </tr>
-            ) : null}
-          </tfoot>
         </table>
       </div>
+      <dl className="order-totals">
+        <div>
+          <dt className="muted">Subtotal</dt>
+          <dd data-testid="order-subtotal">{formatDOP(preview.gross)}</dd>
+        </div>
+        {order.couponCode ? (
+          <div>
+            <dt className="muted">
+              Cupón <strong data-testid="order-coupon">{order.couponCode}</strong>
+              {estimated ? ' (estimado)' : ''}
+            </dt>
+            <dd data-testid="order-discount">
+              {discount > 0 ? `− ${formatDOP(discount)}` : 'Envío gratis'}
+            </dd>
+          </div>
+        ) : null}
+        <div>
+          <dt className="muted">Envío</dt>
+          <dd>{formatDOP(order.deliveryFee)}</dd>
+        </div>
+        <div className="order-total-row">
+          <dt>{settled ? 'Total final' : estimated ? 'Total estimado' : 'Total'}</dt>
+          <dd data-testid="order-total">{formatDOP(total)}</dd>
+        </div>
+        {order.finalTotal === null ? (
+          <div className="muted small">
+            <dt>Estimado al pedir</dt>
+            <dd>
+              {formatDOP(order.total)} · máximo autorizado {formatDOP(order.authorizedAmount)}
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+      {estimated ? (
+        <p className="muted small" style={{ margin: '10px 0 0' }} data-testid="order-estimated">
+          No pudimos leer las condiciones del cupón. Un cupón en porcentaje se recalcula con el peso
+          real al empacar, así que el total final puede ser un poco distinto.
+        </p>
+      ) : weighing && order.couponCode && order.discount > 0 && terms?.kind === 'percent' ? (
+        <p className="muted small" style={{ margin: '10px 0 0' }}>
+          El descuento del cupón se recalcula con el peso real.
+        </p>
+      ) : null}
+      {badWeights ? (
+        <p
+          className="small warn-text"
+          style={{ margin: '10px 0 0' }}
+          data-testid="order-bad-weights"
+        >
+          Hay pesos por corregir: el total no los incluye.
+        </p>
+      ) : unsaved ? (
+        <p className="muted small" style={{ margin: '10px 0 0' }} data-testid="order-unsaved">
+          Este total usa los pesos escritos. Toca “Guardar pesos” antes de empacar: se cobra con los
+          pesos guardados.
+        </p>
+      ) : null}
     </Card>
   );
 }
@@ -685,6 +745,7 @@ function ReasonDialog({
     <Modal
       title={title}
       onClose={onClose}
+      busy={busy || working}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -742,6 +803,7 @@ function RefundDialog({
     <Modal
       title="Registrar devolución"
       onClose={onClose}
+      busy={m.isPending}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -764,7 +826,13 @@ function RefundDialog({
       </p>
       <Field
         label="Monto devuelto (RD$)"
-        error={cents && cents > payment.refundPending ? 'Es más de lo pendiente' : null}
+        error={
+          cents === null
+            ? MONEY_ERROR
+            : cents > payment.refundPending
+              ? 'Es más de lo pendiente'
+              : null
+        }
       >
         <input
           className="input"
@@ -812,6 +880,7 @@ function CashDialog({
     <Modal
       title="Registrar cobro en efectivo"
       onClose={onClose}
+      busy={m.isPending}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -831,7 +900,7 @@ function CashDialog({
       <p className="muted" style={{ margin: 0 }}>
         Debe ser el monto exacto: {formatDOP(due)}.
       </p>
-      <Field label="Monto cobrado (RD$)">
+      <Field label="Monto cobrado (RD$)" error={cents === null ? MONEY_ERROR : null}>
         <input
           className="input"
           value={amount}
@@ -869,6 +938,7 @@ function OverrideDialog({
     <Modal
       title={`Entregar ${code} sin PIN`}
       onClose={onClose}
+      busy={m.isPending}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>

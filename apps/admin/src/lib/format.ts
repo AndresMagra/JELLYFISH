@@ -3,12 +3,22 @@ import { type OrderStatus, es, formatDOP, formatLb } from '@jellyfish/shared';
 export { formatDOP, formatLb };
 export const statusLabel = (s: OrderStatus) => es.orderStatusLabel[s];
 
-/** "174.95" | "1,234.5" | "RD$ 90" → centavos (null si no es un monto válido). */
+/** Dígitos con punto decimal opcional, o miles bien formados: "150", "150.5", "1,234", "1,234.50". */
+const PESOS = /^(?:\d+|[1-9]\d{0,2}(?:,\d{3})+)(?:\.\d{1,2})?$/;
+
+/**
+ * "174.95" | "1,234.50" | "RD$ 90" → centavos (null si no es un monto válido). En RD la coma separa
+ * miles y el punto los decimales: "150,50" no es 150 pesos con 50 centavos (sería 15 050), así que se
+ * rechaza en vez de adivinar.
+ */
 export function pesosToCentavos(text: string): number | null {
-  const cleaned = text.replace(/rd\$|\s/gi, '').replace(/,/g, '');
-  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
-  return Math.round(Number(cleaned) * 100);
+  const cleaned = text.replace(/rd\$|\s/gi, '');
+  if (!PESOS.test(cleaned)) return null;
+  return Math.round(Number(cleaned.replace(/,/g, '')) * 100);
 }
+
+/** Lo que se muestra cuando `pesosToCentavos` devuelve null. */
+export const MONEY_ERROR = 'Monto inválido: usa punto para los centavos, como 150 o 1,234.50';
 
 /** Centavos → "174.95" para editar en un campo. */
 export const centavosToPesos = (c: number) => (c / 100).toFixed(2);

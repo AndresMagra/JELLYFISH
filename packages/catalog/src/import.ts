@@ -1,4 +1,4 @@
-import { type Centavos, type Centilb, toCentavos } from '@jellyfish/shared';
+import { type Centavos, type Centilb, photoRefError, toCentavos } from '@jellyfish/shared';
 import { detectDelimiter, parseCsv, toCsv } from './csv';
 import {
   PRICE_SOURCES,
@@ -286,6 +286,10 @@ export function parseCatalogCsv(text: string, options: ParseOptions): ParsedCata
         0,
       );
     }
+
+    // Sin eco del valor: puede ser enorme (un data: URI) y no hace falta para encontrar la fila.
+    const photoProblem = photoRefError(get('foto'));
+    if (photoProblem) fail('foto', photoProblem);
 
     const itbisBps = attempt('itbis', () => itbisOf(get('itbis'), decimalComma), null);
     const variableWeight = attempt(

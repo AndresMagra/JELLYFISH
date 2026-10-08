@@ -198,7 +198,7 @@ const stored = (over: Partial<CatalogItem>): CatalogItem => ({
   synonyms: ['gambas', 'shrimp'],
   description: 'Descripción que el dueño editó a mano',
   cookingTip: 'Su propio consejo',
-  photo: 'fotos/ya-subida.jpg',
+  photo: '/photos/ya-subida.webp',
   photoIllustrative: true,
   active: true,
   ...over,
@@ -230,7 +230,7 @@ describe('mergePriceListIntoCatalog', () => {
     price: 20_000,
     itbisBps: 0,
     stock: 777,
-    photo: 'fotos/ribeye.jpg',
+    photo: '/photos/ribeye.webp',
   });
   const huerfano = stored({ sku: 'OLD-1', group: 'viejo', name: 'Ya no se vende', stock: 4_000 });
   const apagado = stored({ sku: 'OLD-2', group: 'apagado', name: 'Apagado', active: false });
@@ -266,7 +266,7 @@ describe('mergePriceListIntoCatalog', () => {
     }
     expect(cam).toMatchObject({
       stock: 12_345,
-      photo: 'fotos/ya-subida.jpg',
+      photo: '/photos/ya-subida.webp',
       description: 'Descripción que el dueño editó a mano',
       cookingTip: 'Su propio consejo',
       synonyms: ['gambas', 'shrimp'],
@@ -277,7 +277,7 @@ describe('mergePriceListIntoCatalog', () => {
       price: 24_000,
       itbisBps: 0,
       stock: 777,
-      photo: 'fotos/ribeye.jpg',
+      photo: '/photos/ribeye.webp',
     });
   });
 
@@ -288,7 +288,7 @@ describe('mergePriceListIntoCatalog', () => {
     expect(cam).toMatchObject({
       price: 14_160,
       stock: 12_345,
-      photo: 'fotos/ya-subida.jpg',
+      photo: '/photos/ya-subida.webp',
       description: 'Descripción que el dueño editó a mano',
       synonyms: ['gambas', 'shrimp'],
     });

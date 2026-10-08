@@ -7,7 +7,7 @@
  * Variables:
  *   PRICELIST_XLSX   Excel a usar (por defecto data/private/lista-de-precios-27-09-2026.xlsx)
  *   E2E_MARGIN       beneficio de PRUEBA en % (por defecto 11; no es el del negocio)
- *   E2E_OUT          carpeta de capturas (por defecto tmp/e2e-pricelist, ignorada por git)
+ *   E2E_OUT          carpeta de capturas (por defecto tmp/e2e-pricelist, ignorada por git; en otra no se borra nada)
  *   E2E_SKIP_BUILD=1 reutiliza apps/admin/dist
  *
  * Los archivos del dueño son internos: este script solo los lee, no imprime sus cifras y las
@@ -32,7 +32,10 @@ import { type Page, chromium } from 'playwright-core';
 import { readSheet } from 'read-excel-file/node';
 import {
   CHROME,
+  ISOLATED_API_ENV,
+  assertPortFree,
   check,
+  clearOwnShots,
   log,
   otpFor,
   root,
@@ -43,7 +46,8 @@ import {
   waitFor,
 } from './e2e-lib';
 
-const OUT = resolve(process.env.E2E_OUT ?? `${root}/tmp/e2e-pricelist`);
+const DEFAULT_OUT = `${root}/tmp/e2e-pricelist`;
+const OUT = resolve(process.env.E2E_OUT ?? DEFAULT_OUT);
 const API_PORT = 3961;
 const WEB_PORT = 8061;
 const API = `http://localhost:${API_PORT}`;
@@ -61,8 +65,6 @@ if (!existsSync(XLSX)) {
   console.error(`No encuentro el Excel del dueño en ${XLSX} (PRICELIST_XLSX).`);
   process.exit(2);
 }
-mkdirSync(OUT, { recursive: true });
-
 const meta = JSON.parse(
   readFileSync(`${root}/data/catalog/lista-proveedor.meta.json`, 'utf8'),
 ) as PriceListMeta[];
@@ -91,6 +93,15 @@ async function exportedItems(token: string): Promise<CatalogItem[]> {
   const parsed = parseCatalogExport(await res.text());
   if (parsed.errors.length > 0) throw new Error('El export del servidor no se pudo leer');
   return parsed.items;
+}
+
+async function setPhoto(token: string, id: string, photo: string) {
+  const res = await fetch(`${API}/v1/admin/variants/${id}`, {
+    method: 'PATCH',
+    headers: json(token),
+    body: JSON.stringify({ photo }),
+  });
+  if (!res.ok) throw new Error(`No se pudo poner la foto de prueba (${res.status})`);
 }
 
 async function importCsv(token: string, csv: string) {
@@ -148,6 +159,12 @@ function perturb(
 // ───────────── Recorrido ─────────────
 
 async function main() {
+  // Un API huérfano en el mismo puerto contaminaría la prueba sin avisar.
+  await assertPortFree(API_PORT);
+  await assertPortFree(WEB_PORT);
+  mkdirSync(OUT, { recursive: true });
+  // Las capturas se numeran en orden: las de una corrida anterior solo confundirían.
+  clearOwnShots(OUT, DEFAULT_OUT);
   const rows = await readRows(XLSX);
   check(rows.length > 0, `el Excel del dueño se lee en Node (${rows.length} productos)`);
   const skuOf = (name: string) => skuOfName.get(normalizeHeader(name))!;
@@ -162,6 +179,7 @@ async function main() {
     'npx',
     ['tsx', 'apps/api/src/server.ts'],
     {
+      ...ISOLATED_API_ENV,
       JELLYFISH_DEMO: '1',
       JELLYFISH_SEED: '1',
       PORT: String(API_PORT),
@@ -217,14 +235,10 @@ async function main() {
     let variants = await adminCatalog(token);
     const idOf = (sku: string) => variants.find((v) => v.sku === sku)!.id;
     for (const [sku, foto] of [
-      [skuA, 'fotos/e2e-a.jpg'],
-      [skuB, 'fotos/e2e-b.jpg'],
+      [skuA, '/photos/e2e-a.jpg'],
+      [skuB, '/photos/e2e-b.jpg'],
     ] as const) {
-      await fetch(`${API}/v1/admin/variants/${idOf(sku)}`, {
-        method: 'PATCH',
-        headers: json(token),
-        body: JSON.stringify({ photo: foto }),
-      });
+      await setPhoto(token, idOf(sku), foto);
     }
     await fetch(`${API}/v1/admin/inventory/adjust`, {
       method: 'POST',
@@ -255,7 +269,7 @@ async function main() {
       cost: null,
       stock: 1_000,
       itbisBps: 1800,
-      photo: 'fotos/e2e-viejo.jpg',
+      photo: '/photos/e2e-viejo.jpg',
       synonyms: ['antiguo'],
       description: 'Ya no lo vende el proveedor',
       active: true,
@@ -263,7 +277,7 @@ async function main() {
     await importCsv(token, catalogToCsv([...edited, viejo]));
     variants = await adminCatalog(token);
     check(
-      variants.find((v) => v.sku === skuA)!.photo === 'fotos/e2e-a.jpg' &&
+      variants.find((v) => v.sku === skuA)!.photo === '/photos/e2e-a.jpg' &&
         variants.find((v) => v.sku === skuA)!.onHand >= 3750 &&
         variants.some((v) => v.sku === 'E2E-VIEJO'),
       'catálogo de prueba listo: fotos, existencias, textos editados y un artículo que el listado no trae',
@@ -397,11 +411,7 @@ async function main() {
     await shot(page, '03-revisado');
 
     // ───── Alguien edita una foto mientras se revisa: no se aplica nada (no se pisaría) ─────
-    await fetch(`${API}/v1/admin/variants/${idOf(skuB)}`, {
-      method: 'PATCH',
-      headers: json(token),
-      body: JSON.stringify({ photo: 'fotos/e2e-b2.jpg' }),
-    });
+    await setPhoto(token, idOf(skuB), '/photos/e2e-b2.jpg');
     const before = await adminCatalog(token);
     await page.getByTestId('pl-apply').click();
     await page.getByTestId('pl-changed').waitFor();
@@ -457,12 +467,12 @@ async function main() {
       `fotos, existencias, activo y demás intactos en los ${kept} artículos (no se creó ni borró ninguno)`,
     );
     check(
-      after.find((v) => v.sku === skuB)!.photo === 'fotos/e2e-b2.jpg',
+      after.find((v) => v.sku === skuB)!.photo === '/photos/e2e-b2.jpg',
       'la foto cambiada durante la revisión es la que quedó (no se revirtió a la vieja)',
     );
     const vA = after.find((v) => v.sku === skuA)!;
     check(
-      vA.photo === 'fotos/e2e-a.jpg' && vA.onHand === before.find((v) => v.sku === skuA)!.onHand,
+      vA.photo === '/photos/e2e-a.jpg' && vA.onHand === before.find((v) => v.sku === skuA)!.onHand,
       'la foto y la existencia que ya tenía un producto siguen ahí',
     );
     const exportedAfter = await exportedItems(token);

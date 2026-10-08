@@ -2,18 +2,36 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseCatalogCsv } from '@jellyfish/catalog';
-import { eq } from 'drizzle-orm';
+import { photoRefError } from '@jellyfish/shared';
+import { eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig, testConfig } from '../src/config';
 import { variants } from '../src/db/schema';
 import { photoCacheControl } from '../src/routes/static';
-import { exportCatalogCsv, getProduct, importCatalog, listProducts } from '../src/services/catalog';
+import {
+  exportCatalogCsv,
+  getProduct,
+  importCatalog,
+  listProducts,
+  patchVariant,
+} from '../src/services/catalog';
 import { type World, categoriesJson, makeApp, makeWorld } from './helpers';
 
 const BASE = 'https://api.jellyfish.test';
 const CDN_PHOTO = 'https://d8j0ntlcm91z4.cloudfront.net/user_x/hf_20261007_000000_abc.png';
+/** Como quedó guardada una foto antes de que se validara lo que se escribe (no se puede importar de nuevo). */
+const LEGACY_PHOTO = 'fotos/pechuga.jpg';
+/** Lo que nunca debe llegar a la columna foto (se publica tal cual en GET /v1/products). */
+const BAD_PHOTOS = [
+  'javascript:alert(1)',
+  'data:image/png;base64,AAAA',
+  '//evil.example/x.png',
+  'fotos/x.jpg',
+  'ftp://host/x.png',
+  '/photos/con espacio.webp',
+];
 
 const HEADER =
   'sku,grupo,nombre,variante,categoria,unidad,paso_lb,minimo_lb,precio,precio_fuente,itbis,stock,foto,foto_ilustrativa';
@@ -21,7 +39,7 @@ const PHOTO_CSV = [
   HEADER,
   `PH-1,foto-local,Producto con foto local,,aves,lb,0.5,1,100,usuario,0,50,/photos/PH-1.webp,si`,
   `PH-2,foto-cdn,Producto con foto del CDN,,aves,lb,0.5,1,100,usuario,0,50,${CDN_PHOTO},no`,
-  `PH-3,foto-legada,Producto con texto heredado,,aves,lb,0.5,1,100,usuario,0,50,fotos/pechuga.jpg,`,
+  `PH-3,foto-local-b,Producto con otra foto local,,aves,lb,0.5,1,100,usuario,0,50,/photos/pechuga.webp,`,
   `PH-4,sin-foto,Producto sin foto,,aves,lb,0.5,1,100,usuario,0,50,,`,
 ].join('\n');
 
@@ -78,7 +96,7 @@ describe('fotos del catálogo en la base de datos y en el API', () => {
       });
       expect(await dbVariant('PH-2')).toMatchObject({ photo: CDN_PHOTO, photoIllustrative: false });
       expect(await dbVariant('PH-3')).toMatchObject({
-        photo: 'fotos/pechuga.jpg',
+        photo: '/photos/pechuga.webp',
         photoIllustrative: true,
       });
       expect(await dbVariant('PH-4')).toMatchObject({ photo: '', photoIllustrative: true });
@@ -112,6 +130,52 @@ describe('fotos del catálogo en la base de datos y en el API', () => {
       expect(await dbVariant('PH-4')).toMatchObject({ photo: '', photoIllustrative: true });
     });
 
+    it('una foto inválida es un error de fila (campo foto) y no se guarda nada del archivo', async () => {
+      const rows = BAD_PHOTOS.map(
+        (photo, i) =>
+          `BAD-${i},bad-${i},Producto malo ${i},,aves,lb,0.5,1,100,usuario,0,50,"${photo}",`,
+      );
+      const csv = [
+        HEADER,
+        `OK-1,ok-1,Producto bueno,,aves,lb,0.5,1,100,usuario,0,50,/photos/OK-1.webp,`,
+        ...rows,
+      ].join('\n');
+      const r = await importCatalog(w.handle.db, csv);
+      expect(r.ok).toBe(false);
+      expect(r.errors.map((e) => [e.line, e.sku, e.field])).toEqual(
+        BAD_PHOTOS.map((_, i) => [i + 3, `BAD-${i}`, 'foto']),
+      );
+      for (const [i, photo] of BAD_PHOTOS.entries()) {
+        expect(r.errors[i]!.message).toBe(photoRefError(photo));
+      }
+      // ni siquiera la fila buena: un archivo con errores no se aplica
+      const saved = await w.handle.db
+        .select({ sku: variants.sku })
+        .from(variants)
+        .where(inArray(variants.sku, ['OK-1', ...BAD_PHOTOS.map((_, i) => `BAD-${i}`)]));
+      expect(saved).toEqual([]);
+    });
+
+    it('por HTTP la prueba en seco también devuelve el error de la fila y el motivo en español', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/admin/catalog/import?dryRun=1',
+        headers: auth(w.adminId, 'admin'),
+        payload: {
+          csv: [
+            HEADER,
+            'BAD-H,bad-h,Producto malo,,aves,lb,0.5,1,100,usuario,0,50,"javascript:alert(1)",',
+          ].join('\n'),
+        },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(json(res)).toMatchObject({
+        ok: false,
+        errors: [{ line: 2, sku: 'BAD-H', field: 'foto' }],
+      });
+      expect(json(res).errors[0].message).toMatch(/^Escribe una ruta que empiece con \//);
+    });
+
     it('exporta la foto TAL COMO está guardada (sin URL absoluta) y reimporta sin pérdida', async () => {
       const csv = await exportCatalogCsv(w.handle.db);
       const parsed = parseCatalogCsv(csv, { categories: categoriesJson.map((c) => c.slug) });
@@ -119,7 +183,10 @@ describe('fotos del catálogo en la base de datos y en el API', () => {
       const bySku = Object.fromEntries(parsed.items.map((i) => [i.sku, i]));
       expect(bySku['PH-1']).toMatchObject({ photo: '/photos/PH-1.webp', photoIllustrative: true });
       expect(bySku['PH-2']).toMatchObject({ photo: CDN_PHOTO, photoIllustrative: false });
-      expect(bySku['PH-3']).toMatchObject({ photo: 'fotos/pechuga.jpg', photoIllustrative: true });
+      expect(bySku['PH-3']).toMatchObject({
+        photo: '/photos/pechuga.webp',
+        photoIllustrative: true,
+      });
 
       const again = await importCatalog(w.handle.db, csv);
       expect(again.errors).toEqual([]);
@@ -136,7 +203,7 @@ describe('fotos del catálogo en la base de datos y en el API', () => {
   });
 
   describe('fotos en las respuestas del API', () => {
-    it('una ruta local se vuelve absoluta con la URL pública del API; https y texto heredado no cambian', async () => {
+    it('una ruta local se vuelve absoluta con la URL pública del API; https no cambia', async () => {
       const res = await app.inject({ url: '/v1/products?category=aves&limit=100' });
       expect(res.statusCode).toBe(200);
       const all = json(res).items.flatMap((p: { variants: unknown[] }) => p.variants) as {
@@ -150,7 +217,10 @@ describe('fotos del catálogo en la base de datos y en el API', () => {
         photoIllustrative: true,
       });
       expect(by['PH-2']).toMatchObject({ photo: CDN_PHOTO, photoIllustrative: false });
-      expect(by['PH-3']).toMatchObject({ photo: 'fotos/pechuga.jpg', photoIllustrative: true });
+      expect(by['PH-3']).toMatchObject({
+        photo: `${BASE}/photos/pechuga.webp`,
+        photoIllustrative: true,
+      });
       expect(by['PH-4']).toMatchObject({ photo: '', photoIllustrative: true });
     });
 
@@ -215,6 +285,60 @@ describe('fotos del catálogo en la base de datos y en el API', () => {
       });
     });
 
+    it('PATCH rechaza lo que no es una ruta o URL (javascript:, data:, //host…) y no guarda nada', async () => {
+      const v = await dbVariant('PH-1');
+      const before = v.photo;
+      for (const photo of [...BAD_PHOTOS, `/${'a'.repeat(300)}`]) {
+        const res = await app.inject({
+          method: 'PATCH',
+          url: `/v1/admin/variants/${v.id}`,
+          headers: auth(w.adminId, 'admin'),
+          payload: { photo, price: 12_345 },
+        });
+        expect(res.statusCode, photo).toBe(400);
+        expect(json(res).error.code).toBe('validation');
+        expect(json(res).error.message, photo).toBe(`photo: ${photoRefError(photo)}`);
+        // ni la foto ni el resto del cambio se aplican
+        expect(await dbVariant('PH-1')).toMatchObject({ photo: before, price: v.price });
+      }
+      expect(
+        json(
+          await app.inject({
+            method: 'PATCH',
+            url: `/v1/admin/variants/${v.id}`,
+            headers: auth(w.adminId, 'admin'),
+            payload: { photo: `/${'a'.repeat(300)}` },
+          }),
+        ).error.message,
+      ).toBe('photo: Máximo 300 caracteres');
+    });
+
+    it('el servicio también lo rechaza: la regla no vive solo en la ruta', async () => {
+      const v = await dbVariant('PH-1');
+      await expect(
+        patchVariant(w.handle.db, v.id, { photo: 'javascript:alert(1)' }),
+      ).rejects.toMatchObject({
+        code: 'validation',
+        status: 400,
+      });
+      expect((await dbVariant('PH-1')).photo).toBe(v.photo);
+    });
+
+    it('PATCH acepta quitar la foto (vacío o solo espacios) y una URL https', async () => {
+      const v = await dbVariant('PH-4');
+      const patch = (photo: string) =>
+        app.inject({
+          method: 'PATCH',
+          url: `/v1/admin/variants/${v.id}`,
+          headers: auth(w.adminId, 'admin'),
+          payload: { photo },
+        });
+      expect((await patch(CDN_PHOTO)).statusCode).toBe(200);
+      expect((await dbVariant('PH-4')).photo).toBe(CDN_PHOTO);
+      expect((await patch('   ')).statusCode).toBe(200);
+      expect((await dbVariant('PH-4')).photo).toBe('');
+    });
+
     it('cambiar solo la foto no toca el rótulo, y cambiar solo el rótulo no toca la foto', async () => {
       const v = await dbVariant('PH-4');
       const headers = auth(w.adminId, 'admin');
@@ -273,6 +397,63 @@ describe('fotos del catálogo en la base de datos y en el API', () => {
       });
       expect(denied.statusCode).toBe(403);
       expect((await dbVariant('PH-1')).photoIllustrative).toBe(true);
+    });
+  });
+
+  describe('texto heredado que ya estaba guardado', () => {
+    /** Simula un artículo guardado antes de validar la foto, y lo deja como estaba al terminar. */
+    async function withLegacyPhoto(fn: () => Promise<void>) {
+      const { db } = w.handle;
+      await db.update(variants).set({ photo: LEGACY_PHOTO }).where(eq(variants.sku, 'PH-3'));
+      try {
+        await fn();
+      } finally {
+        await db
+          .update(variants)
+          .set({ photo: '/photos/pechuga.webp' })
+          .where(eq(variants.sku, 'PH-3'));
+      }
+    }
+
+    it('el API lo sigue mostrando tal cual (no es absoluta ni se rompe)', async () => {
+      await withLegacyPhoto(async () => {
+        const res = await app.inject({ url: '/v1/products?category=aves&limit=100' });
+        const all = json(res).items.flatMap((p: { variants: unknown[] }) => p.variants) as {
+          sku: string;
+          photo: string;
+        }[];
+        expect(all.find((v) => v.sku === 'PH-3')!.photo).toBe(LEGACY_PHOTO);
+      });
+    });
+
+    it('se exporta tal cual, pero volver a importarlo señala la fila y no cambia nada', async () => {
+      await withLegacyPhoto(async () => {
+        const csv = await exportCatalogCsv(w.handle.db);
+        expect(csv).toContain(LEGACY_PHOTO);
+        const r = await importCatalog(w.handle.db, csv);
+        expect(r.ok).toBe(false);
+        expect(r.errors).toHaveLength(1);
+        expect(r.errors[0]).toMatchObject({ sku: 'PH-3', field: 'foto' });
+        expect(r.variantsUpdated).toBe(0);
+        expect((await dbVariant('PH-3')).photo).toBe(LEGACY_PHOTO);
+      });
+    });
+
+    it('el panel lo corrige con una ruta válida o lo quita con vacío', async () => {
+      await withLegacyPhoto(async () => {
+        const v = await dbVariant('PH-3');
+        const patch = (photo: string) =>
+          app.inject({
+            method: 'PATCH',
+            url: `/v1/admin/variants/${v.id}`,
+            headers: auth(w.adminId, 'admin'),
+            payload: { photo },
+          });
+        expect((await patch('/photos/pechuga.webp')).statusCode).toBe(200);
+        expect((await dbVariant('PH-3')).photo).toBe('/photos/pechuga.webp');
+        expect((await patch('')).statusCode).toBe(200);
+        expect((await dbVariant('PH-3')).photo).toBe('');
+      });
     });
   });
 

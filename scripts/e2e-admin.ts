@@ -7,6 +7,7 @@
  * inventa (precios, lotes, cupón, motivos) es de prueba.
  *
  *   npx tsx scripts/e2e-admin.ts          (capturas en tmp/e2e-admin)
+ *   E2E_OUT=/ruta npx tsx scripts/e2e-admin.ts   (capturas en otra carpeta; ahí no se borra nada)
  *   E2E_SKIP_BUILD=1 …                    (reutiliza el panel ya compilado en tmp/e2e-admin-site)
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -26,9 +27,16 @@ import {
 import { type BrowserContext, type Page, chromium } from 'playwright-core';
 import {
   CHROME,
+  ISOLATED_API_ENV,
+  OVERRIDE_MARKER,
   apiLog,
   apiLogin,
+  assertPortFree,
   check,
+  clearOwnShots,
+  exposesOverrideReason,
+  hasNeutralDeliveryNote,
+  leaksInEntry,
   log,
   otpFor,
   root,
@@ -40,7 +48,8 @@ import {
   waitFor,
 } from './e2e-lib';
 
-const OUT = resolve(process.env.E2E_OUT ?? `${root}/tmp/e2e-admin`);
+const DEFAULT_OUT = `${root}/tmp/e2e-admin`;
+const OUT = resolve(process.env.E2E_OUT ?? DEFAULT_OUT);
 // El panel se compila aparte de apps/admin/dist: otros recorridos lo recompilan con su propia URL del API.
 const SITE = resolve(process.env.E2E_SITE ?? `${root}/tmp/e2e-admin-site`);
 const API_PORT = 3997;
@@ -52,7 +61,7 @@ const DRIVER_PHONE = '849-555-0177';
 const STAFF_PHONE = '829-555-0133';
 const CUSTOMER_PHONE = '829-555-0222';
 const CUSTOMER2_PHONE = '849-555-0444';
-mkdirSync(OUT, { recursive: true });
+const API_DRIVER_PHONE = '829-555-0188';
 
 // Artículos del catálogo sembrado que usa el recorrido (se comprueba que sigan existiendo).
 const ORDER_SKU = 'JF-AVE-003'; // pechuga de pollo: un solo artículo, por libra, peso variable
@@ -63,9 +72,12 @@ const STOCK_SKU = 'JF-CDO-001'; // lomo de cerdo: existencias sin lote
 const EXPIRED_SKU = 'JF-CDO-005'; // chuleta: el lote vencido
 
 const COUPON = 'E2E10';
+/** El signo de resta que dibuja el panel en los descuentos (U+2212). */
+const MINUS = '\u2212';
 const LOT_SOON = 'E2E-POR-VENCER';
 const LOT_EXPIRED = 'E2E-VENCIDO';
-const OVERRIDE_REASON = 'El cliente no estaba; recibió su vecino';
+const OVERRIDE_REASON = `El cliente no estaba; recibió su vecino (${OVERRIDE_MARKER})`;
+const WRONG_OTP = '000000';
 const PHOTO_PATH = `/photos/${ORDER_SKU}.thumb.webp`;
 // Las fotos del catálogo sembrado viven en un CDN externo: aquí se responde con una imagen mínima.
 const CDN_HOST = /d8j0ntlcm91z4\.cloudfront\.net/;
@@ -77,11 +89,13 @@ const PIXEL = Buffer.from(
 const EXPECTED_REJECTION = /Failed to load resource: the server responded with a status of 409\b/;
 
 const shots: string[] = [];
+/** Captura numerada en orden de llegada (01-login.png, 02-…). */
 async function shot(page: Page, name: string) {
   await page.waitForTimeout(450);
-  await page.screenshot({ path: `${OUT}/${name}.png` });
-  shots.push(name);
-  log(`captura ${name}.png`);
+  const file = `${String(shots.length + 1).padStart(2, '0')}-${name}.png`;
+  await page.screenshot({ path: `${OUT}/${file}` });
+  shots.push(file);
+  log(`captura ${file}`);
 }
 
 // ───────────── Auxiliares ─────────────
@@ -131,6 +145,12 @@ async function until<T>(
   }
 }
 
+function need<T>(value: T | undefined | null, what: string): T {
+  if (value === undefined || value === null)
+    throw new Error(`✖ Falta en los datos de prueba: ${what}`);
+  return value;
+}
+
 const nav = (page: Page, label: string) =>
   page
     .locator('.nav')
@@ -178,26 +198,6 @@ async function padAudit(token: string, variantId: string, min: number) {
   );
 }
 
-const SECRET_KEYS =
-  /^(code|otp|pin|token|password|secret|authorization|cookie|apikey|deliverypin)$/;
-const FULL_PHONE = /(?:\+?1)?8[024]9\d{7}\b/;
-/** Claves y valores que jamás deben estar en lo que guarda la bitácora. */
-function leaksIn(value: unknown, secrets: ReadonlySet<string>, path = '$'): string[] {
-  if (typeof value === 'string') {
-    if (secrets.has(value) || /^eyJ[\w-]+\.[\w-]+\.[\w-]*$/.test(value) || FULL_PHONE.test(value))
-      return [`${path} = ${value.slice(0, 12)}…`];
-    return [];
-  }
-  if (Array.isArray(value)) return value.flatMap((v, i) => leaksIn(v, secrets, `${path}[${i}]`));
-  if (value && typeof value === 'object') {
-    return Object.entries(value).flatMap(([k, v]) => [
-      ...(SECRET_KEYS.test(k.toLowerCase().replace(/[^a-z0-9]/g, '')) ? [`${path}.${k}`] : []),
-      ...leaksIn(v, secrets, `${path}.${k}`),
-    ]);
-  }
-  return [];
-}
-
 // ───────────── Catálogo sembrado (la fuente de las cifras esperadas) ─────────────
 
 function loadSeed(): CatalogItem[] {
@@ -214,6 +214,12 @@ function loadSeed(): CatalogItem[] {
 }
 
 async function main() {
+  // Un API huérfano en el mismo puerto contaminaría la prueba sin avisar.
+  await assertPortFree(API_PORT);
+  await assertPortFree(WEB_PORT);
+  mkdirSync(OUT, { recursive: true });
+  // Las capturas se numeran en orden: las de una corrida anterior solo confundirían.
+  clearOwnShots(OUT, DEFAULT_OUT);
   const seed = loadSeed();
   const seedOf = (sku: string) => {
     const item = seed.find((i) => i.sku === sku);
@@ -239,15 +245,13 @@ async function main() {
 
   log('Iniciando API (sin modo demo) con administrador inicial…');
   const apiEnv = {
+    // Nada del entorno puede cambiar la base ni el código de acceso, ni encender el modo demo.
+    ...ISOLATED_API_ENV,
+    JELLYFISH_DEMO: undefined,
     JELLYFISH_SEED: '1',
     PORT: String(API_PORT),
     BOOTSTRAP_ADMIN_PHONE: ADMIN_PHONE,
     PUBLIC_API_URL: API,
-    // Nada del entorno puede encender el modo demo ni cambiar la base.
-    JELLYFISH_DEMO: undefined,
-    DEMO_OTP_CODE: undefined,
-    DATABASE_URL: undefined,
-    PGLITE_DIR: undefined,
   };
   start('npx', ['tsx', 'apps/api/src/server.ts'], apiEnv, root, true);
   await waitFor(`${API}/health`);
@@ -293,6 +297,8 @@ async function main() {
     });
     await watch(ctx);
     page = await ctx.newPage();
+    // Las funciones que se pasan a `until` no conservan que `page` ya no es null.
+    const adminPage: Page = page;
 
     // Todo lo que se comprueba por API usa estos ayudantes (la tienda pública no pide sesión).
     const store = async (query = '') => {
@@ -312,7 +318,7 @@ async function main() {
     // ───── Acceso ─────
     await page.goto(WEB);
     await page.getByText('Panel de administración').waitFor({ timeout: 20_000 });
-    await shot(page, '01-login');
+    await shot(page, 'login');
     await page.getByTestId('login-phone').fill(ADMIN_PHONE);
     await page.getByTestId('login-send').click();
     await page.getByTestId('login-code').fill(await otpFor(e164(ADMIN_PHONE)));
@@ -344,7 +350,7 @@ async function main() {
         (await page.getByTestId('alert-expired').count()) === 0,
       'sin lotes no hay alertas de vencimiento en el resumen',
     );
-    await shot(page, '02-resumen');
+    await shot(page, 'resumen');
 
     const summary0 = await adminSummary();
     check(
@@ -421,7 +427,7 @@ async function main() {
         (await page.locator('.nav a[href="/catalogo"] .count').count()) === 0,
       'ni el filtro ni el menú marcan artículos sin publicar',
     );
-    await shot(page, '03-catalogo');
+    await shot(page, 'catalogo');
 
     // Desactivar el único artículo de una ficha la saca de la tienda y lo marca en el resumen.
     const soloRow = page.getByTestId(`row-${soloItem.sku}`);
@@ -457,7 +463,7 @@ async function main() {
       (await page.locator('[data-testid^="row-"]').count()) === 1,
       '"Solo sin publicar" deja únicamente el artículo bloqueado',
     );
-    await shot(page, '04-catalogo-bloqueado');
+    await shot(page, 'catalogo-bloqueado');
     await nav(page, 'Resumen');
     await page
       .getByTestId('stat-Catálogo sin publicar')
@@ -518,6 +524,19 @@ async function main() {
       ((await price.getAttribute('class')) ?? '').includes('invalid'),
       'un precio mal escrito se marca en rojo y no se envía',
     );
+    // En RD la coma separa miles: "95,50" no son 95 pesos con 50 centavos, y el panel no adivina.
+    await price.fill('95,50');
+    check(
+      ((await price.getAttribute('class')) ?? '').includes('invalid') &&
+        ((await price.getAttribute('title')) ?? '').includes('usa punto'),
+      'un precio con coma decimal ("95,50") se marca inválido y explica que los centavos van con punto',
+    );
+    await price.press('Enter');
+    await sleep(600);
+    check(
+      (await store()).variants.some((v) => v.sku === priceItem.sku && v.price === priceItem.price),
+      'ese precio con coma no se envía: las alitas siguen valiendo lo del catálogo',
+    );
     await price.fill('95.50');
     await price.press('Enter');
     await until('el precio nuevo llega a la tienda', async () =>
@@ -548,7 +567,7 @@ async function main() {
       'la foto sembrada es ilustrativa; la vista previa de la ruta local carga desde el API',
     );
     await page.getByTestId(`photo-illustrative-${orderItem.sku}`).click();
-    await shot(page, '05-foto');
+    await shot(page, 'foto');
     await page.getByTestId(`photo-save-${orderItem.sku}`).click();
     await page.getByRole('dialog').waitFor({ state: 'detached' });
     await page.getByTestId(`row-${orderItem.sku}`).getByText('Foto real').waitFor();
@@ -573,6 +592,43 @@ async function main() {
       photoRes.status === 200 && (photoRes.headers.get('content-type') ?? '').startsWith('image/'),
       'esa URL del API sirve la imagen',
     );
+    // El API también cierra la puerta: lo que se guarda se publica tal cual en la tienda.
+    const photoOwner = await idOf(orderItem.sku);
+    for (const bad of [
+      'javascript:alert(1)',
+      '//evil.example/x.png',
+      'data:image/png;base64,AAAA',
+    ]) {
+      const refusedPhoto = await http<{ error: { code: string; message: string } }>(
+        `/v1/admin/variants/${photoOwner}`,
+        await adminToken(page),
+        { method: 'PATCH', body: { photo: bad } },
+      );
+      check(
+        refusedPhoto.status === 400 && refusedPhoto.body.error.message.includes('Escribe una ruta'),
+        `el API rechaza con 400 la foto "${bad}" y explica qué se acepta`,
+      );
+    }
+    check(
+      (await adminCatalog()).find((v) => v.sku === orderItem.sku)?.photo === PHOTO_PATH,
+      'las fotos rechazadas no tocaron la que estaba guardada',
+    );
+    const importPhoto = await fetch(`${API}/v1/admin/catalog/import?dryRun=1`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${await adminToken(page)}`,
+        'content-type': 'text/csv',
+      },
+      body: 'sku,nombre,categoria,unidad,precio,precio_fuente,itbis,foto\nX-3,Algo,aves,lb,10,usuario,0,javascript:alert(1)',
+    });
+    const importPhotoBody = (await importPhoto.json()) as {
+      ok: boolean;
+      errors: { field: string }[];
+    };
+    check(
+      importPhotoBody.ok === false && importPhotoBody.errors.some((e) => e.field === 'foto'),
+      'la importación del CSV también rechaza una foto "javascript:" señalando la columna foto',
+    );
 
     // ───── Importar CSV: errores claros y luego éxito ─────
     await page.getByTestId('catalog-search').fill('');
@@ -591,7 +647,7 @@ async function main() {
       (await page.getByTestId('import-result').innerText()).includes('Categoría desconocida'),
       'el CSV con una categoría inválida se rechaza explicando fila y campo',
     );
-    await shot(page, '06-importar-errores');
+    await shot(page, 'importar-errores');
     await page
       .getByTestId('import-text')
       .fill(
@@ -648,7 +704,7 @@ async function main() {
     await page.getByTestId('zone-fee').fill('150');
     await page.getByTestId('zone-min').fill('500');
     await page.getByTestId('zone-free').fill('4000');
-    await shot(page, '07-zona-nueva');
+    await shot(page, 'zona-nueva');
     await page.getByTestId('zone-save').click();
     await page.getByText('Cubre: naco, piantini, bella vista, distrito nacional').waitFor();
     check(true, 'la zona queda creada con tarifa, mínimo y envío gratis');
@@ -714,7 +770,7 @@ async function main() {
     );
     await page.getByTestId('expiring-days').selectOption('7');
     await soonRow.waitFor();
-    await shot(page, '08-lotes');
+    await shot(page, 'lotes');
     const lots = (await http<StockLotDTO[]>('/v1/admin/inventory/lots', await adminToken(page)))
       .body;
     check(
@@ -738,7 +794,7 @@ async function main() {
       summary1.expiringSoon === 1 && summary1.expired === 1,
       'el API cuenta 1 lote por vencer y 1 vencido',
     );
-    await shot(page, '09-resumen-alertas');
+    await shot(page, 'resumen-alertas');
     await soonAlert.click();
     await page.getByTestId('lot-new').waitFor();
     check(
@@ -762,7 +818,7 @@ async function main() {
     await page.getByTestId('team-role').selectOption('staff');
     await page.getByTestId('team-add').click();
     await page.getByTestId(`member-${e164(STAFF_PHONE)}`).waitFor();
-    await shot(page, '10-equipo');
+    await shot(page, 'equipo');
     check(true, 'la persona de personal queda agregada al equipo');
 
     // ───── El cliente (por API; la app ya tiene su propio recorrido) ─────
@@ -809,7 +865,7 @@ async function main() {
     await page.getByTestId('coupon-kind').selectOption('percent');
     await page.getByTestId('coupon-value').fill('10');
     await page.getByTestId('coupon-max-redemptions').fill('5');
-    await shot(page, '11-cupon-nuevo');
+    await shot(page, 'cupon-nuevo');
     await page.getByTestId('coupon-submit').click();
     const couponRow = page.getByTestId(`coupon-row-${COUPON}`);
     await couponRow.waitFor();
@@ -852,7 +908,7 @@ async function main() {
       ),
       'Canjes muestra el pedido que usó el cupón y el monto descontado',
     );
-    await shot(page, '12-cupon-canjes');
+    await shot(page, 'cupon-canjes');
     await page.getByRole('dialog').getByRole('button', { name: 'Cerrar', exact: true }).click();
 
     // Pausarlo: el panel lo marca y el API deja de aplicarlo (cotización y pedido).
@@ -871,7 +927,7 @@ async function main() {
         refused.body.error.message === q2.couponError,
       'con el cupón pausado, un pedido nuevo de otro cliente que lo use se rechaza con el mismo motivo',
     );
-    await shot(page, '13-cupon-pausado');
+    await shot(page, 'cupon-pausado');
     await page.getByTestId(`coupon-toggle-${COUPON}`).click();
     await page.getByTestId(`coupon-status-${COUPON}`).getByText('Activo').waitFor();
     const q3 = await quoteWith(customer2, COUPON);
@@ -891,6 +947,61 @@ async function main() {
       'el API lo muestra activo con 1 canje',
     );
 
+    // ───── El pedido con cupón en el panel: descuento a la vista y pesaje con vista previa fiel ─────
+    const cOrder = couponOrder.body;
+    await nav(page, 'Pedidos');
+    await page.getByTestId(`order-${cOrder.code}`).click();
+    await page.getByTestId('order-coupon').waitFor();
+    // Un cupón en porcentaje se recalcula con el peso real: el detalle lee sus condiciones antes de estimar.
+    await until('el detalle lee las condiciones del cupón', async () =>
+      (await adminPage.getByTestId('order-estimated').count()) === 0 ? true : false,
+    );
+    check(
+      (await page.getByTestId('order-coupon').innerText()) === COUPON &&
+        (await page.getByTestId('order-discount').innerText()) ===
+          `${MINUS} ${formatDOP(cOrder.discount)}` &&
+        (await page.getByTestId('order-subtotal').innerText()) === formatDOP(cOrder.subtotal) &&
+        (await page.getByTestId('order-total').innerText()) === formatDOP(cOrder.total),
+      `el detalle de ${cOrder.code} muestra el cupón ${COUPON}, su descuento de ${formatDOP(cOrder.discount)} y el total ${formatDOP(cOrder.total)}`,
+    );
+    await page.getByTestId('act-picking').click();
+    await page.getByTestId('act-packed').waitFor();
+    // Se pesan 5.37 lb en vez de 5: el 10 % se recalcula sobre lo real (cuentas hechas aparte).
+    const gross = Math.round((orderVariant.price * 537) / 100);
+    const weighedDiscount = Math.floor(gross / 10);
+    const weighedTotal = gross - weighedDiscount + cOrder.deliveryFee;
+    await page.getByTestId(`weight-${orderItem.sku}`).fill('5.37');
+    await until('la vista previa del pesaje recalcula el cupón con el peso escrito', async () =>
+      (await adminPage.getByTestId('order-total').innerText()) === formatDOP(weighedTotal)
+        ? true
+        : false,
+    );
+    const previewDiscount = await page.getByTestId('order-discount').innerText();
+    check(
+      previewDiscount === `${MINUS} ${formatDOP(weighedDiscount)}` &&
+        weighedDiscount !== cOrder.discount &&
+        (await page.getByTestId('order-subtotal').innerText()) === formatDOP(gross),
+      `la vista previa recalcula el cupón con 5.37 lb: descuento ${formatDOP(weighedDiscount)} y total ${formatDOP(weighedTotal)}`,
+    );
+    await page.getByTestId('order-unsaved').waitFor();
+    await shot(page, 'pedido-cupon-pesaje');
+    await page.getByTestId('save-weights').click();
+    await page.getByText('Pesos guardados', { exact: true }).waitFor();
+    await page.getByTestId('order-unsaved').waitFor({ state: 'detached' });
+    await page.getByTestId('act-packed').click();
+    await page.getByTestId('driver-select').waitFor();
+    await page.getByText('Total final', { exact: true }).waitFor();
+    const packedApi = (
+      await http<OrderDTO>(`/v1/admin/orders/${cOrder.id}`, await adminToken(page))
+    ).body;
+    check(
+      packedApi.finalTotal === weighedTotal &&
+        (await adminPage.getByTestId('order-total').innerText()) === formatDOP(weighedTotal) &&
+        (await page.getByTestId('order-discount').innerText()) === previewDiscount,
+      `tras empacar, el total final cobrado (${formatDOP(weighedTotal)}) es el mismo que mostraba la vista previa`,
+    );
+    await shot(page, 'pedido-cupon-empacado');
+
     // ───── Pedido real con PIN: tablero, pesaje y entrega sin PIN ─────
     const orderRes = await placeOrder(customer, 1000, undefined, 'Sin hielo seco, por favor');
     const order = orderRes.body;
@@ -906,7 +1017,7 @@ async function main() {
 
     await nav(page, 'Pedidos');
     await page.getByTestId(`order-${order.code}`).waitFor({ timeout: 15_000 });
-    await shot(page, '14-tablero');
+    await shot(page, 'tablero');
     await page.getByTestId(`order-${order.code}`).click();
     await page.getByText('Nota del cliente: Sin hielo seco').waitFor();
     const pinCard = page.getByTestId('pin-card');
@@ -917,13 +1028,19 @@ async function main() {
         (await page.getByTestId('pin-override-reason-shown').count()) === 0,
       'la tarjeta Entrega muestra: exige PIN, 5 intentos y aún sin verificar',
     );
-    await shot(page, '15-pedido-confirmado');
+    await shot(page, 'pedido-confirmado');
+    const expectedTotal = Math.round((orderVariant.price * 1023) / 100) + order.deliveryFee;
     await page.getByTestId('act-picking').click();
     await page.getByTestId('save-weights').waitFor();
     await page.getByTestId(`weight-${orderItem.sku}`).fill('10.23');
+    await until('la vista previa del pesaje suma el peso escrito', async () =>
+      (await adminPage.getByTestId('order-total').innerText()) === formatDOP(expectedTotal)
+        ? true
+        : false,
+    );
     await page.getByTestId('save-weights').click();
-    await page.getByText('Pesos guardados').waitFor();
-    await shot(page, '16-pesaje');
+    await page.getByText('Pesos guardados', { exact: true }).waitFor();
+    await shot(page, 'pesaje');
     await page.getByTestId('act-packed').click();
     await page.getByTestId('driver-select').waitFor();
     await page.getByTestId('driver-select').selectOption({ label: 'Juan Motorista' });
@@ -941,6 +1058,32 @@ async function main() {
       'el PIN del cliente no se ve en ninguna parte de la pantalla del pedido',
     );
 
+    // El diálogo maneja el teclado: el foco entra al motivo, Tab no lo saca y Escape lo cierra.
+    const focused = () =>
+      adminPage.evaluate(() => document.activeElement?.getAttribute('data-testid'));
+    const insideDialog = () =>
+      adminPage.evaluate(() => {
+        const box = document.querySelector('[role="dialog"]');
+        return !!box && box.contains(document.activeElement);
+      });
+    await page.getByTestId('deliver-override').click();
+    check(
+      (await focused()) === 'override-reason',
+      'al abrir "Entregar sin PIN", el foco queda en el campo del motivo',
+    );
+    let trapped = true;
+    for (const key of [...Array(6).fill('Tab'), ...Array(6).fill('Shift+Tab')]) {
+      await page.keyboard.press(key);
+      trapped &&= await insideDialog();
+    }
+    check(trapped, 'Tab y Mayús+Tab no sacan el foco del diálogo');
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    await until('el foco vuelve al botón que abrió el diálogo', async () =>
+      (await focused()) === 'deliver-override' ? true : false,
+    );
+    check(true, 'Escape cierra el diálogo y el foco vuelve a "Entregar sin PIN"');
+
     // Sin cobro registrado no se puede entregar, ni con motivo válido.
     await page.getByTestId('deliver-override').click();
     await page.getByTestId('override-reason').fill(OVERRIDE_REASON);
@@ -953,11 +1096,20 @@ async function main() {
     await page.getByRole('dialog').getByRole('button', { name: 'Volver' }).click();
     await page.getByTestId('act-cash').click();
     const due = await page.getByTestId('dialog-text').inputValue();
-    const expectedTotal = Math.round((orderVariant.price * 1023) / 100) + order.deliveryFee;
     check(
       due === pesos(expectedTotal),
       `el cobro propuesto es el total real con el peso pesado (RD$ ${due})`,
     );
+    await page.getByTestId('dialog-text').fill(due.replace('.', ','));
+    await page
+      .getByRole('dialog')
+      .getByText(/usa punto para los centavos/)
+      .waitFor();
+    check(
+      await page.getByTestId('dialog-confirm').isDisabled(),
+      `con coma decimal ("${due.replace('.', ',')}") el cobro no se puede registrar: el panel explica que los centavos van con punto`,
+    );
+    await page.getByTestId('dialog-text').fill(due);
     await page.getByTestId('dialog-confirm').click();
     await page.getByText('Cobro registrado').waitFor();
 
@@ -981,7 +1133,7 @@ async function main() {
         short.body.error.message.includes('mínimo 8 caracteres'),
       'el API rechaza el motivo corto con "mínimo 8 caracteres"',
     );
-    await shot(page, '17-entrega-sin-pin');
+    await shot(page, 'entrega-sin-pin');
     await page.getByTestId('override-reason').fill(OVERRIDE_REASON);
     check(
       (await page.getByTestId('override-confirm').isEnabled()) &&
@@ -1003,7 +1155,7 @@ async function main() {
       (await page.getByTestId('order-total').innerText()).includes(formatDOP(expectedTotal)),
       `el total final del pedido refleja el peso real (10.23 lb × precio + envío = ${formatDOP(expectedTotal)})`,
     );
-    await shot(page, '18-pedido-entregado');
+    await shot(page, 'pedido-entregado');
     const delivered = (await http<OrderDTO>(`/v1/admin/orders/${order.id}`, await adminToken(page)))
       .body;
     const deliveredForCustomer = (await http<OrderDTO>(`/v1/orders/${order.id}`, customer)).body;
@@ -1016,6 +1168,23 @@ async function main() {
         deliveredForCustomer.deliveryPin === null,
       'el motivo es una nota interna: el cliente no la ve y su PIN ya no aparece al entregar',
     );
+    // Privacidad: el motivo es de administración. El cliente dueño no lo lee en ninguna de sus pantallas.
+    const ownerListed = (await http<OrderDTO[]>('/v1/orders', customer)).body.find(
+      (o) => o.id === order.id,
+    );
+    check(
+      ownerListed !== undefined &&
+        !exposesOverrideReason(deliveredForCustomer) &&
+        !exposesOverrideReason(ownerListed) &&
+        hasNeutralDeliveryNote(deliveredForCustomer) &&
+        hasNeutralDeliveryNote(ownerListed),
+      'el cliente dueño no ve el motivo de "Entregar sin PIN" ni en GET /v1/orders/:id ni en GET /v1/orders: su historial dice "Entrega confirmada por administración"',
+    );
+    check(
+      exposesOverrideReason(delivered) &&
+        delivered.timeline.some((t) => t.note === `Entrega sin PIN autorizada: ${OVERRIDE_REASON}`),
+      'el administrador sí ve el motivo, en el pedido y en su historial',
+    );
 
     // ───── Resumen y cuadre de caja ─────
     await nav(page, 'Resumen');
@@ -1027,7 +1196,7 @@ async function main() {
       true,
       `el resumen muestra ${formatDOP(expectedTotal)} de efectivo en manos del repartidor`,
     );
-    await shot(page, '19-resumen-final');
+    await shot(page, 'resumen-final');
     await nav(page, 'Pagos y caja');
     await page.getByTestId('tab-cash').click();
     await page.getByTestId(`settle-${e164(DRIVER_PHONE)}`).click();
@@ -1039,11 +1208,91 @@ async function main() {
       .first()
       .waitFor();
     check(true, 'al registrar la entrega del efectivo, el saldo del repartidor queda en RD$ 0.00');
-    await shot(page, '20-caja');
+    await shot(page, 'caja');
 
     // ───── Bitácora ─────
     const token = await adminToken(page);
-    const adminPage: Page = page;
+
+    // Las dos rutas que llevan secretos: un repartidor (creado por la API de administración) teclea un
+    // PIN equivocado y alguien falla el código de acceso del administrador. Deben quedar anotadas.
+    const must = async <T>(what: string, res: Promise<{ status: number; body: T }>) => {
+      const r = await res;
+      if (r.status >= 300) {
+        throw new Error(`✖ ${what} respondió ${r.status}: ${JSON.stringify(r.body).slice(0, 200)}`);
+      }
+      return r.body;
+    };
+    const post = (path: string, who: string, body: unknown) =>
+      http<OrderDTO>(path, who, { method: 'POST', body });
+    await must(
+      'invitar al repartidor',
+      http('/v1/admin/users', token, {
+        method: 'POST',
+        body: { phone: API_DRIVER_PHONE, name: 'Pedro API', role: 'driver' },
+      }),
+    );
+    const apiDriver = await apiLogin(API, API_DRIVER_PHONE);
+    const apiDriverId = need(
+      (await http<{ id: string; phone: string }[]>('/v1/admin/drivers', token)).body.find(
+        (d) => d.phone === e164(API_DRIVER_PHONE),
+      )?.id,
+      'el repartidor creado por la API',
+    );
+    const pinOrder = (await placeOrder(customer2, 500)).body;
+    const pinOrderPin = need(
+      (await http<OrderDTO>(`/v1/orders/${pinOrder.id}`, customer2)).body.deliveryPin,
+      'el PIN del pedido del segundo cliente',
+    );
+    const asAdmin = (path: string, body: unknown) =>
+      post(`/v1/admin/orders/${pinOrder.id}${path}`, token, body);
+    await must('empezar a preparar', asAdmin('/transition', { to: 'picking' }));
+    await must(
+      'guardar los pesos',
+      asAdmin('/weights', {
+        weights: pinOrder.items.map((i) => ({ itemId: i.id, finalQuantity: i.quantity })),
+      }),
+    );
+    await must('empacar', asAdmin('/transition', { to: 'packed' }));
+    await must('asignar el repartidor', asAdmin('/assign-driver', { driverId: apiDriverId }));
+    await must(
+      'salir a entregar',
+      post(`/v1/driver/orders/${pinOrder.id}/transition`, apiDriver, { to: 'out_for_delivery' }),
+    );
+    const toCollect = need(
+      (await http<OrderDTO>(`/v1/admin/orders/${pinOrder.id}`, token)).body.finalTotal,
+      'el total a cobrar',
+    );
+    await must(
+      'cobrar en efectivo',
+      post(`/v1/driver/orders/${pinOrder.id}/collect`, apiDriver, { amount: toCollect }),
+    );
+    // Un cero al inicio: ninguna cantidad del resumen se escribe así, así que no coincide por azar.
+    const WRONG_PIN = pinOrderPin === '0731' ? '0732' : '0731';
+    const wrongTry = await http<{ error: { code: string } }>(
+      `/v1/driver/orders/${pinOrder.id}/transition`,
+      apiDriver,
+      { method: 'POST', body: { to: 'delivered', pin: WRONG_PIN } },
+    );
+    check(
+      wrongTry.status === 409 && wrongTry.body.error.code === 'pin_incorrect',
+      'el repartidor que teclea un PIN equivocado por la API recibe "pin_incorrect" (409)',
+    );
+    await must(
+      'pedir el código del administrador',
+      http('/v1/auth/otp/request', undefined, {
+        method: 'POST',
+        body: { phone: e164(ADMIN_PHONE) },
+      }),
+    );
+    const badLogin = await http<{ error: { code: string } }>('/v1/auth/otp/verify', undefined, {
+      method: 'POST',
+      body: { phone: e164(ADMIN_PHONE), code: WRONG_OTP },
+    });
+    check(
+      badLogin.status === 400,
+      'un código de acceso equivocado del administrador se rechaza (400)',
+    );
+
     await padAudit(token, await idOf(priceItem.sku), 55);
     await nav(page, 'Bitácora');
     await page.getByTestId('audit-page').waitFor();
@@ -1063,20 +1312,32 @@ async function main() {
       );
     };
     const couponLog = await auditEntries(token, 'coupons.*');
+    const couponUpdates = couponLog.filter(
+      (e) => e.action === 'coupons.update' && e.status === 200,
+    );
     check(
-      couponLog.some((e) => e.action === 'coupons.create' && e.status === 201) &&
-        couponLog.filter((e) => e.action === 'coupons.update' && e.status === 200).length === 2,
-      'la bitácora registra el cupón creado y los dos cambios (pausar y activar)',
+      couponLog.some(
+        (e) =>
+          e.action === 'coupons.create' &&
+          e.status === 201 &&
+          e.summary === `Cupón creado: ${COUPON}`,
+      ) &&
+        couponUpdates.length === 2 &&
+        couponUpdates.some((e) => e.summary === `Cupón modificado: ${COUPON} (pausado)`) &&
+        couponUpdates.some((e) => e.summary === `Cupón modificado: ${COUPON} (reactivado)`),
+      `la bitácora registra el cupón ${COUPON} creado y los dos cambios (pausado y reactivado), con su código en el resumen`,
     );
     await filterAudit('coupons.*', couponLog.length);
     const created = page.getByTestId('audit-row').filter({ hasText: 'coupons.create' });
     await created.getByTestId('audit-expand').click();
     const detail = await page.getByTestId('audit-detail').innerText();
     check(
-      detail.includes('"kind": "percent"') && !detail.includes(COUPON) && !/"code"/.test(detail),
-      'el detalle del cupón creado muestra el tipo y el valor, pero no el código',
+      (await created.innerText()).includes(`Cupón creado: ${COUPON}`) &&
+        detail.includes('"kind": "percent"') &&
+        new RegExp(`"code": "${COUPON}"`, 'i').test(detail),
+      'el detalle del cupón creado muestra el código, el tipo y el valor: el código de un cupón es público',
     );
-    await shot(page, '21-bitacora-cupones');
+    await shot(page, 'bitacora-cupones');
 
     const lotLog = await auditEntries(token, 'inventory.receive_lot');
     check(
@@ -1112,19 +1373,82 @@ async function main() {
       'la bitácora del panel muestra la entrega y el intento rechazado por motivo corto',
     );
     await page.getByTestId('audit-expand').first().click();
-    await shot(page, '22-bitacora-pedido');
+    await shot(page, 'bitacora-pedido');
 
+    const pinAttempt = await until('la bitácora anota el PIN equivocado del repartidor', async () =>
+      (await auditEntries(token, 'driver.transition')).find((e) => e.status === 409),
+    );
+    const failedLogin = await until(
+      'la bitácora anota el acceso fallido',
+      async () => (await auditEntries(token, 'auth.login_failed'))[0],
+    );
+    check(
+      pinAttempt.actorRole === 'driver' &&
+        pinAttempt.entityId === pinOrder.id &&
+        pinAttempt.summary.includes('«delivered»') &&
+        pinAttempt.summary.includes('rechazado (pin_incorrect)') &&
+        pinAttempt.payload?.to === 'delivered' &&
+        !('pin' in (pinAttempt.payload ?? {})),
+      'la bitácora anota el PIN equivocado del repartidor como rechazado (pin_incorrect), sin guardar el PIN',
+    );
+    check(
+      failedLogin.actorRole === 'admin' &&
+        failedLogin.status === 400 &&
+        failedLogin.summary.startsWith('Intento de acceso fallido'),
+      'la bitácora anota el acceso fallido del administrador, sin guardar el código tecleado',
+    );
+    await filterAudit('auth.login_failed', 1);
+    await adminPage.getByText('Intento de acceso fallido').first().waitFor();
+    const driverEntries = await auditEntries(token, 'driver.*');
+    await filterAudit('driver.*', driverEntries.length);
+    check(
+      (await adminPage.getByTestId('audit-row').allInnerTexts()).some((t) =>
+        t.includes('rechazado (pin_incorrect)'),
+      ),
+      'el panel muestra esos dos intentos en español',
+    );
+
+    const pins = new Set([pin, pinOrderPin]);
     const secrets = new Set<string>([
       token,
       customer,
-      pin,
+      customer2,
+      apiDriver,
+      ...pins,
+      WRONG_PIN,
+      WRONG_OTP,
       ...[...apiLog.text.matchAll(/Código para \+\d+: (\d{6})/g)].map((m) => m[1]!),
     ]);
+    // Los PIN reales (4 dígitos) pueden coincidir con una cantidad del resumen ("cantidad 4000"): solo
+    // se buscan en el cuerpo guardado. El PIN equivocado empieza en 0 y no puede coincidir.
+    const textSecrets = new Set([...secrets].filter((x) => !pins.has(x)));
+    const couponKeys = new Set(['code']);
+    const leaksOf = (e: Parameters<typeof leaksInEntry>[0]) =>
+      leaksInEntry(
+        e,
+        secrets,
+        textSecrets,
+        e.action.startsWith('coupons.') ? couponKeys : undefined,
+      );
+    const planted = (where: 'summary' | 'path' | 'entityId' | 'payload', clean = false) =>
+      leaksOf({
+        action: 'prueba.fuga',
+        summary: where === 'summary' && !clean ? `Intento con ${WRONG_PIN}` : 'Cambio de estado',
+        path: where === 'path' && !clean ? `/v1/x/${WRONG_OTP}` : '/v1/x/:id',
+        entityId: where === 'entityId' && !clean ? WRONG_PIN : 'a1b2c3',
+        payload: where === 'payload' && !clean ? { nota: WRONG_PIN } : { to: 'delivered' },
+      }).length;
+    check(
+      (['summary', 'path', 'entityId', 'payload'] as const).every(
+        (w) => planted(w) > 0 && planted(w, true) === 0,
+      ),
+      'el detector de fugas ve un PIN o un código en el resumen, la ruta, el id y el cuerpo, y deja pasar lo limpio',
+    );
     const everything = await auditEntries(token);
-    const leaked = everything.flatMap((e) => leaksIn(e.payload, secrets, `${e.action}`));
+    const leaked = everything.flatMap(leaksOf);
     check(
       leaked.length === 0,
-      `ningún movimiento de la bitácora (${everything.length}) guarda PIN, códigos, tokens ni teléfonos completos${leaked.length ? `: ${leaked.slice(0, 3).join(' | ')}` : ''}`,
+      `ningún movimiento de la bitácora (${everything.length}, con el PIN equivocado y el acceso fallido) guarda PIN, códigos, tokens ni teléfonos completos${leaked.length ? `: ${leaked.slice(0, 3).join(' | ')}` : ''}`,
     );
 
     // ───── Personal: ve menos y no cambia cupones ─────
@@ -1168,7 +1492,7 @@ async function main() {
     await sp.getByTestId(`coupon-redemptions-${COUPON}`).click();
     await sp.getByTestId(`coupon-redemption-${couponOrder.body.code}`).waitFor();
     check(true, 'el personal sí puede ver quién usó el cupón');
-    await shot(sp, '23-personal-cupones');
+    await shot(sp, 'personal-cupones');
     await sp.getByRole('dialog').getByRole('button', { name: 'Cerrar', exact: true }).click();
     await nav(sp, 'Catálogo y precios');
     await sp.getByTestId(`row-${orderItem.sku}`).waitFor();
@@ -1179,6 +1503,12 @@ async function main() {
       'el personal ve el catálogo sin poder cambiar precios, fotos ni importar',
     );
     const staffToken = await adminToken(sp);
+    const staffView = (await http<OrderDTO>(`/v1/admin/orders/${order.id}`, staffToken)).body;
+    check(
+      staffView.pinOverrideReason === OVERRIDE_REASON &&
+        staffView.timeline.some((t) => t.note === `Entrega sin PIN autorizada: ${OVERRIDE_REASON}`),
+      'el personal sí ve el motivo de "Entregar sin PIN", como el administrador',
+    );
     const denied = await Promise.all([
       http('/v1/admin/audit', staffToken),
       http('/v1/admin/zones', staffToken),
@@ -1195,7 +1525,13 @@ async function main() {
     );
     await staffCtx.close();
 
-    // ───── Móvil y modo claro ─────
+    // ───── Móvil (390 px) y modo claro: ninguna pantalla se desborda a los lados ─────
+    // Un pedido más, con cupón y sin pesar: es la pantalla de pedido más ancha (pesos y totales).
+    const mobileOrder = (await placeOrder(customer2, 500, COUPON)).body;
+    check(
+      mobileOrder.couponCode === COUPON,
+      `un pedido más con el cupón (${mobileOrder.code}), por pesar, para ver el detalle en el celular`,
+    );
     const mobile = await browser.newContext({
       viewport: { width: 390, height: 844 },
       deviceScaleFactor: 2,
@@ -1204,9 +1540,79 @@ async function main() {
     await watch(mobile);
     const mp = await mobile.newPage();
     await mp.addInitScript((t) => localStorage.setItem('jellyfish.admin.token', t), token);
+    const fits = async (p: Page, what: string) => {
+      const { scroll, client } = await p.evaluate(() => ({
+        scroll: document.documentElement.scrollWidth,
+        client: document.documentElement.clientWidth,
+      }));
+      const wide =
+        scroll <= client
+          ? []
+          : await p.evaluate(() =>
+              [...document.querySelectorAll('.main *')]
+                .filter(
+                  (el) =>
+                    el.getBoundingClientRect().right > window.innerWidth + 1 &&
+                    !el.closest('.table-wrap'),
+                )
+                .slice(-6)
+                .map((el) => `${el.tagName.toLowerCase()}.${el.className}`),
+            );
+      check(
+        scroll <= client,
+        `a 390 px ${what} no se desborda a los lados (${scroll} px de contenido en ${client})${wide.length ? `: ${wide.join(' | ')}` : ''}`,
+      );
+    };
     await mp.goto(WEB);
     await mp.getByRole('heading', { name: 'Resumen' }).waitFor();
-    await shot(mp, '24-movil-claro');
+    await mp.getByText(mobileOrder.code).first().waitFor();
+    await shot(mp, 'movil-resumen');
+    await fits(mp, 'el Resumen (con pedidos)');
+    // [pantalla, ruta, espera a que cargue, nombre de la captura (si se guarda)]
+    const screens: [string, string, (p: Page) => Promise<unknown>, string?][] = [
+      ['Pedidos', '/pedidos', (p) => p.getByTestId(`order-${mobileOrder.code}`).waitFor()],
+      ['Inventario', '/inventario', (p) => p.getByTestId(`inv-${stockItem.sku}`).waitFor()],
+      ['Lotes', '/inventario?tab=lotes', (p) => p.getByTestId(`lot-row-${LOT_SOON}`).waitFor()],
+      [
+        'Catálogo',
+        '/catalogo',
+        (p) => p.getByTestId(`row-${orderItem.sku}`).waitFor(),
+        'movil-catalogo',
+      ],
+      ['Cupones', '/cupones', (p) => p.getByTestId(`coupon-row-${COUPON}`).waitFor()],
+      ['Pagos y caja', '/pagos', (p) => p.getByTestId('tab-cash').waitFor()],
+      ['Zonas de entrega', '/zonas', (p) => p.getByTestId('new-zone').waitFor()],
+      ['Equipo', '/equipo', (p) => p.getByTestId('team-add').waitFor()],
+      [
+        'la Bitácora (con un movimiento abierto)',
+        '/bitacora',
+        async (p) => {
+          await p.getByTestId('audit-expand').first().click();
+          await p.getByTestId('audit-detail').first().waitFor();
+        },
+        'movil-bitacora',
+      ],
+      [
+        'el detalle de un pedido con cupón, por pesar',
+        `/pedidos/${mobileOrder.id}`,
+        async (p) => {
+          await p.getByTestId('order-coupon').waitFor();
+          await p.getByTestId(`weight-${orderItem.sku}`).waitFor();
+        },
+        'movil-pedido',
+      ],
+    ];
+    for (const [what, path, ready, shotName] of screens) {
+      await mp.goto(`${WEB}${path}`);
+      await ready(mp);
+      if (shotName) await shot(mp, shotName);
+      await fits(mp, what);
+    }
+    check(
+      (await mp.getByTestId('order-discount').innerText()).startsWith(MINUS) &&
+        (await mp.getByTestId('order-total').innerText()) === formatDOP(mobileOrder.total),
+      'en el celular el detalle del pedido muestra el descuento del cupón y el total',
+    );
 
     check(
       tolerated.length === 1 && tolerated[0]!.includes('409'),

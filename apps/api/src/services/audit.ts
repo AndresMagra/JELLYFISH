@@ -53,7 +53,11 @@ export function isSecretKey(key: string): boolean {
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
-function sanitizeValue(value: unknown, depth: number): Json | undefined {
+function sanitizeValue(
+  value: unknown,
+  depth: number,
+  keep?: ReadonlySet<string>,
+): Json | undefined {
   if (value === null || typeof value === 'boolean') return value;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value === 'string') {
@@ -65,7 +69,7 @@ function sanitizeValue(value: unknown, depth: number): Json | undefined {
   if (Array.isArray(value)) {
     const items = value
       .slice(0, MAX_ARRAY_ITEMS)
-      .map((v) => sanitizeValue(v, depth + 1))
+      .map((v) => sanitizeValue(v, depth + 1, keep))
       .map((v) => (v === undefined ? null : v));
     if (value.length > MAX_ARRAY_ITEMS) items.push(`…(${value.length - MAX_ARRAY_ITEMS} más)`);
     return items;
@@ -73,7 +77,8 @@ function sanitizeValue(value: unknown, depth: number): Json | undefined {
   const out: { [key: string]: Json } = {};
   let kept = 0;
   for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
-    if (FORBIDDEN_KEYS.has(key) || isSecretKey(key)) continue;
+    if (FORBIDDEN_KEYS.has(key)) continue;
+    if (isSecretKey(key) && !keep?.has(normalizeKey(key))) continue;
     if (kept >= MAX_KEYS) {
       out._more = '…';
       break;
@@ -83,7 +88,7 @@ function sanitizeValue(value: unknown, depth: number): Json | undefined {
       kept++;
       continue;
     }
-    const clean = sanitizeValue(v, depth + 1);
+    const clean = sanitizeValue(v, depth + 1, keep);
     if (clean !== undefined) {
       out[key] = clean;
       kept++;
@@ -95,13 +100,16 @@ function sanitizeValue(value: unknown, depth: number): Json | undefined {
 /**
  * Cuerpo y parámetros de consulta listos para guardar: sin claves secretas, teléfonos enmascarados,
  * textos recortados a 200 caracteres, profundidad y tamaño acotados. Un cuerpo de texto (el CSV de
- * importación) no se guarda, solo su tamaño.
+ * importación) no se guarda, solo su tamaño. `keepKeys` son claves que por su nombre parecen secretas
+ * y en esa ruta no lo son (el `code` de un cupón es público; el de /v1/auth es un OTP).
  */
 export function sanitizePayload(
   body: unknown,
   query?: unknown,
   contentType?: string,
+  keepKeys?: readonly string[],
 ): { [key: string]: Json } | null {
+  const keep = keepKeys && keepKeys.length > 0 ? new Set(keepKeys.map(normalizeKey)) : undefined;
   let out: { [key: string]: Json } | null = null;
   if (typeof body === 'string') {
     out = {
@@ -110,7 +118,7 @@ export function sanitizePayload(
       ...(contentType ? { _contentType: contentType } : {}),
     };
   } else if (body && typeof body === 'object') {
-    const clean = sanitizeValue(body, 0);
+    const clean = sanitizeValue(body, 0, keep);
     out = Array.isArray(clean) ? { _items: clean } : ((clean as { [key: string]: Json }) ?? {});
   }
   if (query && typeof query === 'object') {
@@ -146,6 +154,8 @@ export function normalizePath(url: string): string {
 export interface DetailInput {
   body: Record<string, unknown>;
   query: Record<string, unknown>;
+  /** Campos de la respuesta que la ruta pidió con `fromResponse` (solo si respondió bien). */
+  result?: Record<string, unknown>;
 }
 
 interface RouteSpec {
@@ -156,6 +166,10 @@ interface RouteSpec {
   detail?: (input: DetailInput) => string | undefined;
   /** Cuando el id de la entidad no es `:id` de la ruta. */
   entityId?: (input: DetailInput) => string | undefined;
+  /** Claves del cuerpo que se conservan aunque su nombre parezca secreto (ver `sanitizePayload`). */
+  keepKeys?: readonly string[];
+  /** Textos de primer nivel de la respuesta exitosa que `detail` necesita (la ruta no los trae). */
+  fromResponse?: readonly string[];
 }
 
 const str = (v: unknown): string | undefined =>
@@ -164,6 +178,10 @@ const keysOf = (b: Record<string, unknown>) => {
   const k = Object.keys(b).filter((key) => !key.startsWith('_'));
   return k.length > 0 ? `campos: ${k.join(', ')}` : undefined;
 };
+
+/** El código sale de la respuesta (ya normalizado); en un rechazo, de lo que se tecleó al crear. */
+const couponCode = ({ body, result }: DetailInput) =>
+  (str(result?.code) ?? str(body.code))?.trim() || undefined;
 
 const KNOWN_ROUTES: Record<string, RouteSpec> = {
   'POST /v1/admin/orders/:id/transition': {
@@ -210,6 +228,32 @@ const KNOWN_ROUTES: Record<string, RouteSpec> = {
     detail: ({ body }) =>
       body.type ? `${str(body.type)} ${str(body.delta) ?? ''}`.trim() : undefined,
     entityId: ({ body }) => str(body.variantId),
+  },
+  'POST /v1/admin/coupons': {
+    action: 'coupons.create',
+    entity: 'coupon',
+    label: 'Cupón creado',
+    detail: couponCode,
+    keepKeys: ['code'],
+    fromResponse: ['code'],
+  },
+  'PATCH /v1/admin/coupons/:id': {
+    action: 'coupons.update',
+    entity: 'coupon',
+    label: 'Cupón modificado',
+    detail: (input) => {
+      const others = Object.keys(input.body).filter((k) => !k.startsWith('_') && k !== 'active');
+      const what = [
+        input.body.active === false ? 'pausado' : input.body.active === true ? 'reactivado' : null,
+        others.length > 0 ? `campos: ${others.join(', ')}` : null,
+      ]
+        .filter(Boolean)
+        .join('; ');
+      const code = couponCode(input);
+      if (!code) return what || undefined;
+      return what ? `${code} (${what})` : code;
+    },
+    fromResponse: ['code'],
   },
   'POST /v1/admin/inventory/lots': {
     action: 'inventory.receive_lot',

@@ -3,7 +3,7 @@
  * modo demo (catálogo sembrado de data/catalog) y con la pasarela de tarjeta simulada.
  *
  *   npm run e2e:customer                      (capturas en tmp/e2e-customer)
- *   E2E_OUT=/ruta npm run e2e:customer
+ *   E2E_OUT=/ruta npm run e2e:customer        (capturas en otra carpeta; ahí no se borra nada)
  *   E2E_SKIP_EXPORT=1 npm run e2e:customer    (reutiliza la app empaquetada en tmp/e2e-customer-web)
  *
  * Recorre: inicio y categorías, búsqueda con sinónimos, producto con presentaciones y reglas de
@@ -16,7 +16,7 @@
  * un iPhone/Android reales (navegador seguro, teclado, notificaciones).
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   type CategoryDTO,
@@ -34,9 +34,12 @@ import {
 import { type Locator, type Page, chromium } from 'playwright-core';
 import {
   CHROME,
+  ISOLATED_API_ENV,
   apiLog,
   apiLogin,
+  assertPortFree,
   check,
+  clearOwnShots,
   log,
   otpFor,
   root,
@@ -44,10 +47,12 @@ import {
   sleep,
   start,
   stopAll,
+  track,
   waitFor,
 } from './e2e-lib';
 
-const OUT = resolve(process.env.E2E_OUT ?? `${root}/tmp/e2e-customer`);
+const DEFAULT_OUT = `${root}/tmp/e2e-customer`;
+const OUT = resolve(process.env.E2E_OUT ?? DEFAULT_OUT);
 const API_PORT = 3998;
 const WEB_PORT = 8089;
 const API = `http://localhost:${API_PORT}`;
@@ -67,12 +72,6 @@ const PIXEL = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
 );
-
-mkdirSync(OUT, { recursive: true });
-// Las capturas se numeran en orden: las de una corrida anterior solo confundirían.
-for (const f of readdirSync(OUT)) {
-  if (/^(\d\d-.*|FALLO)\.png$/.test(f)) rmSync(`${OUT}/${f}`);
-}
 
 const shots: string[] = [];
 /** Captura numerada en orden de llegada (01-inicio.png, 02-…); sirve con cualquier pestaña. */
@@ -283,8 +282,10 @@ async function exportWeb(): Promise<void> {
         CI: '1',
         TMPDIR: METRO_TMP,
       },
+      detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    track(p, true);
     const keep = (d: Buffer) => {
       out = (out + d.toString()).slice(-3000);
     };
@@ -314,19 +315,17 @@ function assertBundleTargetsApi() {
 
 async function main() {
   // Un API viejo en el mismo puerto contaminaría la prueba sin avisar.
-  if (
-    await fetch(`${API}/health`).then(
-      () => true,
-      () => false,
-    )
-  ) {
-    throw new Error(`El puerto ${API_PORT} ya está en uso: cierra el API anterior.`);
-  }
+  await assertPortFree(API_PORT);
+  await assertPortFree(WEB_PORT);
+  mkdirSync(OUT, { recursive: true });
+  // Las capturas se numeran en orden: las de una corrida anterior solo confundirían.
+  clearOwnShots(OUT, DEFAULT_OUT);
   log('Iniciando API en modo demo…');
   start(
     'npx',
     ['tsx', 'apps/api/src/server.ts'],
     {
+      ...ISOLATED_API_ENV,
       JELLYFISH_DEMO: '1',
       JELLYFISH_SEED: '1',
       PAYMENTS_MOCK: '1',

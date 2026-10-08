@@ -138,7 +138,10 @@ describe('applyPhotoManifest', () => {
       expect(item.photoIllustrative, item.sku).toBe(true);
     }
     expect(r.report).toMatchObject({ withoutPhoto: [], orphans: [], skippedUnverified: [] });
-    expect(r.report.updated).toHaveLength(items.length);
+    // La semilla ya trae las fotos aplicadas: cada fila queda "sin cambios" (o "actualizada" si no).
+    const touched = [...r.report.updated, ...r.report.unchanged].sort();
+    expect(touched).toEqual(items.map((i) => i.sku).sort());
+    expect(touched).toHaveLength(manifest.items.length);
   });
 
   it('es idempotente: aplicarlo dos veces deja el mismo texto y no reporta cambios', () => {

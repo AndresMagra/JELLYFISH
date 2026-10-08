@@ -20,10 +20,12 @@ import {
   Loading,
   Modal,
   PageHead,
+  StaleNote,
   useToast,
 } from '../components/ui';
 import { API_URL, api, download } from '../lib/api';
-import { centavosToPesos, pesosToCentavos } from '../lib/format';
+import { MONEY_ERROR, centavosToPesos, pesosToCentavos } from '../lib/format';
+import { checkPhotoEdit } from '../lib/photo';
 import './panel-extra.css';
 
 const SOURCE: Record<
@@ -138,9 +140,16 @@ export function Catalog() {
           </span>
         </div>
 
+        {list.isError && list.data ? (
+          <StaleNote
+            error={list.error}
+            onRetry={() => void list.refetch()}
+            busy={list.isFetching}
+          />
+        ) : null}
         {list.isLoading ? (
           <Loading />
-        ) : list.isError ? (
+        ) : list.isError && !list.data ? (
           <ErrorBox error={list.error} onRetry={() => void list.refetch()} />
         ) : rows.length === 0 ? (
           <Empty
@@ -253,6 +262,8 @@ function Row({
         <td className="right nowrap">
           <input
             className={`input num ${cents === null ? 'invalid' : ''}`}
+            title={cents === null ? MONEY_ERROR : undefined}
+            aria-invalid={cents === null}
             value={price}
             disabled={!canEdit}
             inputMode="decimal"
@@ -299,7 +310,9 @@ function Row({
         </td>
         <td className="right">
           <input
-            className="input num"
+            className={`input num ${cost.trim() !== '' && costCents === null ? 'invalid' : ''}`}
+            title={cost.trim() !== '' && costCents === null ? MONEY_ERROR : undefined}
+            aria-invalid={cost.trim() !== '' && costCents === null}
             style={{ width: 90 }}
             value={cost}
             placeholder="—"
@@ -339,14 +352,6 @@ function Row({
 }
 
 // ───────────── Foto del artículo ─────────────
-
-/** El API solo guarda una ruta o una URL: no hay carga de archivos en el panel. */
-function photoRefError(text: string): string | null {
-  if (!text) return null;
-  if (text.length > 300) return 'Máximo 300 caracteres';
-  if (/^\/(?!\/)\S+$/.test(text) || /^https?:\/\/\S+$/i.test(text)) return null;
-  return 'Escribe una ruta que empiece con / (como /photos/archivo.webp) o una URL que empiece con https://';
-}
 
 /** Las rutas `/photos/…` se resuelven contra el API; en listas se usa la miniatura liviana si existe. */
 function PhotoThumb({
@@ -400,15 +405,13 @@ function PhotoDialog({
 }) {
   const [photo, setPhoto] = useState(r.photo);
   const [illustrative, setIllustrative] = useState(r.photoIllustrative);
-  const clean = photo.trim();
-  const error = photoRefError(clean);
-  const photoChanged = clean !== r.photo.trim();
-  const changed = photoChanged || illustrative !== r.photoIllustrative;
+  const { clean, changed, error, legacyWarning, body } = checkPhotoEdit(r, photo, illustrative);
 
   return (
     <Modal
       title={`Foto de ${r.productName}${r.variant ? ` ${r.variant}` : ''}`}
       onClose={onClose}
+      busy={busy}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -417,14 +420,7 @@ function PhotoDialog({
           <Button
             busy={busy}
             disabled={!changed || error !== null}
-            onClick={() =>
-              onSave({
-                ...(photoChanged ? { photo: clean } : {}),
-                ...(illustrative !== r.photoIllustrative
-                  ? { photoIllustrative: illustrative }
-                  : {}),
-              })
-            }
+            onClick={() => onSave(body)}
             data-testid={`photo-save-${r.sku}`}
           >
             Guardar foto
@@ -441,6 +437,12 @@ function PhotoDialog({
           big
         />
         <div className="stack grow" style={{ gap: 12 }}>
+          {legacyWarning ? (
+            <div className="banner warn small" data-testid={`photo-legacy-${r.sku}`}>
+              La foto guardada (“{clean}”) no es una ruta válida y la app no puede cargarla. Puedes
+              dejarla así y cambiar lo demás, o escribir una ruta nueva. {legacyWarning}
+            </div>
+          ) : null}
           <Field
             label="Ruta o URL de la foto"
             error={error}
@@ -522,6 +524,7 @@ function ImportDialog({ onClose }: { onClose: () => void }) {
     <Modal
       title="Importar inventario y precios (CSV)"
       onClose={onClose}
+      busy={run.isPending}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>

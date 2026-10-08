@@ -64,6 +64,29 @@ describe('bitácora: saneamiento del cuerpo', () => {
     expect(isSecretKey('lotCode')).toBe(false);
   });
 
+  it('keepKeys conserva solo las claves pedidas; el resto de secretos y la consulta siguen limpios', () => {
+    const body = {
+      code: 'VERANO10',
+      otp: '654321',
+      pin: '1234',
+      nested: { code: 'X', token: 't' },
+    };
+    expect(sanitizePayload(body, { code: '999' })).toEqual({ nested: {} });
+    expect(sanitizePayload(body, { code: '999' }, undefined, ['code'])).toEqual({
+      code: 'VERANO10',
+      nested: { code: 'X' },
+    });
+    // la lista de claves no abre otras claves ni se confunde con mayúsculas o guiones
+    expect(
+      sanitizePayload({ Code: 'a', otp: 'b', otpCode: 'c' }, undefined, undefined, ['CODE']),
+    ).toEqual({ Code: 'a' });
+    expect(sanitizePayload({ code: '1' }, undefined, undefined, [])).toEqual({});
+    // la consulta nunca conserva claves secretas, ni siquiera con keepKeys
+    expect(sanitizePayload(null, { code: '999', page: '2' }, undefined, ['code'])).toEqual({
+      _query: { page: '2' },
+    });
+  });
+
   it('recorta textos largos a 200 caracteres y marca el corte', () => {
     const out = sanitizePayload({ note: 'a'.repeat(500), short: 'b'.repeat(200) })!;
     expect(out.note).toBe(`${'a'.repeat(200)}…`);
@@ -148,9 +171,17 @@ describe('bitácora: rutas y acciones', () => {
     expect(describeRoute('POST', '/v1/admin/orders/:id/transition').action).toBe(
       'orders.transition',
     );
+    expect(describeRoute('POST', '/v1/admin/coupons')).toMatchObject({
+      action: 'coupons.create',
+      entity: 'coupon',
+      label: 'Cupón creado',
+    });
+    expect(describeRoute('PATCH', '/v1/admin/coupons/:id')).toMatchObject({
+      action: 'coupons.update',
+      entity: 'coupon',
+      label: 'Cupón modificado',
+    });
     // rutas que aún no están en la tabla
-    expect(describeRoute('POST', '/v1/admin/coupons').action).toBe('coupons.create');
-    expect(describeRoute('PATCH', '/v1/admin/coupons/:id').action).toBe('coupons.update');
     expect(describeRoute('DELETE', '/v1/admin/coupons/:id').action).toBe('coupons.delete');
     expect(describeRoute('POST', '/v1/admin/coupons/:id/pause').action).toBe('coupons.pause');
     expect(describeRoute('POST', '/v1/driver/foo-bar/:id/do-it').action).toBe(
@@ -167,6 +198,73 @@ describe('bitácora: rutas y acciones', () => {
       'Cambio de estado del pedido: a «packed» — rechazado (weights_missing)',
     );
     expect(buildSummary(desc, { body: {}, query: {} }, 403)).toContain('rechazado (403)');
+  });
+
+  it('el resumen de un cupón dice cuál: crear, pausar, reactivar, editar y rechazos', () => {
+    const create = describeRoute('POST', '/v1/admin/coupons');
+    const patch = describeRoute('PATCH', '/v1/admin/coupons/:id');
+    const sum = (
+      d: typeof create,
+      body: Record<string, unknown>,
+      result?: Record<string, unknown>,
+      status = 200,
+      error?: string,
+    ) => buildSummary(d, { body, query: {}, result }, status, error);
+
+    // al crear manda el código normalizado de la respuesta, no lo que se tecleó
+    expect(sum(create, { code: 'verano10 ' }, { code: 'VERANO10' }, 201)).toBe(
+      'Cupón creado: VERANO10',
+    );
+    expect(sum(patch, { active: false }, { code: 'VERANO10' })).toBe(
+      'Cupón modificado: VERANO10 (pausado)',
+    );
+    expect(sum(patch, { active: true }, { code: 'VERANO10' })).toBe(
+      'Cupón modificado: VERANO10 (reactivado)',
+    );
+    expect(sum(patch, { value: 1500, endsAt: null, active: false }, { code: 'VERANO10' })).toBe(
+      'Cupón modificado: VERANO10 (pausado; campos: value, endsAt)',
+    );
+    expect(sum(patch, { value: 1500 }, { code: 'VERANO10' })).toBe(
+      'Cupón modificado: VERANO10 (campos: value)',
+    );
+    // un rechazo no trae respuesta: crear usa lo tecleado; editar solo puede decir qué se intentó
+    expect(sum(create, { code: 'verano10' }, undefined, 403, 'forbidden')).toBe(
+      'Cupón creado: verano10 — rechazado (forbidden)',
+    );
+    expect(sum(patch, { active: false }, undefined, 404, 'not_found')).toBe(
+      'Cupón modificado: pausado — rechazado (not_found)',
+    );
+    expect(sum(patch, {}, undefined, 400, 'validation')).toBe(
+      'Cupón modificado — rechazado (validation)',
+    );
+  });
+
+  it('ninguna ruta de escritura del panel ni del repartidor cae en el resumen genérico', () => {
+    const writes: [string, string][] = [
+      ['POST', '/v1/admin/orders/:id/transition'],
+      ['POST', '/v1/admin/orders/:id/weights'],
+      ['POST', '/v1/admin/orders/:id/assign-driver'],
+      ['POST', '/v1/admin/orders/:id/collect-cash'],
+      ['PATCH', '/v1/admin/variants/:id'],
+      ['POST', '/v1/admin/catalog/import'],
+      ['POST', '/v1/admin/inventory/adjust'],
+      ['POST', '/v1/admin/inventory/lots'],
+      ['POST', '/v1/admin/zones'],
+      ['PATCH', '/v1/admin/zones/:id'],
+      ['POST', '/v1/admin/users'],
+      ['POST', '/v1/admin/users/:id/role'],
+      ['POST', '/v1/admin/coupons'],
+      ['PATCH', '/v1/admin/coupons/:id'],
+      ['POST', '/v1/admin/payments/:id/mark-paid'],
+      ['POST', '/v1/admin/payments/:id/mark-refunded'],
+      ['POST', '/v1/admin/cash/settle'],
+      ['POST', '/v1/driver/orders/:id/transition'],
+      ['POST', '/v1/driver/orders/:id/collect'],
+    ];
+    for (const [method, pattern] of writes) {
+      const { label } = describeRoute(method, pattern);
+      expect(label, `${method} ${pattern}`).not.toBe(`${method} ${pattern}`);
+    }
   });
 });
 
@@ -362,6 +460,97 @@ describe('bitácora de auditoría', () => {
       expect(last.summary).toBe(
         'Cambio de estado del pedido: a «packed» — rechazado (weights_missing)',
       );
+    });
+
+    it('un cupón creado, pausado y editado deja su código en el resumen y en el payload', async () => {
+      const post = (headers = admin) =>
+        app.inject({
+          method: 'POST',
+          url: '/v1/admin/coupons',
+          headers,
+          payload: { code: ' verano10 ', description: 'Verano', kind: 'percent', value: 1000 },
+        });
+      const created = await post();
+      await settle();
+      expect(created.statusCode, created.body).toBe(201);
+      const coupon = json(created) as { id: string; code: string };
+      expect(coupon.code).toBe('VERANO10'); // la respuesta lo trae normalizado
+      const createRow = (await rows()).at(-1)!;
+      expect(createRow).toMatchObject({
+        action: 'coupons.create',
+        entity: 'coupon',
+        entityId: coupon.id,
+        status: 201,
+        summary: 'Cupón creado: VERANO10',
+      });
+      // el código es público (los clientes lo escriben): se conserva; el resto se sanea igual
+      expect(createRow.payload).toEqual({
+        code: ' verano10 ',
+        description: 'Verano',
+        kind: 'percent',
+        value: 1000,
+      });
+
+      const patch = async (payload: object, id = coupon.id) => {
+        const res = await app.inject({
+          method: 'PATCH',
+          url: `/v1/admin/coupons/${id}`,
+          headers: admin,
+          payload,
+        });
+        await settle();
+        return { res, row: (await rows()).at(-1)! };
+      };
+      const paused = await patch({ active: false });
+      expect(paused.res.statusCode, paused.res.body).toBe(200);
+      expect(paused.row).toMatchObject({
+        action: 'coupons.update',
+        entity: 'coupon',
+        entityId: coupon.id,
+        path: '/v1/admin/coupons/:id',
+        summary: 'Cupón modificado: VERANO10 (pausado)',
+        payload: { active: false },
+      });
+      expect((await patch({ active: true })).row.summary).toBe(
+        'Cupón modificado: VERANO10 (reactivado)',
+      );
+      expect((await patch({ maxRedemptions: 50 })).row.summary).toBe(
+        'Cupón modificado: VERANO10 (campos: maxRedemptions)',
+      );
+
+      // si la edición se rechaza no hay código en la respuesta: queda el id de la fila
+      const missing = await patch({ active: false }, UUID);
+      expect(missing.res.statusCode).toBe(404);
+      expect(missing.row).toMatchObject({
+        entityId: UUID,
+        status: 404,
+        summary: 'Cupón modificado: pausado — rechazado (not_found)',
+      });
+      // el personal no puede crear cupones: el intento queda con el código tecleado
+      const denied = await post(staff);
+      await settle();
+      expect(denied.statusCode).toBe(403);
+      expect((await rows()).at(-1)).toMatchObject({
+        action: 'coupons.create',
+        status: 403,
+        summary: 'Cupón creado: verano10 — rechazado (forbidden)',
+      });
+    });
+
+    it('en las demás rutas el campo code sigue fuera de la bitácora', async () => {
+      const wanted = 'verano10';
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/admin/zones',
+        headers: admin,
+        payload: { name: 'Zona Code', areas: ['Naco'], feeCentavos: 10_000, code: wanted },
+      });
+      await settle();
+      expect(res.statusCode, res.body).toBe(201);
+      const row = (await rows()).at(-1)!;
+      expect(row.action).toBe('zones.create');
+      expect(JSON.stringify(row)).not.toContain(wanted);
+      expect(row.payload).toEqual({ name: 'Zona Code', areas: ['Naco'], feeCentavos: 10_000 });
     });
 
     it('la app del repartidor también se audita, sin el PIN', async () => {
@@ -680,7 +869,7 @@ describe('bitácora de auditoría', () => {
         expect((await app.inject({ url: '/v1/admin/audit', headers })).statusCode).toBe(403);
       }
       expect((await app.inject({ url: '/v1/admin/audit' })).statusCode).toBe(401);
-      const ok = await app.inject({ url: '/v1/admin/audit', headers: admin });
+      const ok = await app.inject({ url: '/v1/admin/audit?limit=200', headers: admin });
       expect(ok.statusCode).toBe(200);
       expect(json(ok)).toEqual({ items: expect.any(Array), nextCursor: null });
     });

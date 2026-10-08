@@ -5,7 +5,7 @@
  * interfaz: ubicación, ruta en el mapa, cobro en efectivo y PIN de 4 dígitos del cliente.
  *
  *   npx tsx scripts/e2e-driver.ts            (capturas en tmp/e2e-driver)
- *   E2E_OUT=/ruta npx tsx scripts/e2e-driver.ts
+ *   E2E_OUT=/ruta npx tsx scripts/e2e-driver.ts   (capturas en otra carpeta; ahí no se borra nada)
  *   E2E_SKIP_EXPORT=1 …                      (reutiliza la app empaquetada en tmp/e2e-driver-web)
  *
  * Recorre: acceso por OTP (y que un cliente no entre como repartidor), explicación y permiso de
@@ -15,7 +15,7 @@
  * No sustituye probar en un teléfono real (GPS, permisos del sistema, Waze instalado).
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   type OrderDTO,
@@ -29,19 +29,27 @@ import {
 import { type Locator, type Page, chromium } from 'playwright-core';
 import {
   CHROME,
+  ISOLATED_API_ENV,
+  OVERRIDE_MARKER,
   apiLog,
   apiLogin,
+  assertPortFree,
   check,
+  clearOwnShots,
+  exposesOverrideReason,
+  hasNeutralDeliveryNote,
   log,
   root,
   serveStatic,
   sleep,
   start,
   stopAll,
+  track,
   waitFor,
 } from './e2e-lib';
 
-const OUT = resolve(process.env.E2E_OUT ?? `${root}/tmp/e2e-driver`);
+const DEFAULT_OUT = `${root}/tmp/e2e-driver`;
+const OUT = resolve(process.env.E2E_OUT ?? DEFAULT_OUT);
 const API_PORT = 3996;
 const WEB_PORT = 8091;
 const API = `http://localhost:${API_PORT}`;
@@ -61,9 +69,6 @@ const ADMIN_CONTACT = `1${ADMIN.replace(/\D/g, '')}`;
 const HERE = { latitude: 18.4861, longitude: -69.9312, accuracy: 10 };
 const MOVED = { latitude: 18.479, longitude: -69.921, accuracy: 10 };
 const DESTINATION = { latitude: 18.4707, longitude: -69.9396 };
-
-mkdirSync(OUT, { recursive: true });
-for (const f of readdirSync(OUT)) if (f.endsWith('.png')) rmSync(`${OUT}/${f}`);
 
 const shots: string[] = [];
 /** Captura numerada en orden de llegada: 01-entregas.png, 02-… */
@@ -194,8 +199,10 @@ async function exportWeb(): Promise<void> {
         CI: '1',
         TMPDIR: METRO_TMP,
       },
+      detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    track(p, true);
     const keep = (d: Buffer) => {
       out = (out + d.toString()).slice(-3000);
     };
@@ -226,19 +233,17 @@ function assertBundleTargetsApi() {
 
 async function main() {
   // Un API viejo en el mismo puerto contaminaría la prueba sin avisar.
-  if (
-    await fetch(`${API}/health`).then(
-      () => true,
-      () => false,
-    )
-  ) {
-    throw new Error(`El puerto ${API_PORT} ya está en uso: cierra el API anterior.`);
-  }
+  await assertPortFree(API_PORT);
+  await assertPortFree(WEB_PORT);
+  mkdirSync(OUT, { recursive: true });
+  // Las capturas se numeran en orden: las de una corrida anterior solo confundirían.
+  clearOwnShots(OUT, DEFAULT_OUT);
   log('Iniciando API en modo demo (catálogo sembrado) con transferencia habilitada…');
   start(
     'npx',
     ['tsx', 'apps/api/src/server.ts'],
     {
+      ...ISOLATED_API_ENV,
       JELLYFISH_DEMO: '1',
       JELLYFISH_SEED: '1',
       PORT: String(API_PORT),
@@ -887,7 +892,7 @@ async function main() {
       tooShort.status === 400 && tooShort.code === 'pin_override_required',
       'el administrador no puede entregar sin PIN si no escribe un motivo de verdad',
     );
-    const REASON = 'El cliente confirmó por teléfono que recibió el pedido';
+    const REASON = `El cliente confirmó por teléfono que recibió el pedido (${OVERRIDE_MARKER})`;
     await call(admin, `/v1/admin/orders/${b.id}/transition`, 'POST', {
       to: 'delivered',
       pinOverrideReason: REASON,
@@ -904,6 +909,21 @@ async function main() {
     check(
       customerB.pinOverrideReason === null && customerB.deliveryPin === null,
       'el cliente no ve el motivo interno ni el PIN',
+    );
+    // Privacidad: el motivo es de administración. El cliente dueño no lo lee en ninguna de sus pantallas.
+    const listedB = (await call<OrderDTO[]>(customer, '/v1/orders')).find((o) => o.id === b.id);
+    check(
+      listedB !== undefined &&
+        !exposesOverrideReason(customerB) &&
+        !exposesOverrideReason(listedB) &&
+        hasNeutralDeliveryNote(customerB) &&
+        hasNeutralDeliveryNote(listedB),
+      'el cliente no ve el motivo de "Entregar sin PIN" ni en GET /v1/orders/:id ni en GET /v1/orders: su historial dice "Entrega confirmada por administración"',
+    );
+    check(
+      exposesOverrideReason(doneB) &&
+        doneB.timeline.some((t) => t.note === `Entrega sin PIN autorizada: ${REASON}`),
+      'el administrador sí ve el motivo, en el pedido y en su historial',
     );
     await seen(page, 'Esta entrega ya no está activa').waitFor({ timeout: 30_000 });
     check(true, 'la app del repartidor se entera sola de que la entrega ya no está activa');

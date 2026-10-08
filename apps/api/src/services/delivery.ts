@@ -41,6 +41,10 @@ export const PIN_VISIBLE_STATUSES: readonly OrderStatus[] = [
  * instancias del API, y deja constancia para el administrador sin guardar el PIN que se tecleó.
  */
 const PIN_FAILED_NOTE = 'PIN incorrecto';
+/** Nota del evento de una entrega sin PIN; detrás va el motivo interno que escribió el personal. */
+const PIN_OVERRIDE_NOTE = 'Entrega sin PIN autorizada';
+/** Lo que ven el cliente y el repartidor en lugar de esa nota. */
+export const PIN_OVERRIDE_PUBLIC_NOTE = 'Entrega confirmada por administración';
 
 export function generateDeliveryPin(): string {
   return String(randomInt(0, 10 ** PIN_LENGTH)).padStart(PIN_LENGTH, '0');
@@ -61,9 +65,32 @@ export function isPinFailureEvent(e: {
   return e.fromStatus !== null && e.fromStatus === e.toStatus && e.note.startsWith(PIN_FAILED_NOTE);
 }
 
-/** Quién mira el pedido. Lo que no se pide expresamente como cliente dueño es vista interna. */
-export type OrderViewer = { role: 'customer'; userId: string } | { role: 'internal' };
+export function isPinOverrideEvent(e: { toStatus: OrderStatus; note: string }): boolean {
+  return e.toStatus === 'delivered' && e.note.startsWith(`${PIN_OVERRIDE_NOTE}:`);
+}
+
+/**
+ * Quién mira el pedido. Lo que no se pide expresamente como cliente dueño o como repartidor es
+ * vista interna (personal y administrador), la única que ve los motivos internos.
+ */
+export type OrderViewer =
+  { role: 'customer'; userId: string } | { role: 'driver' } | { role: 'internal' };
 export const INTERNAL_VIEWER: OrderViewer = { role: 'internal' };
+export const DRIVER_VIEWER: OrderViewer = { role: 'driver' };
+
+/**
+ * Historial que puede ver cada quien. El evento de una entrega sin PIN lleva el motivo interno (y la
+ * nota que el personal le sumó): solo la vista interna lo lee, los demás ven un texto neutro.
+ */
+export function timelineFor<T extends { toStatus: OrderStatus; note: string }>(
+  timeline: T[],
+  viewer: OrderViewer,
+): T[] {
+  if (viewer.role === 'internal') return timeline;
+  return timeline.map((e) =>
+    isPinOverrideEvent(e) ? { ...e, note: PIN_OVERRIDE_PUBLIC_NOTE } : e,
+  );
+}
 
 /**
  * Campos del PIN que viajan en el DTO del pedido. Es el ÚNICO lugar que decide quién ve el PIN:
@@ -85,7 +112,7 @@ export function deliveryFieldsFor(
     pinRequired: hasPin,
     pinAttemptsLeft: hasPin ? Math.max(0, PIN_MAX_ATTEMPTS - failures) : null,
     pinVerifiedAt: order.pinVerifiedAt,
-    // El motivo de una entrega sin PIN es una nota interna: el cliente no la necesita.
+    // El motivo de una entrega sin PIN es una nota interna: ni el cliente ni el repartidor la necesitan.
     pinOverrideReason: viewer.role === 'internal' ? order.pinOverrideReason : null,
   };
 }
@@ -151,7 +178,7 @@ export async function applyDeliveryGate(
     }
     return {
       patch: { pinOverrideReason: reason },
-      note: `Entrega sin PIN autorizada: ${reason}`,
+      note: `${PIN_OVERRIDE_NOTE}: ${reason}`,
     };
   }
   if (actor.role !== 'driver') {

@@ -2,6 +2,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { orders } from '../db/schema';
+import { DRIVER_VIEWER } from '../services/delivery';
 import { getOrder, transitionOrder } from '../services/orders';
 import { parse, uuid } from './validate';
 
@@ -20,7 +21,7 @@ export async function registerDriverRoutes(app: FastifyInstance) {
           inArray(orders.status, ['packed', 'out_for_delivery', 'delivery_failed']),
         ),
       );
-    return Promise.all(rows.map((r) => getOrder(app.orderCtx, r.id)));
+    return Promise.all(rows.map((r) => getOrder(app.orderCtx, r.id, { viewer: DRIVER_VIEWER })));
   });
 
   app.post('/v1/driver/orders/:id/transition', driver, async (req) => {

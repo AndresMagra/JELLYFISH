@@ -121,7 +121,8 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         itbisBps: z.number().int().min(0).max(10_000).nullable().optional(),
         active: z.boolean().optional(),
         lowStockThreshold: z.number().int().min(0).optional(),
-        photo: z.string().max(300).optional(),
+        // Largo y formato los revisa `patchVariant` (mensaje en español); aquí solo que sea texto.
+        photo: z.string().optional(),
         photoIllustrative: z.boolean().optional(),
       }),
       req.body,

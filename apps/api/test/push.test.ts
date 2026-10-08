@@ -926,6 +926,39 @@ describe('avisos del ciclo del pedido (API)', () => {
     expect(JSON.stringify(e.sender.sent)).not.toContain('4821');
   });
 
+  it('entregar sin PIN avisa de la entrega y ningún aviso lleva el motivo interno', async () => {
+    const order = await placeOrder(e, 'cash');
+    await adminTransition(e, order.id, 'picking');
+    await adminTransition(e, order.id, 'packed');
+    await assignDriver(e, order.id, e.ids.driver);
+    expect((await driverTransition(e, order.id, 'out_for_delivery')).statusCode).toBe(200);
+    const collect = await e.app.inject({
+      method: 'POST',
+      url: `/v1/driver/orders/${order.id}/collect`,
+      headers: e.headers.driver,
+      payload: { amount: order.total },
+    });
+    expect(collect.statusCode, collect.body).toBe(200);
+    await settle(e);
+    e.sender.reset();
+
+    const reason = 'Cliente sin celular, recibió el vecino del 4B';
+    const res = await e.app.inject({
+      method: 'POST',
+      url: `/v1/admin/orders/${order.id}/transition`,
+      headers: e.headers.admin,
+      payload: { to: 'delivered', pinOverrideReason: reason, note: 'Firmó doña Carmen' },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    await settle(e);
+
+    expect(e.sender.titles(tok('customer'))).toEqual(['¡Pedido entregado!']);
+    const wire = JSON.stringify(e.sender.sent);
+    expect(wire).not.toContain('vecino');
+    expect(wire).not.toContain('doña Carmen');
+    expect(wire).not.toContain('sin PIN');
+  });
+
   it('asignar repartidor lo avisa a él; reasignar al mismo no repite; cambiar avisa al nuevo', async () => {
     const order = await placeOrder(e, 'cash');
     await settle(e);
