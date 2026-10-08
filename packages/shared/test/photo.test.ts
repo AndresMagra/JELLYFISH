@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { absolutePhotoUrl, isRemotePhoto, photoThumb } from '../src';
+import { absolutePhotoUrl, isRemotePhoto, photoRefError, photoThumb } from '../src';
 
 const CDN = 'https://d8j0ntlcm91z4.cloudfront.net';
 
@@ -94,5 +94,35 @@ describe('absolutePhotoUrl', () => {
     expect(absolutePhotoUrl('//evil.example/x.webp', 'https://api.jellyfish.do')).toBe(
       '//evil.example/x.webp',
     );
+  });
+});
+
+describe('photoRefError: lo que se puede guardar como foto', () => {
+  it('acepta vacío, ruta local con una sola barra y URL http(s)', () => {
+    for (const ok of [
+      '',
+      '/photos/JF-AVE-001.thumb.webp',
+      'https://d8j0ntlcm91z4.cloudfront.net/x/hf_1.png',
+      'http://localhost:3000/photos/a.webp',
+      'HTTPS://CDN.EJEMPLO.DO/a.jpg',
+    ]) {
+      expect(photoRefError(ok), ok).toBeNull();
+    }
+  });
+
+  it('rechaza esquemas peligrosos, "//host", rutas relativas, espacios y textos largos', () => {
+    for (const bad of [
+      'javascript:alert(1)',
+      'data:text/html,<script>alert(1)</script>',
+      '//evil.example/x.png',
+      'fotos/pechuga.jpg',
+      '/photos/con espacio.webp',
+      'ftp://servidor/a.png',
+      'https://',
+      '/',
+      `/${'a'.repeat(300)}`,
+    ]) {
+      expect(photoRefError(bad), bad).not.toBeNull();
+    }
   });
 });

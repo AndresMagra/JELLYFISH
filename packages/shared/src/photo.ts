@@ -42,3 +42,16 @@ export function absolutePhotoUrl(photo: string, baseUrl: string): string {
   if (!/^\/(?!\/)/.test(photo)) return photo;
   return `${baseUrl.replace(/\/+$/, '')}${photo}`;
 }
+
+/**
+ * Lo único que se acepta al GUARDAR una foto: vacía (sin foto), una ruta local que empieza con una sola "/"
+ * o una URL http(s). Rechaza `javascript:`, `data:`, rutas relativas a otro servidor ("//host/x") y espacios.
+ * Devuelve el motivo en español, o null si es válida. Los textos heredados que ya estaban guardados se
+ * siguen mostrando (ver arriba); esto solo gobierna lo que se escribe de aquí en adelante.
+ */
+export function photoRefError(text: string): string | null {
+  if (!text) return null;
+  if (text.length > 300) return 'Máximo 300 caracteres';
+  if (/^\/(?!\/)\S+$/.test(text) || /^https?:\/\/\S+$/i.test(text)) return null;
+  return 'Escribe una ruta que empiece con / (como /photos/archivo.webp) o una URL que empiece con https://';
+}
