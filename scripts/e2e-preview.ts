@@ -835,7 +835,11 @@ async function longJourney(s: Session, o: LongOptions) {
       (await orderStatusText(page)).includes(STATUS_LABELS.confirmed),
     'el pedido con tarjeta empieza esperando el pago',
   );
-  await page.getByText(STATUS_LABELS.confirmed).first().waitFor({ timeout: 25_000 });
+  await page
+    .getByText(STATUS_LABELS.confirmed)
+    .filter({ visible: true })
+    .first()
+    .waitFor({ timeout: 25_000 });
   await shot(page, '20-tarjeta-aprobada');
   check(
     s.ctx.pages().length === pagesBeforeCard,
