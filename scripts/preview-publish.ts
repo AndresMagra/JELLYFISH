@@ -82,12 +82,20 @@ export function checkLimits(main: FileEntry, attachments: FileEntry[]): LimitsCh
       problems.push(`${f.path} pesa ${mb(f.bytes)} MB (el máximo por archivo es ${mb(limit)} MB)`);
   }
   if (totalBytes > LIMITS.maxTotalBytes)
-    problems.push(`${mb(totalBytes)} MB en total (el máximo por publicación es ${mb(LIMITS.maxTotalBytes)} MB)`);
+    problems.push(
+      `${mb(totalBytes)} MB en total (el máximo por publicación es ${mb(LIMITS.maxTotalBytes)} MB)`,
+    );
   for (const f of attachments) {
     const bad = publishedPathProblem(f.path);
     if (bad) problems.push(bad);
   }
-  return { fileCount: all.length, totalBytes, largestFile, withinLimits: problems.length === 0, problems };
+  return {
+    fileCount: all.length,
+    totalBytes,
+    largestFile,
+    withinLimits: problems.length === 0,
+    problems,
+  };
 }
 
 /**
@@ -154,7 +162,11 @@ export interface PreviewManifest {
 }
 
 /** Escribe publish-files.json y preview-manifest.json a partir de lo que hay en la carpeta de salida. */
-export function writePublishManifests(outDir: string, buildId: string, notes: string[]): PublishFiles {
+export function writePublishManifests(
+  outDir: string,
+  buildId: string,
+  notes: string[],
+): PublishFiles {
   const all = listFiles(outDir);
   const sizeOf = (path: string) => statSync(`${outDir}/${path}`).size;
   const main: FileEntry = { path: 'artifact.html', bytes: sizeOf('artifact.html') };
@@ -288,7 +300,9 @@ export async function planPhotos(opts: {
       `${missing.length} artículos sin miniatura local (se ven con el degradado de su categoría): ${missing.slice(0, 6).join(', ')}${missing.length > 6 ? '…' : ''}`,
     );
   if (odd.length > 0)
-    notes.push(`miniaturas que no miden ${THUMB_SIZE.width}×${THUMB_SIZE.height}: ${odd.slice(0, 4).join(', ')}`);
+    notes.push(
+      `miniaturas que no miden ${THUMB_SIZE.width}×${THUMB_SIZE.height}: ${odd.slice(0, 4).join(', ')}`,
+    );
   return { seeds, copy, notes };
 }
 
@@ -307,7 +321,11 @@ export function sanitizeCatalogCsv(csv: string): string {
   const header = rows[0];
   if (!header) return csv;
   const internal = new Set(
-    header.flatMap((h, i) => ((INTERNAL_CSV_COLUMNS as readonly string[]).includes(normalizeHeader(h)) ? [i] : [])),
+    header.flatMap((h, i) =>
+      (INTERNAL_CSV_COLUMNS as readonly string[]).includes(normalizeHeader(h)) ? [i] : [],
+    ),
   );
-  return toCsv(rows.map((r, n) => (n === 0 ? r : r.map((cell, i) => (internal.has(i) ? '' : cell)))));
+  return toCsv(
+    rows.map((r, n) => (n === 0 ? r : r.map((cell, i) => (internal.has(i) ? '' : cell)))),
+  );
 }

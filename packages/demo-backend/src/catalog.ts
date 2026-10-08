@@ -105,7 +105,8 @@ export function buildCatalog(options: DemoOptions): DemoCatalog {
       // Una foto real del dueño (foto_ilustrativa = no) vale más que la ilustración generada.
       // En la vista previa publicada (`localPhotosOnly`) la columna `foto` del CSV no cuenta: ahí solo
       // hay fotos propias, las del manifiesto que se copiaron junto a la página.
-      const keepOwn = !options.localPhotosOnly && item.photo !== '' && item.photoIllustrative === false;
+      const keepOwn =
+        !options.localPhotosOnly && item.photo !== '' && item.photoIllustrative === false;
       const photoSource = options.localPhotosOnly
         ? (manifest?.url ?? '')
         : keepOwn
@@ -170,7 +171,11 @@ export function buildCatalog(options: DemoOptions): DemoCatalog {
     fnv1a(
       JSON.stringify([
         // La foto va sin resolver: si la página cambia de carpeta, el estado guardado no debe perderse.
-        products.map((p) => [p.group, p.name, p.variants.map((v) => [v.sku, v.price, v.photoSource])]),
+        products.map((p) => [
+          p.group,
+          p.name,
+          p.variants.map((v) => [v.sku, v.price, v.photoSource]),
+        ]),
         categories,
       ]),
     ),

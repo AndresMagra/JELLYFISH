@@ -116,7 +116,10 @@ describe('demo:phone — el código fijo se comprueba, no se supone', () => {
   });
 
   /** Un API de mentira: acepta (o no) el código 123456 y registra lo que le pidieron. */
-  async function fakeApi(acceptCode: string | null, opts: { requestStatus?: number; noToken?: boolean } = {}) {
+  async function fakeApi(
+    acceptCode: string | null,
+    opts: { requestStatus?: number; noToken?: boolean } = {},
+  ) {
     const seen: { path: string; body: { phone?: string; code?: string } }[] = [];
     const server = createHttpServer((req, res) => {
       let raw = '';
@@ -131,7 +134,11 @@ describe('demo:phone — el código fijo se comprueba, no se supone', () => {
         } else if (req.url === '/v1/auth/otp/verify') {
           const ok = acceptCode !== null && body.code === acceptCode;
           res.statusCode = ok ? 200 : 400;
-          res.end(JSON.stringify(ok ? (opts.noToken ? {} : { token: 'jwt' }) : { error: { code: 'invalid_code' } }));
+          res.end(
+            JSON.stringify(
+              ok ? (opts.noToken ? {} : { token: 'jwt' }) : { error: { code: 'invalid_code' } },
+            ),
+          );
         } else {
           res.statusCode = 404;
           res.end('{}');
@@ -143,14 +150,21 @@ describe('demo:phone — el código fijo se comprueba, no se supone', () => {
     return { url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, seen };
   }
 
-  async function suite(api: { apiAcceptsFixedCode: typeof apiAcceptsFixedCode; instructions: typeof instructions }) {
+  async function suite(api: {
+    apiAcceptsFixedCode: typeof apiAcceptsFixedCode;
+    instructions: typeof instructions;
+  }) {
     const ok = await fakeApi('123456');
     expect(await api.apiAcceptsFixedCode(ok.url)).toBe(true);
     expect(ok.seen.map((x) => x.path)).toEqual(['/v1/auth/otp/request', '/v1/auth/otp/verify']);
     expect(ok.seen[1]!.body).toEqual({ phone: '+18095550199', code: '123456' });
     expect(await api.apiAcceptsFixedCode((await fakeApi('999999')).url)).toBe(false); // código aleatorio: no lo acepta
-    expect(await api.apiAcceptsFixedCode((await fakeApi('123456', { requestStatus: 500 })).url)).toBe(false);
-    expect(await api.apiAcceptsFixedCode((await fakeApi('123456', { noToken: true })).url)).toBe(false);
+    expect(
+      await api.apiAcceptsFixedCode((await fakeApi('123456', { requestStatus: 500 })).url),
+    ).toBe(false);
+    expect(await api.apiAcceptsFixedCode((await fakeApi('123456', { noToken: true })).url)).toBe(
+      false,
+    );
     expect(await api.apiAcceptsFixedCode('http://127.0.0.1:1')).toBe(false); // nadie escucha
     const base = { app: 'customer' as const, ip: '192.168.1.20', apiPort: 3000, expoPort: 8081 };
     expect(api.instructions(base)).toContain('siempre 123456');
@@ -164,9 +178,23 @@ describe('demo:phone — el código fijo se comprueba, no se supone', () => {
     const file = new URL('../../../scripts/demo-phone.ts', import.meta.url).pathname;
     type Api = Parameters<typeof suite>[0];
     const mutants: [string, Parameters<typeof loadMutant>[1]][] = [
-      ['el código que se prueba no es 123456', [["const DEMO_CODE = '123456';", "const DEMO_CODE = '000000';"]]],
-      ['se acepta una respuesta sin token', [["typeof ((await res.json()) as { token?: unknown }).token === 'string'", 'true']]],
-      ['si el API falla, igual se promete', [['  } catch {\n    return false;\n  }\n}\n\n/** Con la app del repartidor', '  } catch {\n    return true;\n  }\n}\n\n/** Con la app del repartidor']]],
+      [
+        'el código que se prueba no es 123456',
+        [["const DEMO_CODE = '123456';", "const DEMO_CODE = '000000';"]],
+      ],
+      [
+        'se acepta una respuesta sin token',
+        [["typeof ((await res.json()) as { token?: unknown }).token === 'string'", 'true']],
+      ],
+      [
+        'si el API falla, igual se promete',
+        [
+          [
+            '  } catch {\n    return false;\n  }\n}\n\n/** Con la app del repartidor',
+            '  } catch {\n    return true;\n  }\n}\n\n/** Con la app del repartidor',
+          ],
+        ],
+      ],
       ['las instrucciones ignoran que el código fijo falló', [['o.fixedCode === false', 'false']]],
     ];
     for (const [name, edits] of mutants) {

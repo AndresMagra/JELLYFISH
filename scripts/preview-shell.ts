@@ -158,17 +158,23 @@ export function patchAppBundle(js: string): { js: string; report: PatchReport } 
   const report: PatchReport = { assets: 0, stripBaseUrl: 0, concessions: 0, appendBaseUrl: 0 };
 
   // m.exports="/assets/…"  (fuentes; el nombre del parámetro cambia: a.exports, m.exports…)   ·   uri:"/assets/…"  (imágenes)
-  let out = js.replace(/([\w$]+\.exports=|uri:)"\/assets\/([^"]*)"/g, (_m, head: string, rest: string) => {
-    report.assets++;
-    return `${head}${RUNTIME_ASSETS_EXPR}+"/assets/${rest}"`;
-  });
+  let out = js.replace(
+    /([\w$]+\.exports=|uri:)"\/assets\/([^"]*)"/g,
+    (_m, head: string, rest: string) => {
+      report.assets++;
+      return `${head}${RUNTIME_ASSETS_EXPR}+"/assets/${rest}"`;
+    },
+  );
   // Lo parcheado quedó como `+"/assets/…"`; cualquier otra ruta de assets es un contexto que no conocemos.
   const leftover = /(?<!\+)["'`]\/assets\//.exec(out);
   if (leftover) {
     throw new Error(
       `No se pudo parchear el bundle de la app (quedó una ruta de assets en un contexto desconocido: …${out
         .slice(Math.max(0, leftover.index - 40), leftover.index + 60)
-        .replace(/\s+/g, ' ')}…). Probablemente cambió la versión de Expo: revisa patchAppBundle en scripts/preview-shell.ts.`,
+        .replace(
+          /\s+/g,
+          ' ',
+        )}…). Probablemente cambió la versión de Expo: revisa patchAppBundle en scripts/preview-shell.ts.`,
     );
   }
 
@@ -590,31 +596,46 @@ export function fragmentProblems(html: string): string[] {
     if (!ok) problems.push(text);
   };
   // El nombre es parte del contrato (corto y estable): se compara con el literal, no con la constante que lo genera.
-  need(/^<title>JELLYFISH<\/title>\s*<style>/.test(html), 'debe empezar con <title>JELLYFISH</title> y un <style>');
+  need(
+    /^<title>JELLYFISH<\/title>\s*<style>/.test(html),
+    'debe empezar con <title>JELLYFISH</title> y un <style>',
+  );
   for (const tag of ['!doctype', 'html', 'head', 'body']) {
     need(!new RegExp(`<${tag}[\\s>]`, 'i').test(html), `no puede traer <${tag}>`);
   }
   const css = /<style>([\s\S]*?)<\/style>/.exec(html)?.[1] ?? '';
   const root = /:root\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
   need(
-    /--[\w-]+\s*:\s*#[0-9a-fA-F]{6}\b/.test(root) && !/rgba?\(|#[0-9a-fA-F]{8}\b|\btransparent\b/.test(root),
+    /--[\w-]+\s*:\s*#[0-9a-fA-F]{6}\b/.test(root) &&
+      !/rgba?\(|#[0-9a-fA-F]{8}\b|\btransparent\b/.test(root),
     'el :root debe definir tokens de color (#rrggbb, sin transparencia)',
   );
   const bodyRules = [...css.matchAll(/(?:^|[\s,}])body\s*\{([^}]*)\}/g)].map((m) => m[1]!);
   need(
-    bodyRules.some((r) => /background(?:-color)?\s*:\s*(?:var\(--[\w-]+\)|#[0-9a-fA-F]{6})\s*(?:;|$)/.test(r)),
+    bodyRules.some((r) =>
+      /background(?:-color)?\s*:\s*(?:var\(--[\w-]+\)|#[0-9a-fA-F]{6})\s*(?:;|$)/.test(r),
+    ),
     'el body debe tener un fondo explícito y opaco',
   );
   need(/<div id="root"[ >]/.test(html), 'falta <div id="root">');
   const srcs = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]*)"/g)].map((m) => m[1]!);
   need(srcs.length >= 3, 'faltan los <script src> (datos, simulador y app)');
   for (const src of srcs)
-    need(!/^(?:[a-z][a-z0-9+.-]*:|\/)/i.test(src), `el script "${src}" no es una ruta relativa a un archivo propio`);
+    need(
+      !/^(?:[a-z][a-z0-9+.-]*:|\/)/i.test(src),
+      `el script "${src}" no es una ruta relativa a un archivo propio`,
+    );
   need(!/<link\b/i.test(html), 'no puede traer <link> (solo hojas de Google Fonts, y no se usan)');
   need(!/<base\b/i.test(html), 'no puede traer <base>');
   need(!/https?:\/\//i.test(html), 'no puede nombrar servidores externos');
-  need(!/serviceWorker|rel="manifest"|navigator\.share/.test(html), 'no puede usar service workers ni manifest');
-  need(!/\b(?:alert|confirm|prompt)\s*\(|window\.open\s*\(/.test(html), 'no puede usar alert/confirm/prompt ni window.open');
+  need(
+    !/serviceWorker|rel="manifest"|navigator\.share/.test(html),
+    'no puede usar service workers ni manifest',
+  );
+  need(
+    !/\b(?:alert|confirm|prompt)\s*\(|window\.open\s*\(/.test(html),
+    'no puede usar alert/confirm/prompt ni window.open',
+  );
   need(Buffer.byteLength(html) <= MAX_FRAGMENT_BYTES, 'el archivo principal pasa de 16 MB');
   return problems;
 }

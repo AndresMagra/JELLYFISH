@@ -589,3 +589,76 @@ a.btn:hover {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* ── Cupones ── */
+/* La tabla ancha se desliza dentro de su caja sin ensanchar la página en el celular. */
+.cp-scroll,
+.au-scroll {
+  width: 0;
+  min-width: 100%;
+}
+.cp-form {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+.cp-table {
+  min-width: 860px;
+}
+.cp-table td {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.cp-desc {
+  max-width: 220px;
+}
+.cp-actions {
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 160px;
+  margin-left: auto;
+}
+.cp-code {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  letter-spacing: 0.3px;
+}
+
+/* ── Bitácora ── */
+.au-filter {
+  max-width: 420px;
+  margin-bottom: 16px;
+}
+.au-table {
+  min-width: 860px;
+}
+.au-action {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+.au-facts .au-action {
+  word-break: break-all;
+}
+.au-detail td {
+  background: color-mix(in srgb, var(--surfaceAlt) 55%, transparent);
+}
+.au-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.au-payload {
+  margin: 4px 0 0;
+  padding: 12px;
+  max-height: 280px;
+  overflow: auto;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.au-error {
+  margin-top: 10px;
+  color: #dc2626;
+  font-size: 12.5px;
+}

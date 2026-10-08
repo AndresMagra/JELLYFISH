@@ -1,10 +1,13 @@
 import type { OrderDTO } from '@jellyfish/shared';
 import { useQuery } from '@tanstack/react-query';
+import { Snowflake } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useSummary } from '../App';
 import { Badge, Card, ErrorBox, Loading, PageHead } from '../components/ui';
 import { api } from '../lib/api';
 import { dateTime, formatDOP, statusLabel } from '../lib/format';
+import { expiryAlertText } from '../lib/lots';
+import './panel-extra.css';
 
 function Stat({
   label,
@@ -51,6 +54,33 @@ export function Dashboard() {
   return (
     <>
       <PageHead title="Resumen" subtitle="Cómo va el día y qué necesita tu atención" />
+
+      {s.expired > 0 || s.expiringSoon > 0 ? (
+        <div className="stack" style={{ gap: 10, marginBottom: 22 }}>
+          {s.expired > 0 ? (
+            <Link
+              to="/inventario?tab=lotes"
+              className="alert-link danger"
+              data-testid="alert-expired"
+            >
+              <Snowflake size={18} />
+              <span className="grow">{expiryAlertText('expired', s.expired)}</span>
+              <span className="alert-go">Ver lotes →</span>
+            </Link>
+          ) : null}
+          {s.expiringSoon > 0 ? (
+            <Link
+              to="/inventario?tab=lotes"
+              className="alert-link warn"
+              data-testid="alert-expiring"
+            >
+              <Snowflake size={18} />
+              <span className="grow">{expiryAlertText('expiring', s.expiringSoon)}</span>
+              <span className="alert-go">Ver lotes →</span>
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="grid cols-3" style={{ marginBottom: 22 }}>
         <Stat

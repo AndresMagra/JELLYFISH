@@ -25,7 +25,16 @@ function suite(api: Api): void {
   expect(api.parseSpeed('?a=1&speed=0.5')).toBe(0.5);
   expect(api.parseSpeed('?speed=0.1')).toBe(0.1);
   expect(api.parseSpeed('?speed=60')).toBe(60);
-  for (const bad of ['', '?speed=0', '?speed=0.09', '?speed=-2', '?speed=abc', '?speed=61', '?speed=1000', undefined])
+  for (const bad of [
+    '',
+    '?speed=0',
+    '?speed=0.09',
+    '?speed=-2',
+    '?speed=abc',
+    '?speed=61',
+    '?speed=1000',
+    undefined,
+  ])
     expect(api.parseSpeed(bad), String(bad)).toBe(1);
   // El visor solo deja pasar el #ancla: ahí viajan las velocidades con nombre.
   expect(api.parseSpeed('', '#rapido')).toBe(3);
@@ -40,13 +49,20 @@ function suite(api: Api): void {
   expect(api.parseShortcuts('?reset=1', '')).toEqual({ speed: 1, reset: 'query' });
   expect(api.parseShortcuts('?reset=2', '')).toEqual({ speed: 1, reset: null });
   expect(api.parseShortcuts('', '#reiniciar')).toEqual({ speed: 1, reset: 'anchor' });
-  expect(api.parseShortcuts('?speed=3&reset=1', '#reiniciar')).toEqual({ speed: 3, reset: 'query' });
+  expect(api.parseShortcuts('?speed=3&reset=1', '#reiniciar')).toEqual({
+    speed: 3,
+    reset: 'query',
+  });
 
   // ── carpeta de la página para las fotos ──
-  expect(api.photoBaseFrom('https://h.example/x/y/z/artifact.html?a=1', '/x/y/z')).toBe('https://h.example/x/y/z/');
+  expect(api.photoBaseFrom('https://h.example/x/y/z/artifact.html?a=1', '/x/y/z')).toBe(
+    'https://h.example/x/y/z/',
+  );
   expect(api.photoBaseFrom('https://h.example/', '')).toBe('https://h.example/');
   expect(api.photoBaseFrom('https://h.example/', undefined)).toBe('https://h.example/');
-  expect(api.photoBaseFrom('https://h.example/mi%20vista/', '/mi%20vista')).toBe('https://h.example/mi%20vista/');
+  expect(api.photoBaseFrom('https://h.example/mi%20vista/', '/mi%20vista')).toBe(
+    'https://h.example/mi%20vista/',
+  );
   expect(api.photoBaseFrom('https://h.example/x/', '/x/')).toBe('https://h.example/x/');
   expect(api.photoBaseFrom('no es una url', '/x')).toBeUndefined();
 
@@ -61,7 +77,13 @@ function suite(api: Api): void {
   expect(api.storageOf(throwing, 'sessionStorage')).toBe('ok');
 
   // ── borrar solo lo nuestro ──
-  const store = fakeStorage({ 'jellyfish.token': 't', 'jellyfish.demo.abc': '{}', 'jellyfish.cart': '[]', otro: 'x', 'jf-reset-done': '1' });
+  const store = fakeStorage({
+    'jellyfish.token': 't',
+    'jellyfish.demo.abc': '{}',
+    'jellyfish.cart': '[]',
+    otro: 'x',
+    'jf-reset-done': '1',
+  });
   expect(api.clearStoredKeys(store)).toBe(3);
   expect([...store.data.keys()].sort()).toEqual(['jf-reset-done', 'otro']);
   expect(api.clearStoredKeys(undefined)).toBe(0);
@@ -77,10 +99,18 @@ function suite(api: Api): void {
 
   // ── ?reset=1: borra siempre y se quita de la dirección ──
   const calls: string[] = [];
-  const env = (search: string, hash: string, local = fakeStorage({ 'jellyfish.token': 't' }), session = fakeStorage()) => ({
+  const env = (
+    search: string,
+    hash: string,
+    local = fakeStorage({ 'jellyfish.token': 't' }),
+    session = fakeStorage(),
+  ) => ({
     localStorage: local,
     sessionStorage: session,
-    history: { state: { a: 1 }, replaceState: (_s: unknown, _t: string, url: string) => void calls.push(url) },
+    history: {
+      state: { a: 1 },
+      replaceState: (_s: unknown, _t: string, url: string) => void calls.push(url),
+    },
     location: { pathname: '/x/y/z/', search, hash },
   });
   const q = env('?speed=3&reset=1', '#rapido');
@@ -130,7 +160,8 @@ function suite(api: Api): void {
 describe('atajos de la vista previa', () => {
   afterAll(cleanMutants);
 
-  it('?speed=, ?reset=1, #rapido, #reiniciar, fotos y almacenamiento bloqueado', () => suite(shortcuts));
+  it('?speed=, ?reset=1, #rapido, #reiniciar, fotos y almacenamiento bloqueado', () =>
+    suite(shortcuts));
 
   it('detecta cada mutación de los atajos', async () => {
     const file = new URL('../src/shortcuts.ts', import.meta.url).pathname;
@@ -139,14 +170,58 @@ describe('atajos de la vista previa', () => {
       ['acepta velocidad 0', [['n >= 0.1 &&', 'n >= 0 &&']]],
       ['#rapido ya no acelera', [['rapido: 3,', 'rapido: 1,']]],
       ['el ancla manda sobre ?speed=', [['if (raw) {', 'if (false) {']]],
-      ['#reiniciar no se reconoce', [["anchorName(hash) === 'reiniciar'", "anchorName(hash) === 'nada'"]]],
-      ['#reiniciar borra en cada recarga', [['if (session?.getItem(RESET_FLAG)) return false;', '']]],
-      ['la marca de reinicio se borra con el reinicio', [["export const RESET_FLAG = 'jf-reset-done';", "export const RESET_FLAG = 'jellyfish-reset-done';"]]],
-      ['se borra todo el almacenamiento, no solo lo nuestro', [['if (k && k.startsWith(STORAGE_PREFIX)) keys.push(k);', 'if (k) keys.push(k);']]],
-      ['?reset=1 se queda en la dirección', [["env.history?.replaceState(env.history.state, '', env.location.pathname + search + env.location.hash);", '']]],
-      ['la carpeta de la página ignora la ruta de archivos', [['const dir = `${(assets ?? \'\').replace(/\\/+$/, \'\')}/`;', "const dir = '/';"]]],
-      ['localStorage bloqueado rompe el arranque', [['  try {\n    return (env as Record<string, unknown>)[name] as T | undefined;\n  } catch {\n    return undefined;\n  }', '  return (env as Record<string, unknown>)[name] as T | undefined;']]],
-      ['una dirección que no se puede reescribir rompe el arranque', [['    } catch {\n      /* un marco que no deja reescribir la dirección: se queda con ?reset=1 */\n    }', '    } finally {}']]],
+      [
+        '#reiniciar no se reconoce',
+        [["anchorName(hash) === 'reiniciar'", "anchorName(hash) === 'nada'"]],
+      ],
+      [
+        '#reiniciar borra en cada recarga',
+        [['if (session?.getItem(RESET_FLAG)) return false;', '']],
+      ],
+      [
+        'la marca de reinicio se borra con el reinicio',
+        [
+          [
+            "export const RESET_FLAG = 'jf-reset-done';",
+            "export const RESET_FLAG = 'jellyfish-reset-done';",
+          ],
+        ],
+      ],
+      [
+        'se borra todo el almacenamiento, no solo lo nuestro',
+        [['if (k && k.startsWith(STORAGE_PREFIX)) keys.push(k);', 'if (k) keys.push(k);']],
+      ],
+      [
+        '?reset=1 se queda en la dirección',
+        [
+          [
+            'env.location.pathname + search + env.location.hash,',
+            "env.location.pathname + '?reset=1' + env.location.hash,",
+          ],
+        ],
+      ],
+      [
+        'la carpeta de la página ignora la ruta de archivos',
+        [["const dir = `${(assets ?? '').replace(/\\/+$/, '')}/`;", "const dir = '/';"]],
+      ],
+      [
+        'localStorage bloqueado rompe el arranque',
+        [
+          [
+            '  try {\n    return (env as Record<string, unknown>)[name] as T | undefined;\n  } catch {\n    return undefined;\n  }',
+            '  return (env as Record<string, unknown>)[name] as T | undefined;',
+          ],
+        ],
+      ],
+      [
+        'una dirección que no se puede reescribir rompe el arranque',
+        [
+          [
+            '    } catch {\n      /* un marco que no deja reescribir la dirección: se queda con ?reset=1 */\n    }',
+            '    } finally {}',
+          ],
+        ],
+      ],
     ];
     for (const [name, edits] of mutants) {
       const mutant = await loadMutant<Api>(file, edits);

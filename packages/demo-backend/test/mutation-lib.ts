@@ -22,15 +22,21 @@ export async function loadMutant<T>(file: string, edits: Edit[]): Promise<T> {
   for (const [from, to] of edits) {
     const before = src;
     src = src.replace(from, to);
-    if (src === before) throw new Error(`La mutación ya no aplica a ${basename(file)}: ${String(from)}`);
+    if (src === before)
+      throw new Error(`La mutación ya no aplica a ${basename(file)}: ${String(from)}`);
   }
   const base = dirname(file);
   // Los imports relativos del original siguen apuntando al original (el mutante vive en otra carpeta).
-  src = src.replace(/(from\s+['"])(\.{1,2}\/[^'"]+)(['"])/g, (_m, a: string, rel: string, c: string) => {
-    const abs = resolve(base, rel);
-    const withExt = [abs, `${abs}.ts`, join(abs, 'index.ts')].find((p) => existsSync(p) && /\.ts$/.test(p)) ?? abs;
-    return `${a}${withExt}${c}`;
-  });
+  src = src.replace(
+    /(from\s+['"])(\.{1,2}\/[^'"]+)(['"])/g,
+    (_m, a: string, rel: string, c: string) => {
+      const abs = resolve(base, rel);
+      const withExt =
+        [abs, `${abs}.ts`, join(abs, 'index.ts')].find((p) => existsSync(p) && /\.ts$/.test(p)) ??
+        abs;
+      return `${a}${withExt}${c}`;
+    },
+  );
   mkdirSync(WORK, { recursive: true });
   writeFileSync(join(WORK, '.gitignore'), '*\n');
   const dir = mkdtempSync(join(WORK, 'm-'));
@@ -56,7 +62,10 @@ export function expectKilled(name: string, suite: () => void): void {
   } catch {
     failed = true;
   }
-  expect(failed, `la mutación "${name}" NO fue detectada: las pruebas pasan aunque el código esté roto`).toBe(true);
+  expect(
+    failed,
+    `la mutación "${name}" NO fue detectada: las pruebas pasan aunque el código esté roto`,
+  ).toBe(true);
 }
 
 /** Igual que `expectKilled` para suites asincrónicas. */
@@ -67,5 +76,8 @@ export async function expectKilledAsync(name: string, suite: () => Promise<void>
   } catch {
     failed = true;
   }
-  expect(failed, `la mutación "${name}" NO fue detectada: las pruebas pasan aunque el código esté roto`).toBe(true);
+  expect(
+    failed,
+    `la mutación "${name}" NO fue detectada: las pruebas pasan aunque el código esté roto`,
+  ).toBe(true);
 }

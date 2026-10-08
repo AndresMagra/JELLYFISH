@@ -1,6 +1,13 @@
-import type { AdminVariantDTO, CategoryDTO, ImportResultDTO } from '@jellyfish/shared';
+import {
+  type AdminVariantDTO,
+  type CategoryDTO,
+  type ImportResultDTO,
+  absolutePhotoUrl,
+  isRemotePhoto,
+  photoThumb,
+} from '@jellyfish/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Upload } from 'lucide-react';
+import { Download, Pencil, Upload } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useAuth } from '../auth';
 import {
@@ -15,8 +22,9 @@ import {
   PageHead,
   useToast,
 } from '../components/ui';
-import { api, download } from '../lib/api';
+import { API_URL, api, download } from '../lib/api';
 import { centavosToPesos, pesosToCentavos } from '../lib/format';
+import './panel-extra.css';
 
 const SOURCE: Record<
   AdminVariantDTO['priceSource'],
@@ -35,6 +43,7 @@ export function Catalog() {
   const [blockedOnly, setBlockedOnly] = useState(false);
   const [search, setSearch] = useState('');
   const [importing, setImporting] = useState(false);
+  const [photoOf, setPhotoOf] = useState<AdminVariantDTO | null>(null);
 
   const cats = useQuery({
     queryKey: ['categories'],
@@ -139,11 +148,12 @@ export function Catalog() {
             text="Cambia los filtros o importa tu inventario con “Importar CSV”."
           />
         ) : (
-          <div className="table-wrap" style={{ maxHeight: '68vh' }}>
+          <div className="table-wrap fit-scroll" style={{ maxHeight: '68vh' }}>
             <table>
               <thead>
                 <tr>
                   <th>Producto</th>
+                  <th>Foto</th>
                   <th className="right">Precio (RD$)</th>
                   <th>Origen</th>
                   <th>ITBIS</th>
@@ -160,6 +170,7 @@ export function Catalog() {
                     canEdit={isAdmin}
                     busy={patch.isPending}
                     onPatch={(body) => patch.mutate({ id: r.id, body })}
+                    onEditPhoto={() => setPhotoOf(r)}
                   />
                 ))}
               </tbody>
@@ -169,6 +180,16 @@ export function Catalog() {
       </Card>
 
       {importing ? <ImportDialog onClose={() => setImporting(false)} /> : null}
+      {photoOf ? (
+        <PhotoDialog
+          r={photoOf}
+          busy={patch.isPending}
+          onSave={(body) =>
+            patch.mutate({ id: photoOf.id, body }, { onSuccess: () => setPhotoOf(null) })
+          }
+          onClose={() => setPhotoOf(null)}
+        />
+      ) : null}
     </>
   );
 }
@@ -178,11 +199,13 @@ function Row({
   canEdit,
   busy,
   onPatch,
+  onEditPhoto,
 }: {
   r: AdminVariantDTO;
   canEdit: boolean;
   busy: boolean;
   onPatch: (b: Record<string, unknown>) => void;
+  onEditPhoto: () => void;
 }) {
   const [price, setPrice] = useState(centavosToPesos(r.price));
   const [cost, setCost] = useState(r.cost === null ? '' : centavosToPesos(r.cost));
@@ -193,98 +216,266 @@ function Row({
   const costCents = pesosToCentavos(cost);
 
   return (
-    <tr data-testid={`row-${r.sku}`}>
-      <td>
-        <strong>{r.productName}</strong>
-        {r.variant ? <span className="muted"> · {r.variant}</span> : null}
-        <div className="muted small">
-          {r.sku} · {r.pricingUnit === 'lb' ? 'por libra' : 'por unidad'}
-        </div>
-      </td>
-      <td className="right nowrap">
-        <input
-          className={`input num ${cents === null ? 'invalid' : ''}`}
-          value={price}
-          disabled={!canEdit}
-          inputMode="decimal"
-          onChange={(e) => setPrice(e.target.value)}
-          onBlur={() => priceChanged && onPatch({ price: cents })}
-          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-          aria-label={`Precio de ${r.productName}`}
-          data-testid={`price-${r.sku}`}
-        />
-      </td>
-      <td>
-        <div className="row">
-          <Badge tone={src.tone}>{src.label}</Badge>
-          {canEdit && r.priceSource !== 'usuario' ? (
-            <Button
-              small
-              variant="ghost"
-              disabled={busy}
-              onClick={() => onPatch({ priceSource: 'usuario' })}
-              data-testid={`confirm-${r.sku}`}
-              title={r.priceNote}
-            >
-              Confirmar
-            </Button>
-          ) : null}
-        </div>
-      </td>
-      <td>
-        <select
-          className="input"
-          style={{ width: 130 }}
-          disabled={!canEdit}
-          value={itbis}
-          onChange={(e) =>
-            onPatch({ itbisBps: e.target.value === '' ? null : Number(e.target.value) })
-          }
-          aria-label={`ITBIS de ${r.productName}`}
-          data-testid={`itbis-${r.sku}`}
-        >
-          <option value="">Por confirmar</option>
-          <option value="0">Exento (0 %)</option>
-          <option value="1800">Gravado (18 %)</option>
-        </select>
-      </td>
-      <td className="right">
-        <input
-          className="input num"
-          style={{ width: 90 }}
-          value={cost}
-          placeholder="—"
-          disabled={!canEdit}
-          inputMode="decimal"
-          onChange={(e) => setCost(e.target.value)}
-          onBlur={() =>
-            canEdit && costCents !== null && costCents !== r.cost && onPatch({ cost: costCents })
-          }
-          aria-label={`Costo de ${r.productName}`}
-        />
-      </td>
-      <td>
-        {r.blockers.length === 0 ? (
-          <Badge tone="success">Publicado</Badge>
-        ) : (
-          <span title={r.blockers.join('\n')}>
-            <Badge tone="warning">Sin publicar</Badge>
-            <div className="muted small" style={{ maxWidth: 210 }}>
-              {r.blockers[0]}
+    <>
+      <tr data-testid={`row-${r.sku}`}>
+        <td>
+          <strong>{r.productName}</strong>
+          {r.variant ? <span className="muted"> · {r.variant}</span> : null}
+          <div className="muted small">
+            {r.sku} · {r.pricingUnit === 'lb' ? 'por libra' : 'por unidad'}
+          </div>
+        </td>
+        <td>
+          <div className="row" style={{ gap: 8 }}>
+            <PhotoThumb
+              key={r.photo}
+              photo={r.photo}
+              label={r.productName}
+              testId={`photo-thumb-${r.sku}`}
+            />
+            <div className="stack" style={{ gap: 2 }}>
+              <span className="muted small">
+                {r.photo.trim() ? (r.photoIllustrative ? 'Ilustrativa' : 'Foto real') : 'Sin foto'}
+              </span>
+              {canEdit ? (
+                <Button
+                  small
+                  variant="ghost"
+                  onClick={onEditPhoto}
+                  data-testid={`photo-edit-${r.sku}`}
+                >
+                  <Pencil size={13} /> Editar foto
+                </Button>
+              ) : null}
             </div>
-          </span>
-        )}
-      </td>
-      <td>
-        <input
-          type="checkbox"
-          checked={r.active}
-          disabled={!canEdit}
-          onChange={(e) => onPatch({ active: e.target.checked })}
-          aria-label={`${r.productName} activo`}
+          </div>
+        </td>
+        <td className="right nowrap">
+          <input
+            className={`input num ${cents === null ? 'invalid' : ''}`}
+            value={price}
+            disabled={!canEdit}
+            inputMode="decimal"
+            onChange={(e) => setPrice(e.target.value)}
+            onBlur={() => priceChanged && onPatch({ price: cents })}
+            onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+            aria-label={`Precio de ${r.productName}`}
+            data-testid={`price-${r.sku}`}
+          />
+        </td>
+        <td>
+          <div className="row">
+            <Badge tone={src.tone}>{src.label}</Badge>
+            {canEdit && r.priceSource !== 'usuario' ? (
+              <Button
+                small
+                variant="ghost"
+                disabled={busy}
+                onClick={() => onPatch({ priceSource: 'usuario' })}
+                data-testid={`confirm-${r.sku}`}
+                title={r.priceNote}
+              >
+                Confirmar
+              </Button>
+            ) : null}
+          </div>
+        </td>
+        <td>
+          <select
+            className="input"
+            style={{ width: 130 }}
+            disabled={!canEdit}
+            value={itbis}
+            onChange={(e) =>
+              onPatch({ itbisBps: e.target.value === '' ? null : Number(e.target.value) })
+            }
+            aria-label={`ITBIS de ${r.productName}`}
+            data-testid={`itbis-${r.sku}`}
+          >
+            <option value="">Por confirmar</option>
+            <option value="0">Exento (0 %)</option>
+            <option value="1800">Gravado (18 %)</option>
+          </select>
+        </td>
+        <td className="right">
+          <input
+            className="input num"
+            style={{ width: 90 }}
+            value={cost}
+            placeholder="—"
+            disabled={!canEdit}
+            inputMode="decimal"
+            onChange={(e) => setCost(e.target.value)}
+            onBlur={() =>
+              canEdit && costCents !== null && costCents !== r.cost && onPatch({ cost: costCents })
+            }
+            aria-label={`Costo de ${r.productName}`}
+          />
+        </td>
+        <td>
+          {r.blockers.length === 0 ? (
+            <Badge tone="success">Publicado</Badge>
+          ) : (
+            <span title={r.blockers.join('\n')}>
+              <Badge tone="warning">Sin publicar</Badge>
+              <div className="muted small" style={{ maxWidth: 210 }}>
+                {r.blockers[0]}
+              </div>
+            </span>
+          )}
+        </td>
+        <td>
+          <input
+            type="checkbox"
+            checked={r.active}
+            disabled={!canEdit}
+            onChange={(e) => onPatch({ active: e.target.checked })}
+            aria-label={`${r.productName} activo`}
+          />
+        </td>
+      </tr>
+    </>
+  );
+}
+
+// ───────────── Foto del artículo ─────────────
+
+/** El API solo guarda una ruta o una URL: no hay carga de archivos en el panel. */
+function photoRefError(text: string): string | null {
+  if (!text) return null;
+  if (text.length > 300) return 'Máximo 300 caracteres';
+  if (/^\/(?!\/)\S+$/.test(text) || /^https?:\/\/\S+$/i.test(text)) return null;
+  return 'Escribe una ruta que empiece con / (como /photos/archivo.webp) o una URL que empiece con https://';
+}
+
+/** Las rutas `/photos/…` se resuelven contra el API; en listas se usa la miniatura liviana si existe. */
+function PhotoThumb({
+  photo,
+  label,
+  testId,
+  big,
+}: {
+  photo: string;
+  label: string;
+  testId: string;
+  big?: boolean;
+}) {
+  const [failures, setFailures] = useState(0);
+  const full = absolutePhotoUrl(photo.trim(), API_URL);
+  const thumb = big ? full : photoThumb(full);
+  const src = !isRemotePhoto(full)
+    ? null
+    : failures === 0
+      ? thumb
+      : failures === 1 && thumb !== full
+        ? full
+        : null;
+  const cls = `photo-thumb ${big ? 'big' : ''}`.trim();
+  return src ? (
+    <img
+      className={cls}
+      src={src}
+      alt={`Foto de ${label}`}
+      loading="lazy"
+      onError={() => setFailures((n) => n + 1)}
+      data-testid={testId}
+    />
+  ) : (
+    <span className={`${cls} empty`} data-testid={testId}>
+      {photo.trim() ? 'No carga' : 'Sin foto'}
+    </span>
+  );
+}
+
+function PhotoDialog({
+  r,
+  busy,
+  onSave,
+  onClose,
+}: {
+  r: AdminVariantDTO;
+  busy: boolean;
+  onSave: (body: Record<string, unknown>) => void;
+  onClose: () => void;
+}) {
+  const [photo, setPhoto] = useState(r.photo);
+  const [illustrative, setIllustrative] = useState(r.photoIllustrative);
+  const clean = photo.trim();
+  const error = photoRefError(clean);
+  const photoChanged = clean !== r.photo.trim();
+  const changed = photoChanged || illustrative !== r.photoIllustrative;
+
+  return (
+    <Modal
+      title={`Foto de ${r.productName}${r.variant ? ` ${r.variant}` : ''}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            busy={busy}
+            disabled={!changed || error !== null}
+            onClick={() =>
+              onSave({
+                ...(photoChanged ? { photo: clean } : {}),
+                ...(illustrative !== r.photoIllustrative
+                  ? { photoIllustrative: illustrative }
+                  : {}),
+              })
+            }
+            data-testid={`photo-save-${r.sku}`}
+          >
+            Guardar foto
+          </Button>
+        </>
+      }
+    >
+      <div className="photo-editor">
+        <PhotoThumb
+          key={error ? '' : clean}
+          photo={error ? '' : clean}
+          label={r.productName}
+          testId={`photo-preview-${r.sku}`}
+          big
         />
-      </td>
-    </tr>
+        <div className="stack grow" style={{ gap: 12 }}>
+          <Field
+            label="Ruta o URL de la foto"
+            error={error}
+            hint="Aquí no se suben archivos: escribe la ruta de una foto que ya esté en el servidor (como /photos/archivo.webp) o la URL completa de una imagen publicada. Vacío quita la foto."
+          >
+            <input
+              className={`input ${error ? 'invalid' : ''}`.trim()}
+              value={photo}
+              autoFocus
+              onChange={(e) => setPhoto(e.target.value)}
+              placeholder="/photos/archivo.webp"
+              spellCheck={false}
+              data-testid={`photo-input-${r.sku}`}
+            />
+          </Field>
+          <label className="photo-toggle">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={illustrative}
+              onChange={(e) => setIllustrative(e.target.checked)}
+              data-testid={`photo-illustrative-${r.sku}`}
+            />
+            <span>
+              <strong>Imagen ilustrativa</strong>
+              <span className="muted small">
+                {illustrative
+                  ? 'Es una ilustración: la app del cliente la rotula como “Imagen ilustrativa”.'
+                  : 'Es la foto real del producto: la app del cliente la muestra sin esa leyenda.'}
+              </span>
+            </span>
+          </label>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

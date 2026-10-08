@@ -134,7 +134,9 @@ export function installGeolocationDouble(
   const target = nav as NavigatorLike;
   const installed = { geolocation: false, permissions: false };
   const undo: (() => void)[] = [];
-  const permission: PermissionState = options.permission ?? { state: options.initialPermission ?? 'prompt' };
+  const permission: PermissionState = options.permission ?? {
+    state: options.initialPermission ?? 'prompt',
+  };
 
   try {
     const hadOwn = Object.prototype.hasOwnProperty.call(target, 'geolocation');

@@ -25,7 +25,10 @@ const OPTS = { buildId: 'abc1234567', files: FILES };
 
 type EnvApi = {
   candidateBases: (pathname: string) => string[];
-  resolveEnv: (pathname: string, dir: string) => { assets: string; router: string; noslash: boolean };
+  resolveEnv: (
+    pathname: string,
+    dir: string,
+  ) => { assets: string; router: string; noslash: boolean };
   guardHistory: (history: object) => void;
   routes: readonly string[];
 };
@@ -34,7 +37,12 @@ type EnvApi = {
 function envFrom(source: string): EnvApi {
   const api = new Function(
     `${source}; return { c: jfCandidateBases, e: jfEnv, g: jfGuardHistory, r: JF_ROUTES };`,
-  )() as { c: EnvApi['candidateBases']; e: EnvApi['resolveEnv']; g: EnvApi['guardHistory']; r: string[] };
+  )() as {
+    c: EnvApi['candidateBases'];
+    e: EnvApi['resolveEnv'];
+    g: EnvApi['guardHistory'];
+    r: string[];
+  };
   return { candidateBases: api.c, resolveEnv: api.e, guardHistory: api.g, routes: api.r };
 }
 
@@ -80,7 +88,20 @@ function boot(api: EnvApi, pathname: string, files: string) {
 }
 
 /** Pantallas internas con su dirección real (la base del router + la ruta de la app). */
-const INNER = ['search', 'cart', 'orders', 'profile', 'product/camaron', 'order/abc-123', 'checkout', 'login', 'verify', 'address-new', 'favorites', 'legal/terminos'];
+const INNER = [
+  'search',
+  'cart',
+  'orders',
+  'profile',
+  'product/camaron',
+  'order/abc-123',
+  'checkout',
+  'login',
+  'verify',
+  'address-new',
+  'favorites',
+  'legal/terminos',
+];
 
 function envSuite(api: EnvApi): void {
   // candidateBases: de la carpeta de la URL hacia arriba, sin repetir.
@@ -88,8 +109,19 @@ function envSuite(api: EnvApi): void {
   expect(api.candidateBases('/index.html')).toEqual(['/']);
   expect(api.candidateBases('/x/y/z/artifact.html')).toEqual(['/x/y/z/', '/x/y/', '/x/', '/']);
   expect(api.candidateBases('/artifact/xyz')).toEqual(['/artifact/', '/artifact/xyz/', '/']);
-  expect(api.candidateBases('/vista.previa/app')).toEqual(['/vista.previa/', '/vista.previa/app/', '/']);
-  expect(api.candidateBases('/x/y/z/product/camaron')).toEqual(['/x/y/z/product/', '/x/y/z/product/camaron/', '/x/y/z/', '/x/y/', '/x/', '/']);
+  expect(api.candidateBases('/vista.previa/app')).toEqual([
+    '/vista.previa/',
+    '/vista.previa/app/',
+    '/',
+  ]);
+  expect(api.candidateBases('/x/y/z/product/camaron')).toEqual([
+    '/x/y/z/product/',
+    '/x/y/z/product/camaron/',
+    '/x/y/z/',
+    '/x/y/',
+    '/x/',
+    '/',
+  ]);
 
   for (const p of PUBLICATIONS) {
     const want = expectedEnv(p);
@@ -97,7 +129,9 @@ function envSuite(api: EnvApi): void {
     const first = boot(api, p.page, p.files);
     expect(first, `${p.name}: no encontró los archivos`).not.toBeNull();
     expect(first!.env, p.name).toEqual(want);
-    expect(first!.plan, p.name).toBe(p.name === 'sin barra, archivos dentro de la ruta' ? 'B' : 'A');
+    expect(first!.plan, p.name).toBe(
+      p.name === 'sin barra, archivos dentro de la ruta' ? 'B' : 'A',
+    );
     // Recargar dentro de cualquier pantalla: la misma carpeta de archivos y la misma base del router.
     for (const inner of INNER) {
       const pathname = `${want.router}/${inner}`;
@@ -115,7 +149,10 @@ function envSuite(api: EnvApi): void {
 function historySuite(api: EnvApi): void {
   // Un marco con otro origen rechaza pushState y replaceState con SecurityError: la app no puede quedar en blanco.
   const calls: string[] = [];
-  const hist: { pushState: (...a: unknown[]) => unknown; replaceState: (...a: unknown[]) => unknown } = {
+  const hist: {
+    pushState: (...a: unknown[]) => unknown;
+    replaceState: (...a: unknown[]) => unknown;
+  } = {
     pushState() {
       throw new DOMException('Bloqueado por el marco', 'SecurityError');
     },
@@ -134,7 +171,9 @@ function historySuite(api: EnvApi): void {
   expect(() => api.guardHistory({})).not.toThrow();
   expect(() => api.guardHistory({ pushState: 1, replaceState: null })).not.toThrow();
   // Un objeto con propiedades de solo lectura (congelado): no lanza.
-  expect(() => api.guardHistory(Object.freeze({ pushState() {}, replaceState() {} }))).not.toThrow();
+  expect(() =>
+    api.guardHistory(Object.freeze({ pushState() {}, replaceState() {} })),
+  ).not.toThrow();
 }
 
 describe('base en tiempo de ejecución: dónde quedó publicada la página', () => {
@@ -180,20 +219,80 @@ describe('base en tiempo de ejecución: dónde quedó publicada la página', () 
       expect(mutated, `la mutación ya no aplica: ${String(from)}`).not.toBe(ENV_SOURCE);
       return envFrom(mutated);
     };
-    const killed = (name: string, m: EnvApi, suite: (a: EnvApi) => void) => expectKilled(name, () => suite(m));
-    killed('cualquier segmento sin punto es una pantalla', mutate("first.indexOf('.') === -1 && JF_ROUTES.indexOf(first) !== -1", "first.indexOf('.') === -1"), envSuite);
-    killed('un archivo con punto es una pantalla', mutate("first.indexOf('.') === -1 && JF_ROUTES.indexOf(first) !== -1", 'JF_ROUTES.indexOf(first) !== -1 || true'), envSuite);
-    killed('no se prueba la ruta como carpeta', mutate("if (last && last.indexOf('.') === -1) out.push(pathname + '/');", ''), envSuite);
-    killed('no se sube por las carpetas', mutate(/while \(up\.length > 1\) \{[\s\S]*?\n  \}\n/, ''), envSuite);
+    const killed = (name: string, m: EnvApi, suite: (a: EnvApi) => void) =>
+      expectKilled(name, () => suite(m));
+    killed(
+      'cualquier segmento sin punto es una pantalla',
+      mutate(
+        "first.indexOf('.') === -1 && JF_ROUTES.indexOf(first) !== -1",
+        "first.indexOf('.') === -1",
+      ),
+      envSuite,
+    );
+    killed(
+      'un archivo con punto es una pantalla',
+      mutate(
+        "first.indexOf('.') === -1 && JF_ROUTES.indexOf(first) !== -1",
+        'JF_ROUTES.indexOf(first) !== -1 || true',
+      ),
+      envSuite,
+    );
+    killed(
+      'no se prueba la ruta como carpeta',
+      mutate("if (last && last.indexOf('.') === -1) out.push(pathname + '/');", ''),
+      envSuite,
+    );
+    killed(
+      'no se sube por las carpetas',
+      mutate(/while \(up\.length > 1\) \{[\s\S]*?\n  \}\n/, ''),
+      envSuite,
+    );
     killed('no se prueba la carpeta de la URL', mutate('out.push(dir);', ''), envSuite);
-    killed('la página con archivo pierde su "sin barra"', mutate('router = dir + first;\n      noslash = true;', 'router = dir + first;\n      noslash = false;'), envSuite);
-    killed('la carpeta de archivos conserva la barra final', mutate("var assets = dir.replace(/\\/+$/, '');", 'var assets = dir;'), envSuite);
-    killed('en la raíz el router queda con "/"', mutate('router = assets;\n    noslash = false;\n  } else if (pathname + ', 'router = dir;\n    noslash = false;\n  } else if (pathname + '), envSuite);
-    killed('falta la pantalla de textos legales', mutate("'favorites', 'legal'", "'favorites'"), envSuite);
+    killed(
+      'la página con archivo pierde su "sin barra"',
+      mutate(
+        'router = dir + first;\n      noslash = true;',
+        'router = dir + first;\n      noslash = false;',
+      ),
+      envSuite,
+    );
+    killed(
+      'la carpeta de archivos conserva la barra final',
+      mutate("var assets = dir.replace(/\\/+$/, '');", 'var assets = dir;'),
+      envSuite,
+    );
+    killed(
+      'en la raíz el router queda con "/"',
+      mutate(
+        'router = assets;\n    noslash = false;\n  } else if (pathname + ',
+        'router = dir;\n    noslash = false;\n  } else if (pathname + ',
+      ),
+      envSuite,
+    );
+    killed(
+      'falta la pantalla de textos legales',
+      mutate("'favorites', 'legal'", "'favorites'"),
+      envSuite,
+    );
     killed('falta la pantalla de producto', mutate("'product', ", ''), envSuite);
-    killed('un error de pushState rompe la app', mutate('try { return fn.apply(history, arguments); } catch (e) { return undefined; }', 'return fn.apply(history, arguments);'), historySuite);
-    killed('el envoltorio pierde los argumentos', mutate('return fn.apply(history, arguments);', 'return fn.apply(history, []);'), historySuite);
-    killed('no se envuelve replaceState', mutate("var names = ['pushState', 'replaceState'];", "var names = ['replaceState'];"), historySuite);
+    killed(
+      'un error de pushState rompe la app',
+      mutate(
+        'try { return fn.apply(history, arguments); } catch (e) { return undefined; }',
+        'return fn.apply(history, arguments);',
+      ),
+      historySuite,
+    );
+    killed(
+      'el envoltorio pierde los argumentos',
+      mutate('return fn.apply(history, arguments);', 'return fn.apply(history, []);'),
+      historySuite,
+    );
+    killed(
+      'no se envuelve replaceState',
+      mutate("var names = ['pushState', 'replaceState'];", "var names = ['replaceState'];"),
+      historySuite,
+    );
   });
 });
 
@@ -216,10 +315,16 @@ describe('patchAppBundle', () => {
     // Ninguna ruta de assets quedó sin parchar (todas van detrás de la carpeta real de la página).
     expect(/(?<!\+)["'`]\/assets\//.test(js)).toBe(false);
     expect(js).toContain('uri:(globalThis.__JF_ASSETS__||"")+"/assets/__node_modules/expo-router');
-    expect(js).toContain('m.exports=(globalThis.__JF_ASSETS__||"")+"/assets/__node_modules/@expo/vector-icons');
+    expect(js).toContain(
+      'm.exports=(globalThis.__JF_ASSETS__||"")+"/assets/__node_modules/@expo/vector-icons',
+    );
     expect(js).toContain('function o(t,a=globalThis.__JF_BASE__||""){return a?t.replace(');
-    expect(js).toContain('getUrlWithReactNavigationConcessions=function(t,n=globalThis.__JF_BASE__||""){');
-    expect(js.match(/appendBaseUrl=function\(t,n=globalThis\.__JF_BASE__\|\|""\)\{/g)).toHaveLength(2);
+    expect(js).toContain(
+      'getUrlWithReactNavigationConcessions=function(t,n=globalThis.__JF_BASE__||""){',
+    );
+    expect(js.match(/appendBaseUrl=function\(t,n=globalThis\.__JF_BASE__\|\|""\)\{/g)).toHaveLength(
+      2,
+    );
   });
 
   it('el resultado sigue siendo JavaScript válido', () => {
@@ -230,8 +335,12 @@ describe('patchAppBundle', () => {
 
   it('las URLs de assets salen de la carpeta real de la página (en la raíz y en una subcarpeta)', () => {
     const { js } = patchAppBundle(SAMPLE);
-    const expr = /m\.exports=(\(globalThis\.__JF_ASSETS__\|\|""\)\+"[^"]*MaterialCommunityIcons[^"]*")/.exec(js)![1]!;
-    const read = (assets: string | undefined) => new Function('globalThis', `return ${expr}`)({ __JF_ASSETS__: assets }) as string;
+    const expr =
+      /m\.exports=(\(globalThis\.__JF_ASSETS__\|\|""\)\+"[^"]*MaterialCommunityIcons[^"]*")/.exec(
+        js,
+      )![1]!;
+    const read = (assets: string | undefined) =>
+      new Function('globalThis', `return ${expr}`)({ __JF_ASSETS__: assets }) as string;
     const tail = '/assets/__node_modules/@expo/vector-icons/Fonts/MaterialCommunityIcons.6e43.ttf';
     expect(read(undefined)).toBe(tail);
     expect(read('')).toBe(tail);
@@ -267,11 +376,15 @@ describe('patchAppBundle', () => {
 
   it('falla en voz alta si una versión nueva de Expo cambia los patrones', () => {
     expect(() =>
-      patchAppBundle(SAMPLE.replace(/appendBaseUrl=function\(t,n=""\)/g, 'appendBaseUrl=function(t,n)')),
+      patchAppBundle(
+        SAMPLE.replace(/appendBaseUrl=function\(t,n=""\)/g, 'appendBaseUrl=function(t,n)'),
+      ),
     ).toThrow(/appendBaseUrl/);
     expect(() => patchAppBundle('console.log(1)')).toThrow(/No se pudo parchear el bundle/);
     // Una ruta de assets en un contexto que no conocemos tampoco pasa en silencio.
-    expect(() => patchAppBundle(`${SAMPLE}\nfoo("/assets/otra-cosa.png")`)).toThrow(/contexto desconocido/);
+    expect(() => patchAppBundle(`${SAMPLE}\nfoo("/assets/otra-cosa.png")`)).toThrow(
+      /contexto desconocido/,
+    );
   });
 });
 
@@ -286,26 +399,43 @@ describe('fuentes: solo se publican las que el código usa', () => {
   ]);
 
   it('detecta las fuentes de Google y las familias de íconos que se importan', () => {
-    expect([...usage.googleFonts].sort()).toEqual(['PlusJakartaSans_400Regular', 'PlusJakartaSans_700Bold', 'Sora_700Bold']);
+    expect([...usage.googleFonts].sort()).toEqual([
+      'PlusJakartaSans_400Regular',
+      'PlusJakartaSans_700Bold',
+      'Sora_700Bold',
+    ]);
     expect([...usage.iconFamilies].sort()).toEqual(['FontAwesome6', 'MaterialCommunityIcons']);
   });
 
   it('conserva lo usado y descarta el resto de los .ttf', () => {
     const f = (p: string) => keepAssetFile(p, usage);
     const gf = 'assets/__node_modules/@expo-google-fonts';
-    const vi = 'assets/__node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts';
-    expect(f(`${gf}/plus-jakarta-sans/400Regular/PlusJakartaSans_400Regular.dd3a1370a03dc0f2d7d093bd0ffe7c0b.ttf`)).toBe(true);
-    expect(f(`${gf}/plus-jakarta-sans/200ExtraLight/PlusJakartaSans_200ExtraLight.fdd89758261c9786825d3cdeaf8bc77d.ttf`)).toBe(false);
+    const vi =
+      'assets/__node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts';
+    expect(
+      f(
+        `${gf}/plus-jakarta-sans/400Regular/PlusJakartaSans_400Regular.dd3a1370a03dc0f2d7d093bd0ffe7c0b.ttf`,
+      ),
+    ).toBe(true);
+    expect(
+      f(
+        `${gf}/plus-jakarta-sans/200ExtraLight/PlusJakartaSans_200ExtraLight.fdd89758261c9786825d3cdeaf8bc77d.ttf`,
+      ),
+    ).toBe(false);
     expect(f(`${gf}/sora/700Bold/Sora_700Bold.0123456789abcdef0123456789abcdef.ttf`)).toBe(true);
     expect(f(`${vi}/MaterialCommunityIcons.6e435534bd35da5fef04168860a9b8fa.ttf`)).toBe(true);
     expect(f(`${vi}/FontAwesome6_Solid.adec7d6f310bc577f05e8fe06a5daccf.ttf`)).toBe(true);
     expect(f(`${vi}/Ionicons.b4eb097d35f44ed943676fd56f6bdc51.ttf`)).toBe(false);
-    expect(f('assets/__node_modules/expo-router/assets/error.d1ea1496f9057eb392d5bbf3732a61b7.png')).toBe(true);
+    expect(
+      f('assets/__node_modules/expo-router/assets/error.d1ea1496f9057eb392d5bbf3732a61b7.png'),
+    ).toBe(true);
   });
 
   it('sin datos de uso no se descarta nada (nunca se deja una fuente a medias)', () => {
     const none = scanFontUsage([]);
-    expect(keepAssetFile('assets/__node_modules/@expo/vector-icons/Fonts/Ionicons.abc.ttf', none)).toBe(true);
+    expect(
+      keepAssetFile('assets/__node_modules/@expo/vector-icons/Fonts/Ionicons.abc.ttf', none),
+    ).toBe(true);
   });
 });
 
@@ -318,7 +448,8 @@ describe('artifact.html: el fragmento que se publica', () => {
     expect(fragmentProblems(html)).toEqual([]);
     expect(html.startsWith(`<title>${PAGE_TITLE}</title>\n<style>`)).toBe(true);
     expect(PAGE_TITLE).toBe('JELLYFISH');
-    for (const tag of ['<!doctype', '<html', '<head', '<body']) expect(html.toLowerCase()).not.toContain(tag);
+    for (const tag of ['<!doctype', '<html', '<head', '<body'])
+      expect(html.toLowerCase()).not.toContain(tag);
     expect(html).toContain('<div id="root">');
   });
 
@@ -340,15 +471,21 @@ describe('artifact.html: el fragmento que se publica', () => {
     expect(html).toContain('VISTA PREVIA · datos de ejemplo · código de prueba <b>123456</b>');
     expect(html).toContain('id="jf-restart"');
     expect(html).not.toMatch(/https?:\/\//);
-    expect(html).not.toMatch(/serviceWorker|manifest|<link|<base|window\.open|\balert\(|\bconfirm\(|\bprompt\(/);
+    expect(html).not.toMatch(
+      /serviceWorker|manifest|<link|<base|window\.open|\balert\(|\bconfirm\(|\bprompt\(/,
+    );
   });
 
   it('no promete "app instalada": sin modo standalone ni íconos de pantalla de inicio en el fragmento', () => {
-    expect(html).not.toMatch(/apple-mobile-web-app|mobile-web-app-capable|apple-touch-icon|instal/i);
+    expect(html).not.toMatch(
+      /apple-mobile-web-app|mobile-web-app-capable|apple-touch-icon|instal/i,
+    );
   });
 
   it('la app va en una capa fija a pantalla completa: el relleno de :root del visor no la mueve', () => {
-    expect(html).toMatch(/#root \{ position: fixed; top: var\(--jf-h\); left: 0; right: 0; bottom: 0;/);
+    expect(html).toMatch(
+      /#root \{ position: fixed; top: var\(--jf-h\); left: 0; right: 0; bottom: 0;/,
+    );
     expect(html).toMatch(/body \{ margin: 0; overflow: hidden;/);
   });
 
@@ -365,17 +502,43 @@ describe('artifact.html: el fragmento que se publica', () => {
   it('el HTML que no cumple el formato se rechaza, regla por regla', () => {
     const bad = (mutate: (h: string) => string) => fragmentProblems(mutate(html));
     expect(bad((h) => `<!doctype html>${h}`)).not.toEqual([]);
-    expect(bad((h) => `<html><body>${h}</body></html>`).join('|')).toMatch(/<html>.*<body>|<body>.*<html>|<html>|<body>/);
-    expect(bad((h) => h.replace('<title>JELLYFISH</title>', '<title>Otra cosa</title>')).join('|')).toMatch(/debe empezar/);
-    expect(bad((h) => h.replace('<title>JELLYFISH</title>\n<style>', '<style>').replace('</style>', '</style><title>JELLYFISH</title>')).join('|')).toMatch(/debe empezar/);
-    expect(bad((h) => h.replace('--jf-abyss: #050B1F', '--jf-abyss: rgba(5,11,31,.5)')).join('|')).toMatch(/tokens de color/);
-    expect(bad((h) => h.replace('background: var(--jf-abyss); color: var(--jf-text)', 'color: var(--jf-text)')).join('|')).toMatch(/fondo explícito/);
-    expect(bad((h) => h.replace('<div id="root">', '<div id="app">')).join('|')).toMatch(/id="root"/);
-    expect(bad((h) => h.replace(`src="${FILES.app}"`, 'src="/js/app.js"')).join('|')).toMatch(/ruta relativa/);
-    expect(bad((h) => h.replace(`src="${FILES.app}"`, 'src="https://cdn.example/app.js"')).join('|')).toMatch(/ruta relativa|externos/);
+    expect(bad((h) => `<html><body>${h}</body></html>`).join('|')).toMatch(
+      /<html>.*<body>|<body>.*<html>|<html>|<body>/,
+    );
+    expect(
+      bad((h) => h.replace('<title>JELLYFISH</title>', '<title>Otra cosa</title>')).join('|'),
+    ).toMatch(/debe empezar/);
+    expect(
+      bad((h) =>
+        h
+          .replace('<title>JELLYFISH</title>\n<style>', '<style>')
+          .replace('</style>', '</style><title>JELLYFISH</title>'),
+      ).join('|'),
+    ).toMatch(/debe empezar/);
+    expect(
+      bad((h) => h.replace('--jf-abyss: #050B1F', '--jf-abyss: rgba(5,11,31,.5)')).join('|'),
+    ).toMatch(/tokens de color/);
+    expect(
+      bad((h) =>
+        h.replace('background: var(--jf-abyss); color: var(--jf-text)', 'color: var(--jf-text)'),
+      ).join('|'),
+    ).toMatch(/fondo explícito/);
+    expect(bad((h) => h.replace('<div id="root">', '<div id="app">')).join('|')).toMatch(
+      /id="root"/,
+    );
+    expect(bad((h) => h.replace(`src="${FILES.app}"`, 'src="/js/app.js"')).join('|')).toMatch(
+      /ruta relativa/,
+    );
+    expect(
+      bad((h) => h.replace(`src="${FILES.app}"`, 'src="https://cdn.example/app.js"')).join('|'),
+    ).toMatch(/ruta relativa|externos/);
     expect(bad((h) => `${h}<link rel="stylesheet" href="x.css">`).join('|')).toMatch(/<link>/);
-    expect(bad((h) => `${h}<script>navigator.serviceWorker.register('sw.js')</script>`).join('|')).toMatch(/service workers/);
-    expect(bad((h) => `${h}<script>if (confirm('seguro?')) {}</script>`).join('|')).toMatch(/alert\/confirm/);
+    expect(
+      bad((h) => `${h}<script>navigator.serviceWorker.register('sw.js')</script>`).join('|'),
+    ).toMatch(/service workers/);
+    expect(bad((h) => `${h}<script>if (confirm('seguro?')) {}</script>`).join('|')).toMatch(
+      /alert\/confirm/,
+    );
     expect(bad((h) => `${h}<script>window.open('x')</script>`).join('|')).toMatch(/window\.open/);
     expect(bad((h) => `${h}<base href="/">`).join('|')).toMatch(/<base>/);
   });
@@ -390,7 +553,9 @@ describe('index.html completo y esqueleto del visor', () => {
     expect(full).toContain(renderFragment(OPTS));
     expect(full).toContain('href="icons/apple-touch-icon.png"'); // ícono para "agregar a inicio", en el documento completo
     // …pero tampoco promete instalarse: sin manifest, sin service worker, sin modo standalone.
-    expect(full).not.toMatch(/manifest|serviceWorker|apple-mobile-web-app-capable|mobile-web-app-capable/);
+    expect(full).not.toMatch(
+      /manifest|serviceWorker|apple-mobile-web-app-capable|mobile-web-app-capable/,
+    );
   });
 
   it('ninguna dirección es absoluta (se rompería en una subcarpeta)', () => {
@@ -418,18 +583,65 @@ describe('detecta cada mutación del formato de la página', () => {
 
   it('si renderFragment deja de cumplir una regla, fragmentProblems la reporta', async () => {
     const file = new URL('../../../scripts/preview-shell.ts', import.meta.url).pathname;
-    type Shell = { renderFragment: typeof renderFragment; fragmentProblems: typeof fragmentProblems };
-    const suite = (api: Shell) => expect(api.fragmentProblems(api.renderFragment(OPTS))).toEqual([]);
+    type Shell = {
+      renderFragment: typeof renderFragment;
+      fragmentProblems: typeof fragmentProblems;
+    };
+    const suite = (api: Shell) =>
+      expect(api.fragmentProblems(api.renderFragment(OPTS))).toEqual([]);
     suite({ renderFragment, fragmentProblems });
     const mutants: [string, Parameters<typeof loadMutant>[1]][] = [
-      ['el título cambia', [["export const PAGE_TITLE = 'JELLYFISH';", "export const PAGE_TITLE = 'JELLYFISH · vista previa';"]]],
-      ['el fondo del body se vuelve transparente', [['background: var(--jf-abyss); color: var(--jf-text); font: 600 14px', 'color: var(--jf-text); font: 600 14px']]],
-      ['el script de la app pasa a ruta absoluta', [['<script defer src="${app}"></script>', '<script defer src="/${app}"></script>']]],
-      ['aparece un service worker', [["try { jfGuardHistory(window.history); } catch (e) {}", "try { jfGuardHistory(window.history); } catch (e) {} navigator.serviceWorker.register('sw.js');"]]],
-      ['aparece un manifest', [['<meta name="theme-color"', '<link rel="manifest" href="m.json"><meta name="theme-color"']]],
+      [
+        'el título cambia',
+        [
+          [
+            "export const PAGE_TITLE = 'JELLYFISH';",
+            "export const PAGE_TITLE = 'JELLYFISH · vista previa';",
+          ],
+        ],
+      ],
+      [
+        'el fondo del body se vuelve transparente',
+        [
+          [
+            'background: var(--jf-abyss); color: var(--jf-text); font: 600 14px',
+            'color: var(--jf-text); font: 600 14px',
+          ],
+        ],
+      ],
+      [
+        'el script de la app pasa a ruta absoluta',
+        [['<script defer src="${app}"></script>', '<script defer src="/${app}"></script>']],
+      ],
+      [
+        'aparece un service worker',
+        [
+          [
+            'try { jfGuardHistory(window.history); } catch (e) {}',
+            "try { jfGuardHistory(window.history); } catch (e) {} navigator.serviceWorker.register('sw.js');",
+          ],
+        ],
+      ],
+      [
+        'aparece un manifest',
+        [
+          [
+            '<meta name="theme-color"',
+            '<link rel="manifest" href="m.json"><meta name="theme-color"',
+          ],
+        ],
+      ],
       ['se pide algo a otro servidor', [['<noscript>', '<noscript>https://fonts.example/x.css ']]],
       ['falta el contenedor de la app', [['<div id="root">', '<div id="app">']]],
-      ['el fragmento se vuelve un documento', [['export function renderFragment(opts: ShellOptions): string {\n  const [data, demo, app] = fileList(opts.files);\n  return `<title>', 'export function renderFragment(opts: ShellOptions): string {\n  const [data, demo, app] = fileList(opts.files);\n  return `<!doctype html><title>']]],
+      [
+        'el fragmento se vuelve un documento',
+        [
+          [
+            'export function renderFragment(opts: ShellOptions): string {\n  const [data, demo, app] = fileList(opts.files);\n  return `<title>',
+            'export function renderFragment(opts: ShellOptions): string {\n  const [data, demo, app] = fileList(opts.files);\n  return `<!doctype html><title>',
+          ],
+        ],
+      ],
     ];
     for (const [name, edits] of mutants) {
       const mutant = await loadMutant<Shell>(file, edits);

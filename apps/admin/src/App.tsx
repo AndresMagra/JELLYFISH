@@ -8,7 +8,9 @@ import {
   LayoutDashboard,
   LogOut,
   MapPin,
+  ScrollText,
   ShoppingBasket,
+  TicketPercent,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -16,7 +18,9 @@ import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './auth';
 import { Button } from './components/ui';
 import { api } from './lib/api';
+import { Audit } from './pages/Audit';
 import { Catalog } from './pages/Catalog';
+import { Coupons } from './pages/Coupons';
 import { Dashboard } from './pages/Dashboard';
 import { Inventory } from './pages/Inventory';
 import { OrderDetail } from './pages/OrderDetail';
@@ -65,8 +69,10 @@ function Sidebar() {
           : null}
         {link('/inventario', <Boxes size={18} />, 'Inventario')}
         {link('/pagos', <Wallet size={18} />, 'Pagos y caja', money)}
+        {link('/cupones', <TicketPercent size={18} />, 'Cupones')}
         {isAdmin ? link('/zonas', <MapPin size={18} />, 'Zonas de entrega') : null}
         {isAdmin ? link('/equipo', <Users size={18} />, 'Equipo') : null}
+        {isAdmin ? link('/bitacora', <ScrollText size={18} />, 'Bitácora') : null}
       </nav>
       <div className="grow" />
       <div className="muted small" style={{ padding: '0 10px' }}>
@@ -105,8 +111,10 @@ export function App() {
           />
           <Route path="/inventario" element={<Inventory />} />
           <Route path="/pagos" element={<Payments />} />
+          <Route path="/cupones" element={<Coupons />} />
           <Route path="/zonas" element={isAdmin ? <Zones /> : <Navigate to="/" replace />} />
           <Route path="/equipo" element={isAdmin ? <Team /> : <Navigate to="/" replace />} />
+          <Route path="/bitacora" element={isAdmin ? <Audit /> : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

@@ -235,7 +235,7 @@ describe('catálogo de la vista previa: fotos por variante', () => {
     const mutants: [string, Parameters<typeof loadMutant>[1]][] = [
       [
         'la foto del CSV cuenta en la vista previa',
-        [['const keepOwn = !options.localPhotosOnly && ', 'const keepOwn = ']],
+        [['!options.localPhotosOnly && item.photo !== ', 'item.photo !== ']],
       ],
       [
         'una variante sin foto propia sirve la foto de otro servidor del CSV',
@@ -253,7 +253,7 @@ describe('catálogo de la vista previa: fotos por variante', () => {
         'la carpeta de la página no se pasa a resolvePhoto',
         [['photoBase: options.photoBase,', 'photoBase: undefined,']],
       ],
-      ['la huella usa la foto ya resuelta', [['v.photoSource])]', 'v.photo])]']]],
+      ['la huella usa la foto ya resuelta', [['v.price, v.photoSource]', 'v.price, v.photo]']]],
     ];
     for (const [name, edits] of mutants) {
       const mutant = await loadMutant<{ buildCatalog: typeof buildCatalog }>(file, edits);

@@ -21,7 +21,12 @@ beforeAll(() => {
   writeFileSync(join(dist, 'secret.txt'), 'no se publica');
   writeFileSync(
     join(dist, 'publish-files.json'),
-    JSON.stringify({ files: { 'js/a.js': `${dist}/js/a.js`, 'photos/JF-X-001.thumb.webp': `${dist}/photos/JF-X-001.thumb.webp` } }),
+    JSON.stringify({
+      files: {
+        'js/a.js': `${dist}/js/a.js`,
+        'photos/JF-X-001.thumb.webp': `${dist}/photos/JF-X-001.thumb.webp`,
+      },
+    }),
   );
 });
 afterAll(() => {
@@ -31,7 +36,12 @@ afterAll(() => {
 
 const get = async (origin: string, path: string, accept = '*/*') => {
   const r = await fetch(`${origin}${path}`, { headers: { accept } });
-  return { status: r.status, type: r.headers.get('content-type') ?? '', csp: r.headers.get('content-security-policy'), text: await r.text() };
+  return {
+    status: r.status,
+    type: r.headers.get('content-type') ?? '',
+    csp: r.headers.get('content-security-policy'),
+    text: await r.text(),
+  };
 };
 
 async function hostSuite(api: Api): Promise<void> {
@@ -54,7 +64,8 @@ async function hostSuite(api: Api): Promise<void> {
     expect(page.text).toContain('<title>JELLYFISH</title>');
     // Con la política estricta: solo archivos propios, data: y blob:.
     expect(page.csp).toContain("default-src 'none'");
-    for (const d of ['script-src', 'style-src', 'img-src', 'font-src', 'connect-src']) expect(page.csp).toMatch(new RegExp(`${d} [^;]*'self'`));
+    for (const d of ['script-src', 'style-src', 'img-src', 'font-src', 'connect-src'])
+      expect(page.csp).toMatch(new RegExp(`${d} [^;]*'self'`));
     expect(page.csp).not.toMatch(/https?:|\*/);
     expect(page.csp).not.toContain("'unsafe-eval'");
     // El index.html completo se sirve tal cual, sin envolver.
@@ -66,7 +77,14 @@ async function hostSuite(api: Api): Promise<void> {
     expect((await get(h.origin, '/x/y/z/js/a.js')).type).toMatch(/javascript/);
     expect((await get(h.origin, '/x/y/z/photos/JF-X-001.thumb.webp')).type).toBe('image/webp');
     // Lo que NO se publica no se sirve aunque exista en disco (el visor tampoco lo tendría).
-    for (const p of ['/x/y/z/secret.txt', '/x/y/z/publish-files.json', '/x/y/z/artifact.html', '/x/y/z/index.html', '/x/y/z/js/', '/x/y/z/js/no-existe.js'])
+    for (const p of [
+      '/x/y/z/secret.txt',
+      '/x/y/z/publish-files.json',
+      '/x/y/z/artifact.html',
+      '/x/y/z/index.html',
+      '/x/y/z/js/',
+      '/x/y/z/js/no-existe.js',
+    ])
       expect((await get(h.origin, p)).status, p).toBe(404);
     // La carpeta equivocada no sirve nada: nada de "devolver index.html por si acaso".
     expect((await get(h.origin, '/js/a.js')).status).toBe(404);
@@ -87,9 +105,16 @@ async function hostSuite(api: Api): Promise<void> {
   }
 
   // Con "SPA fallback" (opcional): una pantalla interna devuelve la página, solo si se pide y solo a quien lo pide en HTML.
-  const fb = await api.startHost({ dist, port: 4620, mounts: [{ name: 'xyz', page: '/x/y/z/', filesDir: '/x/y/z/', mode: 'host' }], fallback: ['xyz'] });
+  const fb = await api.startHost({
+    dist,
+    port: 4620,
+    mounts: [{ name: 'xyz', page: '/x/y/z/', filesDir: '/x/y/z/', mode: 'host' }],
+    fallback: ['xyz'],
+  });
   try {
-    expect((await get(fb.origin, '/x/y/z/product/camaron', 'text/html')).text).toContain('<title>JELLYFISH</title>');
+    expect((await get(fb.origin, '/x/y/z/product/camaron', 'text/html')).text).toContain(
+      '<title>JELLYFISH</title>',
+    );
     expect((await get(fb.origin, '/x/y/z/product/camaron', '*/*')).status).toBe(404);
     expect((await get(fb.origin, '/x/y/z/js/no-existe.js', '*/*')).status).toBe(404);
   } finally {
@@ -97,7 +122,12 @@ async function hostSuite(api: Api): Promise<void> {
   }
 
   // La política se puede quitar (para probar que SÍ se detecta una violación).
-  const open = await api.startHost({ dist, port: 4640, mounts: [{ name: 'r', page: '/', filesDir: '/', mode: 'host' }], csp: null });
+  const open = await api.startHost({
+    dist,
+    port: 4640,
+    mounts: [{ name: 'r', page: '/', filesDir: '/', mode: 'host' }],
+    csp: null,
+  });
   try {
     expect((await get(open.origin, '/', 'text/html')).csp).toBeNull();
   } finally {
@@ -106,16 +136,28 @@ async function hostSuite(api: Api): Promise<void> {
 }
 
 describe('alojamiento de prueba estricto', () => {
-  it('envuelve la página como el visor, solo sirve lo publicado y manda la política de seguridad estricta', () => hostSuite(host));
+  it('envuelve la página como el visor, solo sirve lo publicado y manda la política de seguridad estricta', () =>
+    hostSuite(host));
 
   it('las rutas bajo las que se verifica cubren raíz, /x/, /x/y/z/, index.html, artifact.html y una carpeta con espacio', () => {
     const pages = host.MOUNTS.map((m) => m.page);
-    for (const want of ['/', '/x/', '/x/y/z/', '/index.html', '/artifact.html', '/x/index.html', '/x/y/z/index.html', '/x/y/z/artifact.html', '/mi vista/'])
+    for (const want of [
+      '/',
+      '/x/',
+      '/x/y/z/',
+      '/index.html',
+      '/artifact.html',
+      '/x/index.html',
+      '/x/y/z/index.html',
+      '/x/y/z/artifact.html',
+      '/mi vista/',
+    ])
       expect(pages, want).toContain(want);
     expect(new Set(host.MOUNTS.map((m) => m.name)).size).toBe(host.MOUNTS.length);
     // Cada ruta con archivo explícito guarda sus archivos en su carpeta.
     for (const m of host.MOUNTS) {
-      if (m.mode === 'host' && /\.html$/.test(m.page)) expect(m.filesDir).toBe(m.page.replace(/[^/]*$/, ''));
+      if (m.mode === 'host' && /\.html$/.test(m.page))
+        expect(m.filesDir).toBe(m.page.replace(/[^/]*$/, ''));
     }
   });
 
@@ -129,13 +171,46 @@ describe('alojamiento de prueba estricto', () => {
   it('detecta mutaciones del alojamiento (sirve lo no publicado, sin política, sin envolver)', async () => {
     const file = new URL('../../../scripts/preview-host.ts', import.meta.url).pathname;
     const mutants: [string, Parameters<typeof loadMutant>[1]][] = [
-      ['sirve archivos que no están en el mapa de publicación', [['if (allowed.has(rel)) {', 'if (true) {']]],
-      ['devuelve la página para cualquier ruta', [["const wantsHtml = (req.headers.accept ?? '').includes('text/html');", 'const wantsHtml = true;']]],
-      ['no manda la política de seguridad', [["...(csp && withCsp ? { 'content-security-policy': csp } : {}),", '']]],
-      ['la política permite scripts de cualquier servidor', [[`"script-src 'self' 'unsafe-inline'",`, `"script-src * 'unsafe-inline'",`]]],
-      ['la política permite eval', [[`"script-src 'self' 'unsafe-inline'",`, `"script-src 'self' 'unsafe-inline' 'unsafe-eval'",`]]],
-      ['la página no se envuelve como el visor', [["m.mode === 'host'\n          ? wrapLikeHost(readFileSync(join(dist, 'artifact.html'), 'utf8'))", "m.mode === 'host'\n          ? readFileSync(join(dist, 'artifact.html'), 'utf8')"]]],
-      ['la carpeta del archivo no cuenta', [["if (!path.startsWith(m.filesDir)) continue;", '']]],
+      [
+        'sirve archivos que no están en el mapa de publicación',
+        [['if (allowed.has(rel)) {', 'if (true) {']],
+      ],
+      [
+        'devuelve la página para cualquier ruta',
+        [
+          [
+            "const wantsHtml = (req.headers.accept ?? '').includes('text/html');",
+            'const wantsHtml = true;',
+          ],
+        ],
+      ],
+      [
+        'no manda la política de seguridad',
+        [["...(csp && withCsp ? { 'content-security-policy': csp } : {}),", '']],
+      ],
+      [
+        'la política permite scripts de cualquier servidor',
+        [[`"script-src 'self' 'unsafe-inline'",`, `"script-src * 'unsafe-inline'",`]],
+      ],
+      [
+        'la política permite eval',
+        [
+          [
+            `"script-src 'self' 'unsafe-inline'",`,
+            `"script-src 'self' 'unsafe-inline' 'unsafe-eval'",`,
+          ],
+        ],
+      ],
+      [
+        'la página no se envuelve como el visor',
+        [
+          [
+            "m.mode === 'host'\n          ? wrapLikeHost(readFileSync(join(dist, 'artifact.html'), 'utf8'))",
+            "m.mode === 'host'\n          ? readFileSync(join(dist, 'artifact.html'), 'utf8')",
+          ],
+        ],
+      ],
+      ['la carpeta del archivo no cuenta', [['if (!path.startsWith(m.filesDir)) continue;', '']]],
     ];
     for (const [name, edits] of mutants) {
       const mutant = await loadMutant<Api>(file, edits);

@@ -10,7 +10,8 @@ import { cleanMutants, expectKilled, expectKilledAsync, loadMutant } from './mut
 type Api = typeof publish;
 const MB = 1024 * 1024;
 const f = (path: string, bytes = 1000): publish.FileEntry => ({ path, bytes });
-const many = (n: number, bytes = 1000) => Array.from({ length: n }, (_, i) => f(`photos/p${i}.webp`, bytes));
+const many = (n: number, bytes = 1000) =>
+  Array.from({ length: n }, (_, i) => f(`photos/p${i}.webp`, bytes));
 
 function limitsSuite(api: Api): void {
   const main = f('artifact.html', 5000);
@@ -26,26 +27,51 @@ function limitsSuite(api: Api): void {
   expect(tooMany.problems.join(' ')).toMatch(/256 archivos.*255/);
   // Un archivo de texto pasa de 16 MB; uno binario, de 15 MB.
   expect(api.checkLimits(main, [f('js/app.js', 16 * MB)]).withinLimits).toBe(true);
-  expect(api.checkLimits(main, [f('js/app.js', 16 * MB + 1)]).problems.join(' ')).toMatch(/js\/app\.js pesa 16\.0 MB.*16\.0 MB/);
+  expect(api.checkLimits(main, [f('js/app.js', 16 * MB + 1)]).problems.join(' ')).toMatch(
+    /js\/app\.js pesa 16\.0 MB.*16\.0 MB/,
+  );
   expect(api.checkLimits(main, [f('assets/fonts/a.ttf', 15 * MB)]).withinLimits).toBe(true);
   expect(api.checkLimits(main, [f('assets/fonts/a.ttf', 15 * MB + 1)]).withinLimits).toBe(false);
   expect(api.checkLimits(f('artifact.html', 16 * MB + 1), []).withinLimits).toBe(false); // el principal también
   // 64 MB en total por publicación.
-  const exact = [f('js/g0.js', 16 * MB), f('js/g1.js', 16 * MB), f('js/g2.js', 16 * MB), f('js/g3.js', 16 * MB - 5000)];
+  const exact = [
+    f('js/g0.js', 16 * MB),
+    f('js/g1.js', 16 * MB),
+    f('js/g2.js', 16 * MB),
+    f('js/g3.js', 16 * MB - 5000),
+  ];
   expect(api.checkLimits(main, exact).totalBytes).toBe(64 * MB);
   expect(api.checkLimits(main, exact).withinLimits).toBe(true); // justo 64 MB: cabe
   const big = Array.from({ length: 4 }, (_, i) => f(`js/g${i}.js`, 16 * MB - 2000));
   expect(api.checkLimits(main, big).withinLimits).toBe(true);
   expect(api.checkLimits(main, [...big, f('photos/x.webp', 6000)]).withinLimits).toBe(false);
-  expect(api.checkLimits(main, [...big, f('photos/x.webp', 6000)]).problems.join(' ')).toMatch(/en total/);
+  expect(api.checkLimits(main, [...big, f('photos/x.webp', 6000)]).problems.join(' ')).toMatch(
+    /en total/,
+  );
   // El mayor archivo es el mayor.
   expect(api.checkLimits(main, [f('a.js', 10), f('b.js', 99_999)]).largestFile.path).toBe('b.js');
   // Rutas publicadas: relativas, sin salirse y con caracteres sanos.
-  for (const bad of ['/js/a.js', '../a.js', 'js/../a.js', 'js//a.js', 'js\\a.js', 'js/a b.js', 'js/ñ.js', 'js/a.js?x=1', './a.js', '']) {
+  for (const bad of [
+    '/js/a.js',
+    '../a.js',
+    'js/../a.js',
+    'js//a.js',
+    'js\\a.js',
+    'js/a b.js',
+    'js/ñ.js',
+    'js/a.js?x=1',
+    './a.js',
+    '',
+  ]) {
     expect(api.publishedPathProblem(bad), `"${bad}"`).not.toBeNull();
     expect(api.checkLimits(main, [f(bad)]).withinLimits, `"${bad}"`).toBe(false);
   }
-  for (const good of ['js/app.c24763.js', 'assets/fonts/Sora_700Bold.8569cb.ttf', 'photos/JF-MAR-002.thumb.webp', 'jf-probe.json'])
+  for (const good of [
+    'js/app.c24763.js',
+    'assets/fonts/Sora_700Bold.8569cb.ttf',
+    'photos/JF-MAR-002.thumb.webp',
+    'jf-probe.json',
+  ])
     expect(api.publishedPathProblem(good), good).toBeNull();
 }
 
@@ -61,7 +87,12 @@ function splitSuite(api: Api): void {
   expect(groups).toHaveLength(2);
   expect(groups[0]).toHaveLength(254);
   expect(groups[1]).toHaveLength(46);
-  expect(groups.flat().map((x) => x.path).sort()).toEqual(att.map((x) => x.path).sort());
+  expect(
+    groups
+      .flat()
+      .map((x) => x.path)
+      .sort(),
+  ).toEqual(att.map((x) => x.path).sort());
   // Por tamaño: tres archivos de 30 MB no caben juntos (64 MB).
   const heavy = [f('a.bin', 30 * MB), f('b.bin', 30 * MB), f('c.bin', 30 * MB)];
   const bySize = api.splitForPublishing(main, heavy);
@@ -73,26 +104,89 @@ function splitSuite(api: Api): void {
 describe('límites de publicación', () => {
   afterAll(cleanMutants);
 
-  it('≤ 255 archivos (con el principal), ≤ 16 MB de texto / 15 MB binario, ≤ 64 MB, rutas sanas', () => limitsSuite(publish));
+  it('≤ 255 archivos (con el principal), ≤ 16 MB de texto / 15 MB binario, ≤ 64 MB, rutas sanas', () =>
+    limitsSuite(publish));
   it('si no cabe, se reparte en publicaciones que sí caben', () => splitSuite(publish));
 
   it('detecta cada mutación de los límites', async () => {
     const file = new URL('../../../scripts/preview-publish.ts', import.meta.url).pathname;
     const mutants: [string, Parameters<typeof loadMutant>[1], (a: Api) => void][] = [
-      ['255 archivos ya no caben', [['all.length > LIMITS.maxFiles', 'all.length >= LIMITS.maxFiles']], limitsSuite],
-      ['256 archivos caben', [['all.length > LIMITS.maxFiles', 'all.length > LIMITS.maxFiles + 1']], limitsSuite],
-      ['el principal no cuenta como archivo', [['const all = [main, ...attachments];', 'const all = [...attachments];\n  void main;']], limitsSuite],
-      ['el límite de texto pasa a 15 MB', [['maxFileBytes: 16 * 1024 * 1024', 'maxFileBytes: 15 * 1024 * 1024']], limitsSuite],
-      ['los binarios pasan de 16 MB', [['maxBinaryFileBytes: 15 * 1024 * 1024', 'maxBinaryFileBytes: 16 * 1024 * 1024']], limitsSuite],
-      ['todo se mide con el límite de texto', [['isTextFile(f.path) ? LIMITS.maxFileBytes : LIMITS.maxBinaryFileBytes', 'LIMITS.maxFileBytes']], limitsSuite],
-      ['el total pasa a 128 MB', [['maxTotalBytes: 64 * 1024 * 1024', 'maxTotalBytes: 128 * 1024 * 1024']], limitsSuite],
-      ['el total se compara con >=', [['totalBytes > LIMITS.maxTotalBytes', 'totalBytes >= LIMITS.maxTotalBytes']], limitsSuite],
-      ['rutas con ".." pasan', [["part === '..' || part === '.' || part === ''", "part === '.'"]], limitsSuite],
-      ['rutas con caracteres raros pasan', [[String.raw`/^[A-Za-z0-9._/-]+$/`, String.raw`/^.+$/`]], limitsSuite],
-      ['el mayor archivo es el primero', [['f.bytes > m.bytes ? f : m', 'f.bytes < m.bytes ? f : m']], limitsSuite],
+      [
+        '255 archivos ya no caben',
+        [['all.length > LIMITS.maxFiles', 'all.length >= LIMITS.maxFiles']],
+        limitsSuite,
+      ],
+      [
+        '256 archivos caben',
+        [['all.length > LIMITS.maxFiles', 'all.length > LIMITS.maxFiles + 1']],
+        limitsSuite,
+      ],
+      [
+        'el principal no cuenta como archivo',
+        [['const all = [main, ...attachments];', 'const all = [...attachments];\n  void main;']],
+        limitsSuite,
+      ],
+      [
+        'el límite de texto pasa a 15 MB',
+        [['maxFileBytes: 16 * 1024 * 1024', 'maxFileBytes: 15 * 1024 * 1024']],
+        limitsSuite,
+      ],
+      [
+        'los binarios pasan de 16 MB',
+        [['maxBinaryFileBytes: 15 * 1024 * 1024', 'maxBinaryFileBytes: 16 * 1024 * 1024']],
+        limitsSuite,
+      ],
+      [
+        'todo se mide con el límite de texto',
+        [
+          [
+            'isTextFile(f.path) ? LIMITS.maxFileBytes : LIMITS.maxBinaryFileBytes',
+            'LIMITS.maxFileBytes',
+          ],
+        ],
+        limitsSuite,
+      ],
+      [
+        'el total pasa a 128 MB',
+        [['maxTotalBytes: 64 * 1024 * 1024', 'maxTotalBytes: 128 * 1024 * 1024']],
+        limitsSuite,
+      ],
+      [
+        'el total se compara con >=',
+        [['totalBytes > LIMITS.maxTotalBytes', 'totalBytes >= LIMITS.maxTotalBytes']],
+        limitsSuite,
+      ],
+      [
+        'rutas con ".." pasan',
+        [["part === '..' || part === '.' || part === ''", "part === '.'"]],
+        limitsSuite,
+      ],
+      [
+        'rutas con caracteres raros pasan',
+        [[String.raw`/^[A-Za-z0-9._/-]+$/`, String.raw`/^.+$/`]],
+        limitsSuite,
+      ],
+      [
+        'el mayor archivo es el primero',
+        [['f.bytes > m.bytes ? f : m', 'f.bytes < m.bytes ? f : m']],
+        limitsSuite,
+      ],
       ['el reparto no cuenta el principal', [['let count = 1;', 'let count = 0;']], splitSuite],
-      ['el reparto ignora el tamaño', [['|| bytes + f.bytes > LIMITS.maxTotalBytes', '']], splitSuite],
-      ['el reparto pierde un archivo', [['[...attachments].sort((a, b) => b.bytes - a.bytes)', '[...attachments].sort((a, b) => b.bytes - a.bytes).slice(1)']], splitSuite],
+      [
+        'el reparto ignora el tamaño',
+        [['|| bytes + f.bytes > LIMITS.maxTotalBytes', '']],
+        splitSuite,
+      ],
+      [
+        'el reparto pierde un archivo',
+        [
+          [
+            '[...attachments].sort((a, b) => b.bytes - a.bytes)',
+            '[...attachments].sort((a, b) => b.bytes - a.bytes).slice(1)',
+          ],
+        ],
+        splitSuite,
+      ],
     ];
     for (const [name, edits, suite] of mutants) {
       const mutant = await loadMutant<Api>(file, edits);
@@ -132,7 +226,11 @@ function manifestSuite(api: Api): void {
   const out = fakeOut();
   const res = api.writePublishManifests(out, 'abc', ['una nota']);
   // El mapa exacto: ruta publicada → ruta local absoluta, sin la página principal ni lo que no se publica.
-  expect(Object.keys(res.files).sort()).toEqual(['jf-probe.json', 'js/app.abc.js', 'photos/JF-MAR-001.thumb.webp']);
+  expect(Object.keys(res.files).sort()).toEqual([
+    'jf-probe.json',
+    'js/app.abc.js',
+    'photos/JF-MAR-001.thumb.webp',
+  ]);
   for (const [published, local] of Object.entries(res.files)) {
     expect(local).toBe(`${out}/${published}`);
     expect(local.startsWith('/')).toBe(true);
@@ -164,10 +262,13 @@ describe('mapa de publicación (publish-files.json)', () => {
     cleanMutants();
   });
 
-  it('lista exactamente los archivos adjuntos, con rutas locales absolutas, cuenta, total y mayor', () => manifestSuite(publish));
+  it('lista exactamente los archivos adjuntos, con rutas locales absolutas, cuenta, total y mayor', () =>
+    manifestSuite(publish));
 
   it('si pasa de 255 archivos lo divide en dos mapas y lo dice; si un archivo no cabe, no lo disfraza', () => {
-    const out = fakeOut(Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`photos/x${i}.webp`, 10])));
+    const out = fakeOut(
+      Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`photos/x${i}.webp`, 10])),
+    );
     const res = publish.writePublishManifests(out, 'abc', []);
     expect(res.withinLimits).toBe(false);
     expect(res.parts).toHaveLength(2);
@@ -187,9 +288,28 @@ describe('mapa de publicación (publish-files.json)', () => {
     const mutants: [string, Parameters<typeof loadMutant>[1]][] = [
       ['index.html se publica', [["  'index.html',\n  'favicon.ico',", "  'favicon.ico',"]]],
       ['los íconos de index.html se publican', [["!path.startsWith('icons/')", 'true']]],
-      ['el mapa trae rutas relativas', [['const local = (path: string) => `${outDir}/${path}`;', 'const local = (path: string) => path;']]],
-      ['la cuenta no incluye la página', [["fileCount: check.fileCount,", 'fileCount: check.fileCount - 1,']]],
-      ['el mapa incluye la página principal', [['files: toMap(attachments),', "files: toMap([...attachments, { path: 'artifact.html', bytes: 0 }]),"]]],
+      [
+        'el mapa trae rutas relativas',
+        [
+          [
+            'const local = (path: string) => `${outDir}/${path}`;',
+            'const local = (path: string) => path;',
+          ],
+        ],
+      ],
+      [
+        'la cuenta no incluye la página',
+        [['fileCount: check.fileCount,', 'fileCount: check.fileCount - 1,']],
+      ],
+      [
+        'el mapa incluye la página principal',
+        [
+          [
+            'files: toMap(attachments),',
+            "files: toMap([...attachments, { path: 'artifact.html', bytes: 0 }]),",
+          ],
+        ],
+      ],
     ];
     for (const [name, edits] of mutants) {
       const mutant = await loadMutant<Api>(file, edits);
@@ -204,7 +324,9 @@ let photosDir = '';
 const manifestFile = () => join(photosDir, 'manifest.json');
 
 async function webp(path: string, w = 480, h = 360): Promise<void> {
-  await sharp({ create: { width: w, height: h, channels: 3, background: '#223344' } }).webp().toFile(path);
+  await sharp({ create: { width: w, height: h, channels: 3, background: '#223344' } })
+    .webp()
+    .toFile(path);
 }
 
 async function photoSuite(api: Api): Promise<void> {
@@ -212,7 +334,11 @@ async function photoSuite(api: Api): Promise<void> {
   const plan = await api.planPhotos({ skus, manifestPath: manifestFile(), photosDir });
   // Con archivo, verificada y 480×360: foto propia con ruta RELATIVA photos/<sku>.thumb.webp.
   expect(plan.seeds.map((s) => s.sku).sort()).toEqual(['JF-A-001', 'JF-A-002', 'JF-A-005']);
-  expect(plan.seeds.find((s) => s.sku === 'JF-A-001')).toEqual({ sku: 'JF-A-001', url: 'photos/JF-A-001.thumb.webp', illustrative: true });
+  expect(plan.seeds.find((s) => s.sku === 'JF-A-001')).toEqual({
+    sku: 'JF-A-001',
+    url: 'photos/JF-A-001.thumb.webp',
+    illustrative: true,
+  });
   expect(plan.seeds.find((s) => s.sku === 'JF-A-002')!.illustrative).toBe(false); // foto real del dueño: no se rotula
   // Se copia exactamente lo que se sirve.
   expect(plan.copy.map((c) => c.to).sort()).toEqual(plan.seeds.map((s) => s.url).sort());
@@ -230,7 +356,11 @@ async function photoSuite(api: Api): Promise<void> {
   // Un SKU del manifiesto que no está en el catálogo no se publica.
   expect(plan.seeds.find((s) => s.sku === 'JF-ZZZ-999')).toBeUndefined();
   // Sin manifiesto, ningún artículo lleva foto.
-  const none = await api.planPhotos({ skus, manifestPath: join(photosDir, 'no-existe.json'), photosDir });
+  const none = await api.planPhotos({
+    skus,
+    manifestPath: join(photosDir, 'no-existe.json'),
+    photosDir,
+  });
   expect(none.seeds).toEqual([]);
   expect(none.notes.join(' ')).toMatch(/sin photos\.manifest\.json/);
 }
@@ -261,18 +391,47 @@ describe('fotos propias del build', () => {
   });
   afterAll(cleanMutants);
 
-  it('solo miniaturas locales que existen, verificadas y legibles; el resto cae al degradado', () => photoSuite(publish));
+  it('solo miniaturas locales que existen, verificadas y legibles; el resto cae al degradado', () =>
+    photoSuite(publish));
 
   it('detecta mutaciones del plan de fotos', async () => {
     const file = new URL('../../../scripts/preview-publish.ts', import.meta.url).pathname;
     const mutants: [string, Parameters<typeof loadMutant>[1]][] = [
-      ['usa la foto aunque el archivo no exista', [['if (!existsSync(file)) {\n      missing.push(m.sku);\n      continue;\n    }', 'if (!existsSync(file)) {\n      missing.push(m.sku);\n    }']]],
+      [
+        'usa la foto aunque el archivo no exista',
+        [
+          [
+            'if (!existsSync(file)) {\n      missing.push(m.sku);\n      continue;\n    }',
+            'if (!existsSync(file)) {\n      missing.push(m.sku);\n    }',
+          ],
+        ],
+      ],
       ['publica fotos sin verificar', [['if (m.verified === false) {', 'if (false as boolean) {']]],
-      ['la ruta de la foto es absoluta', [['url: `photos/${m.sku}.thumb.webp`,', 'url: `/photos/${m.sku}.thumb.webp`,']]],
-      ['el nombre de la miniatura cambia', [['`${opts.photosDir}/${m.sku}.thumb.webp`', '`${opts.photosDir}/${m.sku}.webp`']]],
-      ['una foto real se rotula ilustrativa', [['illustrative: m.illustrative !== false,', 'illustrative: true,']]],
-      ['una imagen ilegible se publica', [['      unreadable.push(`${m.sku} (${(e as Error).message})`);\n      continue;', '      void e;']]],
-      ['se publican SKU que no están en el catálogo', [['if (!opts.skus.has(m.sku)) continue;', '']]],
+      [
+        'la ruta de la foto es absoluta',
+        [['url: `photos/${m.sku}.thumb.webp`,', 'url: `/photos/${m.sku}.thumb.webp`,']],
+      ],
+      [
+        'el nombre de la miniatura cambia',
+        [['`${opts.photosDir}/${m.sku}.thumb.webp`', '`${opts.photosDir}/${m.sku}.webp`']],
+      ],
+      [
+        'una foto real se rotula ilustrativa',
+        [['illustrative: m.illustrative !== false,', 'illustrative: true,']],
+      ],
+      [
+        'una imagen ilegible se publica',
+        [
+          [
+            '      unreadable.push(`${m.sku} (${(e as Error).message})`);\n      continue;',
+            '      void e;',
+          ],
+        ],
+      ],
+      [
+        'se publican SKU que no están en el catálogo',
+        [['if (!opts.skus.has(m.sku)) continue;', '']],
+      ],
     ];
     for (const [name, edits] of mutants) {
       const mutant = await loadMutant<Api>(file, edits);
@@ -287,10 +446,13 @@ describe('datos embebidos en la página', () => {
   afterAll(cleanMutants);
   const root = new URL('../../../data/catalog/', import.meta.url).pathname;
   const csv = readFileSync(`${root}products.seed.csv`, 'utf8');
-  const categories = (JSON.parse(readFileSync(`${root}categories.json`, 'utf8')) as { slug: string }[]).map((c) => c.slug);
+  const categories = (
+    JSON.parse(readFileSync(`${root}categories.json`, 'utf8')) as { slug: string }[]
+  ).map((c) => c.slug);
 
   function csvSuite(api: Api): void {
-    const sample = 'sku,nombre,precio,notas_precio,costo,Costo\nJF-1,Pollo,100,Margen 15%,55,66\nJF-2,"Res, molida",200,"nota ""x""",77,88\n';
+    const sample =
+      'sku,nombre,precio,notas_precio,costo,Costo\nJF-1,Pollo,100,Margen 15%,55,66\nJF-2,"Res, molida",200,"nota ""x""",77,88\n';
     const out = parseCsv(api.sanitizeCatalogCsv(sample));
     expect(out[0]).toEqual(['sku', 'nombre', 'precio', 'notas_precio', 'costo', 'Costo']); // las columnas siguen (el formato no cambia)
     expect(out[1]).toEqual(['JF-1', 'Pollo', '100', '', '', '']);
@@ -299,11 +461,15 @@ describe('datos embebidos en la página', () => {
     const semi = parseCsv(api.sanitizeCatalogCsv('sku;nombre;costo\nJF-1;Pollo;55\n'));
     expect(semi[1]).toEqual(['JF-1', 'Pollo', '']);
     // Sin columnas internas, no cambia nada de lo que dice.
-    expect(parseCsv(api.sanitizeCatalogCsv('sku,nombre\nJF-1,Pollo\n'))).toEqual([['sku', 'nombre'], ['JF-1', 'Pollo']]);
+    expect(parseCsv(api.sanitizeCatalogCsv('sku,nombre\nJF-1,Pollo\n'))).toEqual([
+      ['sku', 'nombre'],
+      ['JF-1', 'Pollo'],
+    ]);
     expect(api.sanitizeCatalogCsv('')).toBe('');
   }
 
-  it('el CSV embebido no lleva el costo ni las notas de cómo se fijó el precio', () => csvSuite(publish));
+  it('el CSV embebido no lleva el costo ni las notas de cómo se fijó el precio', () =>
+    csvSuite(publish));
 
   it('con el catálogo real: sigue siendo válido y no cambia ni un precio, nombre ni foto', () => {
     const clean = publish.sanitizeCatalogCsv(csv);
@@ -313,7 +479,11 @@ describe('datos embebidos en la página', () => {
     expect(b.items).toHaveLength(a.items.length);
     for (const [i, item] of b.items.entries()) {
       const before = a.items[i]!;
-      expect({ ...item, cost: undefined, priceNote: undefined }).toEqual({ ...before, cost: undefined, priceNote: undefined });
+      expect({ ...item, cost: undefined, priceNote: undefined }).toEqual({
+        ...before,
+        cost: undefined,
+        priceNote: undefined,
+      });
     }
     // La columna `costo` queda vacía y `notas_precio` también.
     const rows = parseCsv(clean);
@@ -328,11 +498,20 @@ describe('datos embebidos en la página', () => {
   it('detecta mutaciones de la limpieza', async () => {
     const file = new URL('../../../scripts/preview-publish.ts', import.meta.url).pathname;
     const mutants: [string, Parameters<typeof loadMutant>[1]][] = [
-      ['el costo viaja en la página', [["['costo', 'notas_precio'] as const", "['notas_precio'] as const"]]],
-      ['las notas del precio viajan en la página', [["['costo', 'notas_precio'] as const", "['costo'] as const"]]],
+      [
+        'el costo viaja en la página',
+        [["['costo', 'notas_precio'] as const", "['notas_precio'] as const"]],
+      ],
+      [
+        'las notas del precio viajan en la página',
+        [["['costo', 'notas_precio'] as const", "['costo'] as const"]],
+      ],
       ['las columnas con otras mayúsculas se escapan', [['normalizeHeader(h)', 'h']]],
       ['se borra el encabezado también', [['n === 0 ? r :', 'false ? r :']]],
-      ['el CSV con punto y coma se parte mal', [['parseCsv(csv, detectDelimiter(csv))', 'parseCsv(csv, \',\')']]],
+      [
+        'el CSV con punto y coma se parte mal',
+        [['parseCsv(csv, detectDelimiter(csv))', "parseCsv(csv, ',')"]],
+      ],
     ];
     for (const [name, edits] of mutants) {
       const mutant = await loadMutant<Api>(file, edits);

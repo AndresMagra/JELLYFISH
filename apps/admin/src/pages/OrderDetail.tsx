@@ -21,7 +21,16 @@ import {
   PageHead,
   useToast,
 } from '../components/ui';
-import { api } from '../lib/api';
+import { api, errorText } from '../lib/api';
+import {
+  PIN_OVERRIDE_MAX_CHARS,
+  canOfferPinOverride,
+  checkOverrideReason,
+  overrideCounterText,
+  pinAttemptsText,
+  pinRequiredText,
+  pinVerifiedText,
+} from '../lib/delivery';
 import {
   centavosToPesos,
   dateTime,
@@ -33,6 +42,7 @@ import {
   statusLabel,
   whatsappLink,
 } from '../lib/format';
+import './panel-extra.css';
 
 const tone = (s: OrderDTO['status']) =>
   s === 'delivered'
@@ -47,11 +57,12 @@ type Dialog =
   | { kind: 'cancel' }
   | { kind: 'paid'; payment: PaymentSummaryDTO }
   | { kind: 'refund'; payment: PaymentSummaryDTO }
-  | { kind: 'cash'; due: number };
+  | { kind: 'cash'; due: number }
+  | { kind: 'override' };
 
 export function OrderDetail() {
   const { id = '' } = useParams();
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const qc = useQueryClient();
   const { notify, fail } = useToast();
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -104,6 +115,7 @@ export function OrderDetail() {
   const pendingCash = o.payments.find((p) => p.method === 'cash' && p.status === 'pending');
   const dueNow = o.finalTotal ?? o.total;
   const busy = transition.isPending || assign.isPending;
+  const askPin = canOfferPinOverride(o, user.role);
 
   return (
     <>
@@ -213,13 +225,29 @@ export function OrderDetail() {
                       Registrar cobro en efectivo ({formatDOP(dueNow)})
                     </Button>
                   ) : null}
-                  <Button
-                    busy={busy}
-                    onClick={() => transition.mutate({ to: 'delivered' })}
-                    data-testid="act-delivered"
-                  >
-                    Marcar entregado
-                  </Button>
+                  {askPin ? (
+                    <>
+                      <div className="muted small">
+                        Este pedido exige el PIN del cliente: el repartidor lo confirma desde su
+                        app. Si no se puede, entrégalo sin PIN dejando el motivo.
+                      </div>
+                      <Button
+                        busy={busy}
+                        onClick={() => setDialog({ kind: 'override' })}
+                        data-testid="deliver-override"
+                      >
+                        Entregar sin PIN
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      busy={busy}
+                      onClick={() => transition.mutate({ to: 'delivered' })}
+                      data-testid="act-delivered"
+                    >
+                      Marcar entregado
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     busy={busy}
@@ -283,6 +311,39 @@ export function OrderDetail() {
               {o.notes ? <div className="banner warn">Nota del cliente: {o.notes}</div> : null}
               {driver ? (
                 <div className="muted small">Repartidor: {driver.name || driver.phone}</div>
+              ) : null}
+            </div>
+          </Card>
+
+          <Card title="Entrega">
+            <div className="stack" style={{ gap: 10 }} data-testid="pin-card">
+              <dl className="kv">
+                <dt>Exige PIN del cliente</dt>
+                <dd data-testid="pin-required">{pinRequiredText(o.pinRequired)}</dd>
+                <dt>Intentos restantes</dt>
+                <dd data-testid="pin-attempts">
+                  {o.pinAttemptsLeft !== null && o.pinAttemptsLeft <= 0 ? (
+                    <Badge tone="danger">{pinAttemptsText(o.pinAttemptsLeft)}</Badge>
+                  ) : (
+                    pinAttemptsText(o.pinAttemptsLeft)
+                  )}
+                </dd>
+                <dt>PIN verificado</dt>
+                <dd data-testid="pin-verified">{pinVerifiedText(o)}</dd>
+                {o.pinOverrideReason ? (
+                  <>
+                    <dt>Entregado sin PIN</dt>
+                    <dd data-testid="pin-override-reason-shown">{o.pinOverrideReason}</dd>
+                  </>
+                ) : null}
+              </dl>
+              {o.pinAttemptsLeft !== null &&
+              o.pinAttemptsLeft <= 0 &&
+              o.status === 'out_for_delivery' ? (
+                <div className="banner warn">
+                  El repartidor agotó los intentos con el PIN. Confirma la entrega tú con “Entregar
+                  sin PIN”.
+                </div>
               ) : null}
             </div>
           </Card>
@@ -388,6 +449,18 @@ export function OrderDetail() {
             void q.refetch();
             void qc.invalidateQueries({ queryKey: ['admin'] });
             notify('Devolución registrada');
+            setDialog(null);
+          }}
+        />
+      ) : null}
+      {dialog?.kind === 'override' ? (
+        <OverrideDialog
+          orderId={o.id}
+          code={o.code}
+          onClose={() => setDialog(null)}
+          onDone={(r) => {
+            refresh(r);
+            notify('Pedido entregado sin PIN');
             setDialog(null);
           }}
         />
@@ -767,6 +840,73 @@ function CashDialog({
           data-testid="dialog-text"
         />
       </Field>
+    </Modal>
+  );
+}
+
+function OverrideDialog({
+  orderId,
+  code,
+  onClose,
+  onDone,
+}: {
+  orderId: string;
+  code: string;
+  onClose: () => void;
+  onDone: (o: OrderDTO) => void;
+}) {
+  const [text, setText] = useState('');
+  const check = checkOverrideReason(text);
+  const m = useMutation({
+    mutationFn: () =>
+      api<OrderDTO>(`/v1/admin/orders/${orderId}/transition`, {
+        method: 'POST',
+        body: { to: 'delivered', pinOverrideReason: check.reason },
+      }),
+    onSuccess: onDone,
+  });
+  return (
+    <Modal
+      title={`Entregar ${code} sin PIN`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Volver
+          </Button>
+          <Button
+            busy={m.isPending}
+            disabled={!check.valid}
+            onClick={() => m.mutate()}
+            data-testid="override-confirm"
+          >
+            Entregar sin PIN
+          </Button>
+        </>
+      }
+    >
+      <p className="muted" style={{ margin: 0 }}>
+        El cliente tiene un PIN de 4 dígitos para confirmar la entrega. Si lo entregas sin él, el
+        motivo queda registrado en el historial del pedido.
+      </p>
+      <Field label="Motivo" error={m.isError ? errorText(m.error) : null}>
+        <textarea
+          className="input"
+          rows={3}
+          autoFocus
+          maxLength={PIN_OVERRIDE_MAX_CHARS}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Ej: el cliente no estaba y la entrega la recibió su vecino"
+          data-testid="override-reason"
+        />
+      </Field>
+      <div
+        className={`small ${check.valid ? 'muted' : 'override-short'}`}
+        data-testid="override-count"
+      >
+        {overrideCounterText(text)}
+      </div>
     </Modal>
   );
 }

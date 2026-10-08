@@ -29,16 +29,23 @@ function fakeNavigator() {
       return { real: true };
     },
     permissions: {
-      query: (d: { name?: string }) => Promise.resolve({ name: d.name, state: 'denied', real: true }),
+      query: (d: { name?: string }) =>
+        Promise.resolve({ name: d.name, state: 'denied', real: true }),
     },
   };
-  return Object.create(proto) as Record<string, unknown> & { permissions: { query: (d: { name?: string }) => Promise<unknown> } };
+  return Object.create(proto) as Record<string, unknown> & {
+    permissions: { query: (d: { name?: string }) => Promise<unknown> };
+  };
 }
 
 async function suite(api: Api): Promise<void> {
   // ── ubicación ──
   const clock = fakeClock();
-  const geo = api.createGeolocationDouble({ now: () => 1234, schedule: clock.schedule, watchEveryMs: 5000 });
+  const geo = api.createGeolocationDouble({
+    now: () => 1234,
+    schedule: clock.schedule,
+    watchEveryMs: 5000,
+  });
   const seen: { coords: Record<string, unknown>; timestamp: number }[] = [];
   geo.getCurrentPosition((p) => seen.push(p as never));
   expect(seen).toHaveLength(0); // el GPS de verdad no contesta al instante
@@ -70,10 +77,20 @@ async function suite(api: Api): Promise<void> {
   const handle = api.installGeolocationDouble(nav, { schedule: clock.schedule });
   expect(handle.installed).toEqual({ geolocation: true, permissions: true });
   // Antes de la primera lectura el permiso está por preguntar: la app muestra su propia explicación…
-  expect(await nav.permissions.query({ name: 'geolocation' })).toMatchObject({ name: 'geolocation', state: 'prompt' });
-  expect(await nav.permissions.query({ name: 'camera' })).toMatchObject({ state: 'denied', real: true });
+  expect(await nav.permissions.query({ name: 'geolocation' })).toMatchObject({
+    name: 'geolocation',
+    state: 'prompt',
+  });
+  expect(await nav.permissions.query({ name: 'camera' })).toMatchObject({
+    state: 'denied',
+    real: true,
+  });
   const fix: number[] = [];
-  (nav.geolocation as { getCurrentPosition(cb: (p: { coords: { latitude: number } }) => void): void }).getCurrentPosition((p) => fix.push(p.coords.latitude));
+  (
+    nav.geolocation as {
+      getCurrentPosition(cb: (p: { coords: { latitude: number } }) => void): void;
+    }
+  ).getCurrentPosition((p) => fix.push(p.coords.latitude));
   expect(await nav.permissions.query({ name: 'geolocation' })).toMatchObject({ state: 'prompt' }); // aún no contesta
   clock.flush();
   expect(fix).toEqual([18.4861]);
@@ -92,13 +109,22 @@ async function suite(api: Api): Promise<void> {
   const bare: Record<string, unknown> = {};
   const h2 = api.installGeolocationDouble(bare);
   expect(h2.installed.permissions).toBe(true);
-  expect(await (bare.permissions as { query: (d: unknown) => Promise<{ state: string }> }).query({ name: 'geolocation' })).toMatchObject({ state: 'prompt' });
-  await expect((bare.permissions as { query: (d: unknown) => Promise<unknown> }).query({ name: 'camera' })).rejects.toBeInstanceOf(TypeError);
+  expect(
+    await (bare.permissions as { query: (d: unknown) => Promise<{ state: string }> }).query({
+      name: 'geolocation',
+    }),
+  ).toMatchObject({ state: 'prompt' });
+  await expect(
+    (bare.permissions as { query: (d: unknown) => Promise<unknown> }).query({ name: 'camera' }),
+  ).rejects.toBeInstanceOf(TypeError);
   h2.uninstall();
   expect('permissions' in bare).toBe(false);
 
   // Un navegador que no deja redefinir nada: no lanza y lo dice.
-  const frozen = Object.freeze({ geolocation: 1, permissions: Object.freeze({ query: () => Promise.resolve(1) }) });
+  const frozen = Object.freeze({
+    geolocation: 1,
+    permissions: Object.freeze({ query: () => Promise.resolve(1) }),
+  });
   const h3 = api.installGeolocationDouble(frozen);
   expect(h3.installed).toEqual({ geolocation: false, permissions: false });
   expect(() => h3.uninstall()).not.toThrow();
@@ -107,7 +133,9 @@ async function suite(api: Api): Promise<void> {
   const shown: ReturnType<typeof api.noticeForOpen>[] = [];
   const win: { open?: unknown } = { open: () => 'original' };
   const guard = api.installOpenGuard(win, (n) => shown.push(n));
-  const result = (win.open as (u?: string) => unknown)('https://www.google.com/maps/search/?api=1&query=18.48,-69.93');
+  const result = (win.open as (u?: string) => unknown)(
+    'https://www.google.com/maps/search/?api=1&query=18.48,-69.93',
+  );
   expect(result).toBeNull(); // igual que el visor, pero ahora la persona lo ve
   expect(shown).toHaveLength(1);
   expect(shown[0]!.text).toMatch(/Vista previa/);
@@ -120,7 +148,15 @@ async function suite(api: Api): Promise<void> {
   expect(shown[1]!.linkLabel).toBe('Abrir el enlace');
   expect(shown[1]!.href).toBe('https://ejemplo.do/pasarela?x=1');
   // Esquemas que NO son web jamás se vuelven enlace (un `javascript:` en un aviso sería un agujero).
-  for (const url of ['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'file:///etc/passwd', 'jellyfish://order/1', '', undefined, null]) {
+  for (const url of [
+    'javascript:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'file:///etc/passwd',
+    'jellyfish://order/1',
+    '',
+    undefined,
+    null,
+  ]) {
     (win.open as (u?: unknown) => unknown)(url);
     expect(shown.at(-1)!.href, String(url)).toBeNull();
   }
@@ -148,10 +184,15 @@ async function suite(api: Api): Promise<void> {
 describe('dobles de lo que el visor no deja hacer', () => {
   afterAll(cleanMutants);
 
-  it('ubicación fija de Santo Domingo, permiso concedido, window.open con aviso', () => suite(doubles));
+  it('ubicación fija de Santo Domingo, permiso concedido, window.open con aviso', () =>
+    suite(doubles));
 
   it('el punto de ejemplo está dentro de la zona que cubre la demostración', () => {
-    expect(doubles.DEMO_POSITION).toEqual({ latitude: 18.4861, longitude: -69.9312, accuracyM: 35 });
+    expect(doubles.DEMO_POSITION).toEqual({
+      latitude: 18.4861,
+      longitude: -69.9312,
+      accuracyM: 35,
+    });
   });
 
   it('detecta cada mutación de los dobles', async () => {
@@ -162,22 +203,82 @@ describe('dobles de lo que el visor no deja hacer', () => {
       [
         'la ubicación contesta en el mismo instante',
         [
-          ['      schedule(() => {\n        permission.state', '      ((fn: () => void) => fn())(() => {\n        permission.state'],
-          ['        success(makePosition(now));\n      }, 120);', '        success(makePosition(now));\n      });'],
+          [
+            '      schedule(() => {\n        permission.state',
+            '      ((fn: () => void) => fn())(() => {\n        permission.state',
+          ],
+          [
+            '        success(makePosition(now));\n      }, 120);',
+            '        success(makePosition(now));\n      });',
+          ],
         ],
       ],
       ['clearWatch no detiene nada', [['watchers.delete(id);', '']]],
-      ['el permiso nunca pasa a concedido', [["        permission.state = 'granted'; // al dar la primera posición el navegador ya tiene el permiso\n", '']]],
-      ['el permiso empieza concedido (la app no explica nada)', [["const permission: PermissionState = options.permission ?? { state: options.initialPermission ?? 'prompt' };", "const permission: PermissionState = options.permission ?? { state: options.initialPermission ?? 'granted' };"]]],
-      ['la consulta siempre contesta lo mismo', [['state: permission.state,', "state: 'granted' as const,"]]],
+      [
+        'el permiso nunca pasa a concedido',
+        [
+          [
+            "        permission.state = 'granted'; // al dar la primera posición el navegador ya tiene el permiso\n",
+            '',
+          ],
+        ],
+      ],
+      [
+        'el permiso empieza concedido (la app no explica nada)',
+        [
+          [
+            "state: options.initialPermission ?? 'prompt',",
+            "state: options.initialPermission ?? 'granted',",
+          ],
+        ],
+      ],
+      [
+        'la consulta siempre contesta lo mismo',
+        [['state: permission.state,', "state: 'granted' as const,"]],
+      ],
       ['se concede cualquier permiso', [["descriptor.name === 'geolocation'", 'true']]],
-      ['window.open devuelve algo en vez de null', [["        return null;\n      },\n      configurable", "        return {} as never;\n      },\n      configurable"]]],
+      [
+        'window.open devuelve algo en vez de null',
+        [
+          [
+            '        return null;\n      },\n      configurable',
+            '        return {} as never;\n      },\n      configurable',
+          ],
+        ],
+      ],
       ['no se avisa al abrir', [['show(noticeForOpen(url));', '']]],
-      ['un javascript: se vuelve enlace', [["if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {", 'if (true) {']]],
-      ['el mapa no se reconoce', [['const isMap = href !== null && (MAP_HOSTS.test(host) || /maps/i.test(href));', 'const isMap = false;']]],
+      [
+        'un javascript: se vuelve enlace',
+        [["if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {", 'if (true) {']],
+      ],
+      [
+        'el mapa no se reconoce',
+        [
+          [
+            'const isMap = href !== null && (MAP_HOSTS.test(host) || /maps/i.test(href));',
+            'const isMap = false;',
+          ],
+        ],
+      ],
       ['desinstalar no devuelve window.open', [['else target.open = original;', '']]],
-      ['una excepción del aviso rompe la app', [['        } catch {\n          /* mostrar el aviso nunca debe romper la app */\n        }', '        } finally {}']]],
-      ['instalar lanza en un navegador cerrado', [['  } catch {\n    /* el navegador no deja redefinirla: la app mostrará su aviso normal de "no pudimos leer tu ubicación" */\n  }', '  } finally {}']]],
+      [
+        'una excepción del aviso rompe la app',
+        [
+          [
+            '        } catch {\n          /* mostrar el aviso nunca debe romper la app */\n        }',
+            '        } finally {}',
+          ],
+        ],
+      ],
+      [
+        'instalar lanza en un navegador cerrado',
+        [
+          [
+            '  } catch {\n    /* el navegador no deja redefinirla: la app mostrará su aviso normal de "no pudimos leer tu ubicación" */\n  }',
+            '  } finally {}',
+          ],
+        ],
+      ],
     ];
     for (const [name, edits] of mutants) {
       const mutant = await loadMutant<Api>(file, edits);

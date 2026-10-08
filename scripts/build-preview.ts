@@ -311,7 +311,9 @@ export async function buildPreview(options: BuildOptions): Promise<PublishFiles>
     log('Empaquetando el servidor de demostración (esbuild)…');
     const demoJs = await bundleSimulator();
 
-    log('Parcheando el bundle de la app (rutas de archivos y base del router en tiempo de ejecución)…');
+    log(
+      'Parcheando el bundle de la app (rutas de archivos y base del router en tiempo de ejecución)…',
+    );
     const patched = patchAppBundle(readFileSync(`${exportDir}/${entryRel}`, 'utf8'));
     log(
       `  assets ${patched.report.assets} · stripBaseUrl ${patched.report.stripBaseUrl} · ` +
@@ -399,7 +401,9 @@ export async function buildPreview(options: BuildOptions): Promise<PublishFiles>
     for (const c of photoCopy) cpSync(c.from, `${outDir}/${c.to}`);
     if (photoCopy.length > 0) {
       const bytes = photoCopy.reduce((a, c) => a + c.bytes, 0);
-      log(`Fotos: ${photoCopy.length} miniaturas copiadas a photos/ (${(bytes / 1024).toFixed(0)} KB)`);
+      log(
+        `Fotos: ${photoCopy.length} miniaturas copiadas a photos/ (${(bytes / 1024).toFixed(0)} KB)`,
+      );
     }
 
     const buildId = sha(
@@ -421,7 +425,9 @@ export async function buildPreview(options: BuildOptions): Promise<PublishFiles>
     const fragment = renderFragment({ buildId, files });
     const broken = fragmentProblems(fragment);
     if (broken.length > 0)
-      throw new Error(`artifact.html no cumple el formato de página publicada:\n- ${broken.join('\n- ')}`);
+      throw new Error(
+        `artifact.html no cumple el formato de página publicada:\n- ${broken.join('\n- ')}`,
+      );
     writeFileSync(`${outDir}/artifact.html`, fragment);
     writeFileSync(`${outDir}/index.html`, renderIndexHtml({ buildId, files }));
     writeFileSync(`${outDir}/jf-probe.json`, `${JSON.stringify({ jf: buildId })}\n`);

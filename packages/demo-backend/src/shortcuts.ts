@@ -47,7 +47,10 @@ export function parseShortcuts(search: string | undefined, hash?: string): Short
  * La carpeta de la página como URL absoluta (con "/" al final), para resolver las fotos relativas.
  * `assets` es la carpeta de archivos sin la barra final ("" en la raíz, "/x/y" en una subcarpeta).
  */
-export function photoBaseFrom(locationHref: string, assets: string | undefined): string | undefined {
+export function photoBaseFrom(
+  locationHref: string,
+  assets: string | undefined,
+): string | undefined {
   try {
     const dir = `${(assets ?? '').replace(/\/+$/, '')}/`;
     return new URL(dir, locationHref).href;
@@ -132,7 +135,11 @@ export function applyReset(reset: Shortcuts['reset'], env: ResetEnv): boolean {
       const search = env.location.search
         .replace(/([?&])reset=1(&|$)/, (_m, lead: string, tail: string) => (tail ? lead : ''))
         .replace(/[?&]$/, '');
-      env.history?.replaceState(env.history.state, '', env.location.pathname + search + env.location.hash);
+      env.history?.replaceState(
+        env.history.state,
+        '',
+        env.location.pathname + search + env.location.hash,
+      );
     } catch {
       /* un marco que no deja reescribir la dirección: se queda con ?reset=1 */
     }
