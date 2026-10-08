@@ -1,18 +1,31 @@
 /**
  * Punto de entrada del paquete que se mete en la página de la vista previa (un solo archivo IIFE).
  * Lee los datos del catálogo que dejó `scripts/build-preview.ts` en `__JF_DEMO_DATA__`, reemplaza
- * `fetch` para la dirección de demostración y deja `JellyfishDemo` a mano (reiniciar, estado).
+ * `fetch` para la dirección de demostración, instala los dobles de lo que el visor no deja hacer
+ * (ubicación, abrir pestañas) y deja `JellyfishDemo` a mano (reiniciar, estado).
  *
  * Se carga ANTES que el bundle de la app: cuando la app hace su primera petición ya está instalado.
+ * Este archivo solo tiene efectos (no exporta nada): las piezas probables están en sus propios módulos.
  */
+import './zod-config'; // primero: ver el archivo
+import { installGeolocationDouble, installOpenGuard } from './device-doubles';
 import { type DemoHandle, installDemoBackend } from './install';
 import { DEMO_OTP_CODE } from './server';
+import {
+  applyReset,
+  clearStoredKeys,
+  parseShortcuts,
+  photoBaseFrom,
+  storageOf,
+} from './shortcuts';
+import { type DocumentLike, createNoticeToast } from './toast';
 import type { CategorySeed, PhotoSeed } from './types';
 
 export interface BrowserDemoData {
   baseUrl: string;
   catalogCsv: string;
   categories: CategorySeed[];
+  /** Fotos propias: `photos/<sku>.thumb.webp` (relativas a la carpeta de la página). */
   photos: PhotoSeed[];
   /** Identificador de la compilación (cambia si cambian los datos); invalida estados guardados viejos. */
   buildId?: string;
@@ -25,69 +38,60 @@ interface JellyfishDemoApi {
   /** Borra el estado de la demostración (y la sesión y el carrito de la app) y recarga. */
   restart(): void;
   summary(): { users: number; orders: number };
+  /** Qué dobles quedaron instalados (para revisar en la consola). */
+  doubles: { geolocation: boolean; permissions: boolean };
 }
 
-const g = globalThis as unknown as {
+/** Lo que se usa de `window` (sin depender de los tipos del DOM: este paquete también corre en Node). */
+interface Win {
   __JF_DEMO_DATA__?: BrowserDemoData;
+  __JF_ASSETS__?: string;
   JellyfishDemo?: JellyfishDemoApi;
-  location?: { search: string; reload(): void };
-  localStorage?: {
-    length: number;
-    key(i: number): string | null;
-    removeItem(k: string): void;
-  };
-};
-
-/** `?speed=2` acelera el ciclo del pedido (2 = el doble de rápido). Solo valores razonables. */
-export function parseSpeed(search: string | undefined): number {
-  if (!search) return 1;
-  const raw = new URLSearchParams(search).get('speed');
-  if (!raw) return 1;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0.1 && n <= 60 ? n : 1;
+  location: { pathname: string; search: string; hash: string; href: string; reload(): void };
+  navigator: object;
+  document: DocumentLike;
+  history?: { state: unknown; replaceState(state: unknown, title: string, url: string): void };
+  localStorage?: { length: number; key(i: number): string | null; removeItem(k: string): void };
+  sessionStorage?: { getItem(k: string): string | null; setItem(k: string, v: string): void };
 }
 
-/** Borra todo lo que la app y la demostración guardan en este navegador (claves "jellyfish…"). */
-export function clearStoredKeys(): void {
-  try {
-    const ls = g.localStorage;
-    if (!ls) return;
-    const keys: string[] = [];
-    for (let i = 0; i < ls.length; i++) {
-      const k = ls.key(i);
-      if (k && k.startsWith('jellyfish')) keys.push(k);
-    }
-    for (const k of keys) ls.removeItem(k);
-  } catch {
-    /* sin almacenamiento: no hay nada que borrar */
-  }
-}
-
-function boot(): void {
+function boot(g: Win): void {
   const data = g.__JF_DEMO_DATA__;
   if (!data) {
     console.error('[JELLYFISH demo] Faltan los datos del catálogo (__JF_DEMO_DATA__).');
     return;
   }
-  const speed = parseSpeed(g.location?.search);
+  const { speed, reset } = parseShortcuts(g.location?.search, g.location?.hash);
+  // Antes de instalar nada: el simulador y la app leen el estado guardado al arrancar.
+  applyReset(reset, g);
   const handle = installDemoBackend({
     baseUrl: data.baseUrl,
     catalogCsv: data.catalogCsv,
     categories: data.categories,
     photos: data.photos,
+    // Solo fotos propias: la página publicada no puede pedir nada a otros servidores.
+    localPhotosOnly: true,
+    photoBase: photoBaseFrom(g.location.href, g.__JF_ASSETS__),
     speed,
     storageKey: `jellyfish.demo.${data.buildId ?? 'v1'}`,
   });
+
+  // El visor rechaza la ubicación sin avisar: un punto fijo de Santo Domingo, para poder enseñarla.
+  const geo = installGeolocationDouble(g.navigator);
+  // window.open devuelve null casi siempre: la app no depende de él, y la persona ve un aviso.
+  installOpenGuard(g, createNoticeToast(g.document));
+
   g.JellyfishDemo = {
     handle,
     otpCode: DEMO_OTP_CODE,
     speed,
+    doubles: geo.installed,
     restart() {
-      clearStoredKeys();
+      clearStoredKeys(storageOf(g, 'localStorage'));
       g.location?.reload();
     },
     summary: () => handle.server.summary(),
   };
 }
 
-boot();
+boot(globalThis as unknown as Win);

@@ -25,7 +25,10 @@ export interface CategorySeed {
 
 export interface PhotoSeed {
   sku: string;
-  /** URL de la foto que se muestra (la variante liviana `minUrl` del manifiesto). */
+  /**
+   * La foto que se muestra: una ruta relativa a la página (`photos/<sku>.thumb.webp`, vista previa) o una
+   * URL completa (la variante liviana `minUrl` del manifiesto, en pruebas y en el modo con red).
+   */
   url: string;
   /** true = imagen ilustrativa (la app la rotula así). */
   illustrative: boolean;
@@ -51,6 +54,16 @@ export interface DemoOptions {
   categories: CategorySeed[];
   /** Fotos del manifiesto (por SKU). Sin ellas se usa la columna `foto` del CSV. */
   photos?: PhotoSeed[] | Record<string, { url: string; illustrative: boolean }>;
+  /**
+   * URL absoluta de la carpeta donde está publicada la página (con "/" al final). Las fotos con ruta
+   * relativa (`photos/<sku>.thumb.webp`) se resuelven contra ella.
+   */
+  photoBase?: string;
+  /**
+   * Vista previa publicada: solo fotos propias. Ignora la columna `foto` del CSV y descarta cualquier
+   * foto que apunte a otro servidor (la página no puede pedir nada fuera de sus propios archivos).
+   */
+  localPhotosOnly?: boolean;
   /** Velocidad del ciclo del pedido: 1 = ≈25 s por etapa; 2 = el doble de rápido. */
   speed?: number;
   /** Duración base de cada etapa en segundos (antes de dividir entre `speed`). */

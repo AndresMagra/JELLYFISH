@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { parseSpeed } from '../src/browser';
+import { parseSpeed } from '../src/shortcuts';
 import { formatOrderNumber, mulberry32, normalizeText, randomUuid, stableUuid } from '../src/util';
 import { normalizeText as apiNormalizeText } from '../../../apps/api/src/text';
 import { formatOrderNumber as apiFormatOrderNumber } from '../../../apps/api/src/text';

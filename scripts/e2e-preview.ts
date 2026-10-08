@@ -1,23 +1,25 @@
 /**
- * Verifica la VISTA PREVIA web (dist-preview/) como la vería el dueño en su teléfono: Chromium con
- * emulación de iPhone 14 y Pixel 7, la página servida bajo una subcarpeta desconocida
- * (/artifact/xyz/) y en la raíz, SIN internet (solo el servidor local; las fotos del CDN se
- * responden con una imagen negra) y con la prueba del respaldo cuando las fotos fallan.
+ * Verifica la VISTA PREVIA web (dist-preview/) como la vería el dueño en su teléfono: Chromium con emulación
+ * de iPhone 14 y Pixel 7, en modo claro y oscuro, con el fragmento `artifact.html` envuelto como lo hace la
+ * plataforma, servido bajo VARIAS rutas por un alojamiento ESTRICTO (solo archivos propios, política de
+ * seguridad que bloquea todo lo externo) y SIN internet.
  *
- *   npx tsx scripts/e2e-preview.ts                       (usa dist-preview/, toma capturas en tmp/e2e-preview)
- *   npx tsx scripts/e2e-preview.ts --serve               (solo sirve la carpeta y escribe la dirección)
- *   E2E_OUT=/ruta npx tsx scripts/e2e-preview.ts --dir /ruta/dist-preview
- *   --device iphone|pixel|all   --mount subdir|root|noslash|all   --quick (solo inicio → producto → recargar)
+ *   npx tsx scripts/e2e-preview.ts                       recorrido completo (4 recorridos largos + rutas + extras)
+ *   npx tsx scripts/e2e-preview.ts --quick               solo los recorridos cortos (inicio → producto → carrito → recargar)
+ *   npx tsx scripts/e2e-preview.ts --mount xyz           solo esa ruta (con --quick, solo el recorrido corto)
+ *   npx tsx scripts/e2e-preview.ts --serve [--mount xyz] sirve dist-preview/ y escribe las direcciones (para verla tú)
+ *   opciones: --dir ruta/dist-preview  --out ruta/capturas  --port 4311  --only <nombre del extra>
+ *   E2E_OUT=/ruta npx tsx scripts/e2e-preview.ts         (capturas fuera del repositorio)
  *
- * El servidor es ESTRICTO a propósito: no devuelve index.html para rutas desconocidas (como muchos
- * alojamientos estáticos), así que recargar solo funciona donde la página realmente existe.
+ * Todo recorrido falla si la página: escribe un error en la consola, pide algo a otro origen (incluido el CDN
+ * de fotos), recibe un 404 que no estaba previsto, muestra un diálogo del navegador (alert/confirm/prompt),
+ * abre una pestaña nueva o viola la política de seguridad.
  */
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
-import { extname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { type BrowserContext, type Page, chromium, devices } from 'playwright-core';
-import sharp from 'sharp';
+import { type Browser, type BrowserContext, type Page, chromium, devices } from 'playwright-core';
+import { type Host, MOUNTS, type Mount, startHost } from './preview-host';
 
 const root = resolve(import.meta.dirname, '..');
 const CHROME = process.env.CHROME_PATH ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
@@ -28,133 +30,21 @@ const { values: args } = parseArgs({
     out: { type: 'string', default: process.env.E2E_OUT ?? `${root}/tmp/e2e-preview` },
     port: { type: 'string', default: '4311' },
     serve: { type: 'boolean', default: false },
-    device: { type: 'string', default: 'all' },
-    mount: { type: 'string', default: 'all' },
+    mount: { type: 'string' },
     quick: { type: 'boolean', default: false },
     only: { type: 'string' },
   },
 });
 const DIST = resolve(args.dir!);
 const OUT = resolve(args.out!);
-const PORT = Number(args.port);
-const ORIGIN = `http://127.0.0.1:${PORT}`;
 mkdirSync(OUT, { recursive: true });
 
 const log = (m: string) => console.log(`• ${m}`);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// ───────────────────────── servidor estático estricto ─────────────────────────
+// ───────────────────────── comprobaciones ─────────────────────────
 
-const TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json',
-  '.css': 'text/css',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.ttf': 'font/ttf',
-  '.svg': 'image/svg+xml',
-};
-
-const MOUNTS = {
-  subdir: '/artifact/xyz/',
-  root: '/',
-  noslash: '/artifact/abc',
-} as const;
-type MountName = keyof typeof MOUNTS;
-
-interface ServerStats {
-  requests: { url: string; status: number }[];
-}
-
-function startServer(): { close: () => void; stats: ServerStats } {
-  const stats: ServerStats = { requests: [] };
-  const server = createServer((req, res) => {
-    const url = new URL(req.url ?? '/', ORIGIN);
-    const path = decodeURIComponent(url.pathname);
-    let file: string | null = null;
-    for (const mount of Object.values(MOUNTS)) {
-      if (mount === '/') {
-        if (path === '/') file = join(DIST, 'index.html');
-        else if (!path.startsWith('/artifact/')) file = join(DIST, path);
-      } else if (mount.endsWith('/')) {
-        if (path.startsWith(mount)) file = join(DIST, path.slice(mount.length) || 'index.html');
-      } else if (path === mount) {
-        file = join(DIST, 'index.html'); // la página vive en /artifact/abc (sin barra)
-      } else if (path.startsWith(`${mount}/`)) {
-        file = join(DIST, path.slice(mount.length + 1) || 'index.html');
-      }
-      if (file) break;
-    }
-    if (path === '/host.html') {
-      // Página anfitriona: la vista previa dentro de un marco aislado (sin acceso a localStorage).
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(
-        `<!doctype html><body style="margin:0"><iframe id="f" sandbox="allow-scripts allow-forms allow-popups" src="/artifact/xyz/" style="border:0;width:390px;height:800px"></iframe></body>`,
-      );
-      return;
-    }
-    const ok = file && existsSync(file) && statSync(file).isFile() && file.startsWith(DIST);
-    const status = ok ? 200 : 404;
-    stats.requests.push({ url: `${url.pathname}`, status });
-    if (!ok) {
-      res.writeHead(404, { 'content-type': 'text/plain' });
-      res.end('No encontrado');
-      return;
-    }
-    res.writeHead(200, {
-      'content-type': TYPES[extname(file!)] ?? 'application/octet-stream',
-      'cache-control': 'no-store',
-      'access-control-allow-origin': '*',
-    });
-    res.end(readFileSync(file!));
-  });
-  server.listen(PORT, '127.0.0.1');
-  return { close: () => server.close(), stats };
-}
-
-// ───────────────────────── red bloqueada ─────────────────────────
-
-/** PNG negro (la "foto" del CDN en estas pruebas). */
-const BLACK_PNG = await sharp({
-  create: { width: 64, height: 48, channels: 3, background: '#000000' },
-})
-  .png()
-  .toBuffer();
-
-interface NetLog {
-  external: string[];
-  cdn: number;
-  failed: string[];
-}
-
-async function lockNetwork(ctx: BrowserContext, mode: 'black' | 'fail', net: NetLog) {
-  await ctx.route('**/*', async (route) => {
-    const url = route.request().url();
-    if (url.startsWith(ORIGIN) || url.startsWith('data:') || url.startsWith('blob:')) {
-      return route.continue();
-    }
-    if (new URL(url).hostname === 'd8j0ntlcm91z4.cloudfront.net') {
-      net.cdn++;
-      if (mode === 'black') {
-        return route.fulfill({
-          status: 200,
-          contentType: 'image/png',
-          body: BLACK_PNG,
-          headers: { 'access-control-allow-origin': '*' },
-        });
-      }
-      return route.abort('failed');
-    }
-    net.external.push(url);
-    return route.abort('internetdisconnected');
-  });
-}
-
-// ───────────────────────── utilidades de prueba ─────────────────────────
-
-const results: { name: string; ok: boolean; soft?: boolean; note?: string }[] = [];
+const results: { name: string; ok: boolean }[] = [];
 let currentLabel = '';
 
 function check(cond: unknown, message: string): asserts cond {
@@ -166,24 +56,217 @@ function check(cond: unknown, message: string): asserts cond {
   log(`✔ ${message}`);
 }
 
-/** Comprobación de algo que otro equipo todavía puede estar construyendo: avisa, no rompe. */
-function soft(cond: unknown, message: string, note = '') {
-  results.push({ name: `${currentLabel}: ${message}`, ok: !!cond, soft: true, note });
-  log(
-    `${cond ? '✔' : '⚠'} ${message}${cond ? '' : ` (pendiente: ${note || 'no está en la app todavía'})`}`,
-  );
-}
-
 async function shot(page: Page, name: string) {
   await page.waitForTimeout(450);
   await page.screenshot({ path: `${OUT}/${currentLabel}-${name}.png` });
 }
 
+// ───────────────────────── dispositivos ─────────────────────────
+
+interface DeviceCase {
+  name: 'iphone' | 'pixel';
+  descriptor: (typeof devices)[string];
+}
+const DEVICES: Record<DeviceCase['name'], DeviceCase> = {
+  iphone: { name: 'iphone', descriptor: devices['iPhone 14']! },
+  pixel: { name: 'pixel', descriptor: devices['Pixel 7']! },
+};
+type Scheme = 'dark' | 'light';
+
+// ───────────────────────── una sesión de navegador vigilada ─────────────────────────
+
+interface Session {
+  ctx: BrowserContext;
+  page: Page;
+  host: Host;
+  mount: Mount;
+  consoleErrors: string[];
+  external: string[];
+  badResponses: string[];
+  dialogs: string[];
+  popups: string[];
+  tag: string;
+}
+
+interface SessionOptions {
+  device: DeviceCase;
+  scheme: Scheme;
+  mount: Mount;
+  /** Cambia el contexto (almacenamiento bloqueado, historial que lanza errores…). */
+  initScript?: string;
+  /** Peticiones locales que se cortan a propósito (p. ej. las fotos). */
+  abort?: RegExp;
+  fallback?: boolean;
+  /** Zonas seguras simuladas (iPhone con muesca). */
+  safeArea?: { top: number; bottom: number };
+  /** Errores de consola que se esperan en esta modalidad. */
+  tolerate?: RegExp[];
+}
+
+const CSP_RECORDER = `(function () {
+  window.__cspViolations = [];
+  document.addEventListener('securitypolicyviolation', function (e) {
+    window.__cspViolations.push(e.violatedDirective + ' ' + e.blockedURI + ' en ' + String(e.sourceFile).split('/').slice(-2).join('/') + ':' + e.lineNumber + ':' + e.columnNumber + ' ' + String(e.sample || '').slice(0, 80));
+  });
+})();`;
+
+async function openSession(browser: Browser, o: SessionOptions): Promise<Session> {
+  const host = await startHost({
+    dist: DIST,
+    port: Number(args.port),
+    mounts: [o.mount],
+    fallback: o.fallback ? [o.mount.name] : [],
+    sandboxFrame: o.mount.page,
+  });
+  const ctx = await browser.newContext({
+    ...o.device.descriptor,
+    locale: 'es-DO',
+    timezoneId: 'America/Santo_Domingo',
+    colorScheme: o.scheme,
+  });
+  const s: Session = {
+    ctx,
+    page: await ctx.newPage(),
+    host,
+    mount: o.mount,
+    consoleErrors: [],
+    external: [],
+    badResponses: [],
+    dialogs: [],
+    popups: [],
+    tag: `${o.device.name}-${o.scheme}-${o.mount.name}`,
+  };
+  // En las rutas donde los <script src> relativos fallan a propósito, el navegador anota esos 404 en la consola.
+  const tolerate = [...(o.tolerate ?? []), ...(o.mount.expected404?.length ? [/Failed to load resource.*404/] : [])];
+  // Red hacia internet bloqueada: cualquier cosa que no sea el alojamiento de prueba (o data:/blob:) se corta y se anota.
+  await ctx.route('**/*', (route) => {
+    const url = route.request().url();
+    if (url.startsWith(host.origin) || url.startsWith('data:') || url.startsWith('blob:')) {
+      if (o.abort && o.abort.test(url)) return route.abort('failed');
+      return route.continue();
+    }
+    s.external.push(url);
+    return route.abort('internetdisconnected');
+  });
+  ctx.on('page', (p) => {
+    if (p !== s.page) s.popups.push(p.url());
+  });
+  await ctx.addInitScript({ content: CSP_RECORDER });
+  if (o.initScript) await ctx.addInitScript({ content: o.initScript });
+  const page = s.page;
+  page.on('pageerror', (e) => s.consoleErrors.push(`pageerror: ${e.message}`));
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    const text = m.text();
+    if (/Failed to load resource/.test(text) && o.abort) return; // lo cortamos nosotros
+    if (tolerate.some((re) => re.test(text))) return;
+    s.consoleErrors.push(text);
+  });
+  page.on('request', (r) => {
+    const u = r.url();
+    if (/^https?:/.test(u) && !u.startsWith(host.origin)) s.external.push(u);
+  });
+  page.on('response', (r) => {
+    if (r.url().startsWith(host.origin) && r.status() >= 400) {
+      const path = new URL(r.url()).pathname;
+      if (!(o.mount.expected404 ?? []).some((p) => path.startsWith(p)))
+        s.badResponses.push(`${r.status()} ${path}`);
+    }
+  });
+  page.on('dialog', (d) => {
+    s.dialogs.push(`${d.type()}: ${d.message()}`);
+    void d.dismiss();
+  });
+  if (o.safeArea) {
+    const cdp = await ctx.newCDPSession(page);
+    await cdp.send('Emulation.setSafeAreaInsetsOverride' as never, {
+      insets: { top: o.safeArea.top, bottom: o.safeArea.bottom, left: 0, right: 0 },
+    } as never);
+  }
+  currentLabel = s.tag;
+  return s;
+}
+
+async function closeSession(s: Session) {
+  await s.ctx.close();
+  await s.host.close();
+}
+
+/** Lo que TODO recorrido afirma al terminar. */
+async function finish(s: Session, extra: { allowCspViolations?: boolean } = {}) {
+  const csp = (await s.page.evaluate('window.__cspViolations || []').catch(() => [])) as string[];
+  check(
+    s.consoleErrors.length === 0,
+    `0 errores de consola${s.consoleErrors.length ? `: ${s.consoleErrors.slice(0, 3).join(' | ')}` : ''}`,
+  );
+  check(
+    s.external.length === 0,
+    `0 peticiones a otros orígenes${s.external.length ? `: ${s.external.slice(0, 3).join(' | ')}` : ''}`,
+  );
+  check(
+    s.badResponses.length === 0,
+    `ningún archivo local falló (404/500)${s.badResponses.length ? `: ${s.badResponses.slice(0, 3).join(' | ')}` : ''}`,
+  );
+  check(
+    s.dialogs.length === 0,
+    `la app no usó alert/confirm/prompt${s.dialogs.length ? `: ${s.dialogs.join(' | ')}` : ''}`,
+  );
+  check(s.popups.length === 0, 'no se abrió ninguna pestaña nueva');
+  if (!extra.allowCspViolations)
+    check(
+      csp.length === 0,
+      `0 violaciones de la política de seguridad${csp.length ? `: ${csp.slice(0, 3).join(' | ')}` : ''}`,
+    );
+}
+
+// ───────────────────────── utilidades de la app ─────────────────────────
+
+const tab = (page: Page, name: RegExp) => page.getByRole('tab', { name });
+
+const STATUS_LABELS = {
+  confirmed: 'Pedido confirmado',
+  picking: 'Preparando tu pedido',
+  packed: 'Empacado en frío',
+  out_for_delivery: 'En camino',
+  delivered: 'Entregado',
+  pending_payment: 'Esperando pago',
+} as const;
+
+async function orderStatusText(page: Page): Promise<string> {
+  return (
+    await page
+      .getByTestId('order-status')
+      .innerText()
+      .catch(() => '')
+  ).trim();
+}
+
+/** Espera (la pantalla del pedido se actualiza sola cada 8 s) hasta ver `label`. */
+async function waitForStatus(page: Page, label: string, timeoutMs = 90_000) {
+  const t0 = Date.now();
+  for (;;) {
+    const text = await orderStatusText(page);
+    if (text.includes(label)) return;
+    if (Date.now() - t0 > timeoutMs)
+      throw new Error(`✖ El pedido nunca llegó a "${label}" (último estado: "${text}")`);
+    await sleep(700);
+  }
+}
+
 /**
- * ¿Algún ícono se ve como un cuadro vacío? Recorre todo el texto de la pantalla que usa una fuente de
- * íconos (caracteres privados de Unicode) y compara cómo lo dibuja esa fuente contra una fuente cualquiera:
- * si salen idénticos, a la fuente le falta ese glifo (pasa si se recorta de más).
+ * Espera a que una expresión sea verdadera en la página. Se consulta desde Node (no con `waitForFunction`):
+ * esa llamada evalúa texto dentro de la página y la política de seguridad estricta (sin 'unsafe-eval') la rechaza.
  */
+async function waitUntil(page: Page, expression: string, timeoutMs = 15_000): Promise<void> {
+  const t0 = Date.now();
+  for (;;) {
+    if ((await page.evaluate(expression)) === true) return;
+    if (Date.now() - t0 > timeoutMs) throw new Error(`✖ No se cumplió a tiempo: ${expression.slice(0, 120)}`);
+    await sleep(150);
+  }
+}
+
+/** ¿Algún ícono se ve como un cuadro vacío? (la fuente recortada no tiene ese glifo) */
 async function missingGlyphs(page: Page): Promise<string[]> {
   return page.evaluate(`(async function () {
     await document.fonts.ready;
@@ -204,684 +287,837 @@ async function missingGlyphs(page: Page): Promise<string[]> {
       var family = getComputedStyle(el).fontFamily;
       var key = family + '|' + cp;
       if (seen[key]) continue; seen[key] = true;
-      // Si el glifo se dibuja igual que un punto de código que ninguna fuente de íconos tiene, no existe.
       var unmapped = String.fromCodePoint(0x10FFFD);
-      var drawn = draw(family, txt);
-      if (drawn === draw(family, unmapped)) missing.push(family + ' U+' + cp.toString(16).toUpperCase());
+      if (draw(family, txt) === draw(family, unmapped)) missing.push(family + ' U+' + cp.toString(16).toUpperCase());
     }
     return missing;
   })()`) as Promise<string[]>;
 }
 
-/** Espera a que el service worker de la carpeta esté activo (sin colgarse si la página queda fuera de su alcance). */
-async function swActive(page: Page, scope: string): Promise<boolean> {
-  return page.evaluate(`(async function () {
-    for (var i = 0; i < 100; i++) {
-      var r = await navigator.serviceWorker.getRegistration(${JSON.stringify(scope)});
-      if (r && r.active) return true;
-      await new Promise(function (ok) { setTimeout(ok, 100); });
-    }
-    return false;
-  })()`) as Promise<boolean>;
-}
-
-async function demoState<T>(page: Page, fn: string): Promise<T> {
+async function demoApi<T>(page: Page, path: string, token?: string | null): Promise<T> {
   return page.evaluate(
-    `(function(){ var d = window.JellyfishDemo; return (${fn})(d); })()`,
+    `fetch("https://demo.jellyfish.local${path}", { headers: ${token ? `{ Authorization: "Bearer ${token}" }` : '{}'} }).then(function (r) { return r.json(); })`,
   ) as Promise<T>;
 }
 
-const STATUS_LABELS = {
-  confirmed: 'Pedido confirmado',
-  picking: 'Preparando tu pedido',
-  packed: 'Empacado en frío',
-  out_for_delivery: 'En camino',
-  delivered: 'Entregado',
-  pending_payment: 'Esperando pago',
-  cancelled: 'Cancelado',
-} as const;
-
-async function orderStatusText(page: Page): Promise<string> {
-  return (
-    await page
-      .getByTestId('order-status')
-      .innerText()
-      .catch(() => '')
-  ).trim();
+/** Fotos de producto que hay en el documento: cargada, rota o pendiente (las de más abajo se piden al llegar). */
+async function photosOnScreen(page: Page): Promise<{ src: string; state: 'ok' | 'broken' | 'pending' }[]> {
+  return page.evaluate(
+    `Array.from(document.querySelectorAll('img')).filter(function (i) { return /\\/photos\\//.test(i.src); }).map(function (i) { return { src: i.src, state: i.complete ? (i.naturalWidth > 0 ? 'ok' : 'broken') : 'pending' }; })`,
+  ) as Promise<{ src: string; state: 'ok' | 'broken' | 'pending' }[]>;
 }
 
-/** Recarga la pantalla del pedido hasta ver `label` (el pedido sigue avanzando mientras tanto). */
-async function waitForStatus(page: Page, label: string, seen: Set<string>, timeoutMs = 90_000) {
-  const t0 = Date.now();
-  for (;;) {
-    const text = await orderStatusText(page);
-    if (text) seen.add(text);
-    if (text.includes(label)) return;
-    if (Date.now() - t0 > timeoutMs) {
-      throw new Error(`✖ El pedido nunca llegó a "${label}" (último estado: "${text}")`);
-    }
-    await sleep(1500);
-    await page.reload();
-    await page
-      .getByTestId('order-status')
-      .waitFor({ timeout: 20_000 })
-      .catch(() => {});
-  }
+interface PageEnvInfo {
+  assets: string | null;
+  router: string | null;
+  noslash: boolean | null;
+  pathname: string;
+  title: string;
 }
 
-interface DeviceCase {
-  name: 'iphone' | 'pixel';
-  descriptor: (typeof devices)[string];
+/** Lo que el arranque dedujo de la ruta en que se publicó la página. */
+function expectedEnv(m: Mount): { assets: string; router: string; noslash: boolean } {
+  const assets = m.filesDir.replace(/\/+$/, '');
+  const endsWithSlash = m.page.endsWith('/');
+  return {
+    assets,
+    router: endsWithSlash ? m.page.replace(/\/+$/, '') : m.page,
+    noslash: !endsWithSlash,
+  };
 }
 
-const CASES: DeviceCase[] = [
-  { name: 'iphone', descriptor: devices['iPhone 14']! },
-  { name: 'pixel', descriptor: devices['Pixel 7']! },
-];
+// ───────────────────────── 1. inicio y recorrido corto ─────────────────────────
 
-// ───────────────────────── el recorrido ─────────────────────────
-
-interface RunOptions {
-  device: DeviceCase;
-  mount: MountName;
-  quick: boolean;
-  photos: 'black' | 'fail';
-  /** false = el navegador no deja usar localStorage (modo privado, datos bloqueados). */
-  storage?: boolean;
-}
-
-async function journey(browser: Awaited<ReturnType<typeof chromium.launch>>, o: RunOptions) {
-  currentLabel = `${o.device.name}-${o.mount}${o.photos === 'fail' ? '-sinfotos' : ''}${o.storage === false ? '-sinalmacenamiento' : ''}`;
-  const net: NetLog = { external: [], cdn: 0, failed: [] };
-  const ctx = await browser.newContext({
-    ...o.device.descriptor,
-    locale: 'es-DO',
-    timezoneId: 'America/Santo_Domingo',
-    colorScheme: 'dark',
-  });
-  await lockNetwork(ctx, o.photos, net);
-  if (o.storage === false) {
-    // Como texto: un `() => {}` pasaría por el transpilador y dejaría ayudantes (`__name`) que el navegador no tiene.
-    await ctx.addInitScript({
-      content: `(function () {
-        function deny() { throw new DOMException('El almacenamiento está bloqueado', 'SecurityError'); }
-        Object.defineProperty(window, 'localStorage', { get: deny, configurable: true });
-        Object.defineProperty(window, 'sessionStorage', { get: deny, configurable: true });
-      })();`,
-    });
-  }
-  const page = await ctx.newPage();
-  const consoleErrors: string[] = [];
-  const badResponses: string[] = [];
-  page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => {
-    if (m.type() === 'error') {
-      const text = m.text();
-      // Con las fotos cortadas a propósito el navegador avisa de cada una: es lo esperado.
-      if (o.photos === 'fail' && /Failed to load resource|ERR_FAILED/.test(text)) return;
-      consoleErrors.push(text);
-    }
-  });
-  page.on('response', (r) => {
-    if (r.url().startsWith(ORIGIN) && r.status() >= 400)
-      badResponses.push(`${r.status()} ${r.url()}`);
-  });
-  page.on('requestfailed', (r) => {
-    if (r.url().startsWith(ORIGIN)) net.failed.push(r.url());
-  });
-
-  const mountPath = MOUNTS[o.mount];
-  // Los recorridos rápidos corren a velocidad normal (para comprobar los tiempos reales por etapa).
-  const speedParam = o.quick ? '' : 'speed=2&';
-  const url = `${ORIGIN}${mountPath}?${speedParam}reset=1`;
-  const tab = (name: RegExp) => page.getByRole('tab', { name });
-
-  try {
-    // ───── Inicio ─────
-    await page.goto(url);
-    await page.locator('#jf-ribbon').waitFor();
-    await tab(/Buscar/).waitFor({ timeout: 45_000 });
-    await shot(page, '01-inicio');
-    const missing0 = await missingGlyphs(page);
-    check(
-      missing0.length === 0,
-      `todos los íconos del inicio tienen su glifo en la fuente recortada${missing0.length ? `: ${missing0.join(', ')}` : ''}`,
-    );
-    const ribbon = await page.locator('#jf-ribbon').innerText();
-    check(
-      /VISTA PREVIA/.test(ribbon) && /123456/.test(ribbon),
-      'la cinta dice VISTA PREVIA y el código de prueba 123456',
-    );
-    const base = await page.evaluate('document.querySelector("base").getAttribute("href")');
-    check(
-      base === (mountPath.endsWith('/') ? mountPath : `${mountPath}/`),
-      `la carpeta base se calculó sola (${String(base)})`,
-    );
-    const demoOn = await page.evaluate('typeof window.JellyfishDemo === "object"');
-    check(
-      demoOn === true,
-      'el servidor de demostración está instalado antes de que arranque la app',
-    );
-    if (o.quick) {
-      const stages = await page.evaluate('window.JellyfishDemo.handle.server.ctx.cfg.stageMs');
-      check(
-        JSON.stringify(stages) ===
-          JSON.stringify({
-            confirmed: 25_000,
-            picking: 20_000,
-            packed: 20_000,
-            out_for_delivery: 30_000,
-          }),
-        'a velocidad normal cada etapa del pedido dura 25 / 20 / 20 / 30 s',
-      );
-    }
-    check(
-      (await page.getByText('Camarón').count()) > 0 || (await page.getByText('Res').count()) > 0,
-      'el inicio muestra productos y categorías del catálogo de ejemplo',
-    );
-    const pathAtStart = new URL(page.url()).pathname;
-    check(
-      !/Unmatched|No encontramos esta página/i.test(await page.locator('body').innerText()),
-      'el router reconoce la pantalla de inicio en la subcarpeta',
-    );
-
-    // ───── Categorías ─────
-    await page
-      .getByRole('button', { name: /Categoría Mariscos/ })
-      .first()
-      .click();
-    await page
-      .getByTestId('search-results')
-      .getByText('Camarón')
-      .first()
-      .waitFor({ timeout: 20_000 });
-    await shot(page, '02-categoria');
-    check(
-      new URL(page.url()).pathname.startsWith(mountPath.replace(/\/$/, '')),
-      'al navegar, la dirección sigue dentro de la subcarpeta',
-    );
-    if (o.storage === false) {
-      check(
-        (await page.evaluate('window.JellyfishDemo.handle.server.ctx.state.users.length')) === 0,
-        'sin almacenamiento la demostración corre solo en memoria',
-      );
-    }
-
-    // ───── Búsqueda sin acento ─────
-    await page.getByTestId('search-input').fill('camaron');
-    await page.getByTestId('search-results').getByText('Camarón').first().waitFor();
-    await shot(page, '03-busqueda');
-    check(
-      (await page.getByTestId('search-results').getByText('Camarón').count()) > 0,
-      'buscar "camaron" (sin tilde) encuentra Camarón',
-    );
-
-    // ───── Detalle con variantes ─────
-    await page.getByTestId('search-results').getByText('Camarón').first().click();
-    await page.getByRole('button', { name: '16/20' }).click();
-    await shot(page, '04-producto');
-    check(
-      await page.getByText('16/20').first().isVisible(),
-      'el detalle muestra las variantes (calibres) y deja elegir una',
-    );
-    await page.getByTestId('add-to-cart').click();
-    for (let i = 0; i < 6; i++) await page.getByRole('button', { name: 'Agregar' }).click();
-    await shot(page, '05-producto-agregado');
-
-    if (o.quick && o.storage !== false) {
-      check(
-        await swActive(page, mountPath.endsWith('/') ? mountPath : `${mountPath}/`),
-        'el respaldo de navegación (service worker) quedó activo',
-      );
-      await page.reload();
-      await page.getByTestId('add-to-cart').waitFor({ timeout: 45_000 });
-      check(
-        new URL(page.url()).pathname.includes('/product/camaron'),
-        'recargar en una pantalla interna (detalle de producto) la vuelve a abrir, aunque el servidor no conozca esa ruta',
-      );
-      await shot(page, '06-recargado-en-producto');
-      await page.goto(url.replace('&reset=1', ''));
-      await tab(/Buscar/).waitFor({ timeout: 45_000 });
-      check(
-        !/Unmatched/i.test(await page.locator('body').innerText()),
-        'recargar en la pantalla de inicio funciona',
-      );
-      return finish();
-    }
-
-    // ───── Carrito ─────
-    await page.getByRole('button', { name: 'Ver carrito' }).click();
-    await page.getByTestId('go-checkout').waitFor({ timeout: 20_000 });
-    await shot(page, '06-carrito');
-    const goText = await page.getByTestId('go-checkout').innerText();
-    check(
-      /RD\$/.test(goText),
-      `el carrito calcula el total en pesos (${goText.replace(/\s+/g, ' ')})`,
-    );
-
-    // ───── Login por OTP (123456) ─────
-    await page.getByTestId('go-checkout').click();
-    const phone = `809555${String(Math.floor(1000 + Math.random() * 8999))}`;
-    await page.getByTestId('phone-input').fill(phone);
-    await shot(page, '07-login');
-    await page.getByTestId('send-code').click();
-    await page.getByTestId('otp-input').waitFor();
-    await page.getByTestId('otp-input').fill('123456');
-    await page.getByText('Confirmar pedido').first().waitFor({ timeout: 20_000 });
-    check(true, 'entró con el código de prueba 123456');
-
-    // ───── Dirección ─────
-    await shot(page, '08-checkout');
-    await page.getByTestId('add-address').click();
-    await page.getByTestId('addr-line1').fill('Calle Max Henríquez Ureña #10');
-    await page.getByTestId('addr-sector').fill('Piantini');
-    await page.getByTestId('addr-reference').fill('Al lado del colmado Don Pepe, portón negro');
-    await page.getByText('¡Llegamos a tu sector!').waitFor();
-    await shot(page, '09-direccion');
-    await page.getByTestId('save-address').click();
-    await page.getByText('Piantini').first().waitFor();
-
-    // ───── Checkout en efectivo ─────
-    const slotButtons = page.getByRole('button').filter({ hasText: /\d:\d\d [ap]\. m\. – / });
-    await slotButtons.first().click();
-    await page.getByTestId('checkout-name').fill('Andrés Prueba');
-    await shot(page, '10-checkout-listo');
-    const missing1 = await missingGlyphs(page);
-    check(
-      missing1.length === 0,
-      `todos los íconos del checkout tienen glifo${missing1.length ? `: ${missing1.join(', ')}` : ''}`,
-    );
-    check(
-      await page.getByTestId('place-order').isEnabled(),
-      'con dirección, horario y pago el botón de confirmar se habilita',
-    );
-    await page.getByTestId('place-order').click();
-    await page.getByTestId('order-status').waitFor({ timeout: 20_000 });
-    await shot(page, '11-pedido-efectivo');
-    check(
-      (await orderStatusText(page)).includes(STATUS_LABELS.confirmed),
-      'el pedido en efectivo queda confirmado',
-    );
-
-    if (o.storage === false) {
-      await page.reload();
-      await tab(/Buscar/).waitFor({ timeout: 45_000 });
-      check(
-        true,
-        'sin localStorage el pedido se hizo igual; al recargar la app abre limpia (la sesión vivía en memoria)',
-      );
-      return finish();
-    }
-
-    const orderState = await demoState<{ id: string; pin: string; code: string }>(
-      page,
-      '(d)=>{var o=d.handle.server.ctx.state.orders[0];return {id:o.id,pin:o.deliveryPin,code:"JF-"+String(o.number).padStart(6,"0")}}',
-    );
-    check(
-      /^\d{4}$/.test(orderState.pin),
-      `el pedido trae un PIN de entrega de 4 dígitos (${orderState.pin})`,
-    );
-    soft(
-      await page
-        .getByText(orderState.pin)
-        .first()
-        .isVisible()
-        .catch(() => false),
-      'la pantalla del pedido muestra el PIN al cliente',
-      'la pantalla del PIN la construye otro equipo',
-    );
-
-    // ───── Etapas del pedido ─────
-    const seen = new Set<string>();
-    await waitForStatus(page, STATUS_LABELS.picking, seen);
-    await shot(page, '12-preparando');
-    await waitForStatus(page, STATUS_LABELS.packed, seen);
-    await waitForStatus(page, STATUS_LABELS.out_for_delivery, seen);
-    await shot(page, '13-en-camino');
-    const missing2 = await missingGlyphs(page);
-    check(
-      missing2.length === 0,
-      `todos los íconos del pedido en camino tienen glifo${missing2.length ? `: ${missing2.join(', ')}` : ''}`,
-    );
-    check(true, 'el pedido avanza solo: confirmado → preparando → empacado → en camino');
-
-    // ───── Seguimiento ─────
-    const token = await page.evaluate('localStorage.getItem("jellyfish.token")');
-    const tracking = (await page.evaluate(
-      `fetch("https://demo.jellyfish.local/v1/orders/${orderState.id}/tracking",{headers:{Authorization:"Bearer ${String(token)}"}}).then(r=>r.json())`,
-    )) as { available: boolean; latitude?: number; longitude?: number };
-    check(
-      tracking.available === true && typeof tracking.latitude === 'number',
-      'el seguimiento devuelve la posición del repartidor simulado en Santo Domingo',
-    );
-    soft(
-      /repartidor|Seguimiento en vivo|¿Dónde va/i.test(await page.locator('body').innerText()),
-      'la pantalla del pedido muestra el seguimiento del repartidor',
-      'la pantalla de seguimiento la construye otro equipo',
-    );
-    await waitForStatus(page, STATUS_LABELS.delivered, seen);
-    await shot(page, '14-entregado');
-    check(true, 'el pedido llega a Entregado');
-    const delivered = await demoState<{ pinVerifiedAt: string | null; payment: string }>(
-      page,
-      '(d)=>{var o=d.handle.server.ctx.state.orders[0];return {pinVerifiedAt:o.pinVerifiedAt,payment:o.payments[0].status}}',
-    );
-    check(
-      delivered.pinVerifiedAt !== null && delivered.payment === 'captured',
-      'al entregar, el PIN queda verificado y el efectivo cobrado',
-    );
-
-    // ───── Pedir de nuevo ─────
-    const reorderBtn = page.getByRole('button', { name: /Pedir de nuevo/i });
-    const hasReorderUi = (await reorderBtn.count()) > 0;
-    soft(
-      hasReorderUi,
-      'hay un botón "Pedir de nuevo" en el pedido entregado',
-      'lo construye otro equipo',
-    );
-    if (hasReorderUi) {
-      await reorderBtn.first().click();
-      await page.waitForTimeout(1500);
-      await shot(page, '15-pedir-de-nuevo');
-    }
-    const reorder = (await page.evaluate(
-      `fetch("https://demo.jellyfish.local/v1/orders/${orderState.id}/reorder",{headers:{Authorization:"Bearer ${String(token)}"}}).then(r=>r.json())`,
-    )) as { lines: { status: string }[] };
-    check(
-      reorder.lines.length > 0 && reorder.lines.every((l) => l.status === 'ok'),
-      'pedir de nuevo devuelve las líneas del pedido contra el catálogo de hoy',
-    );
-
-    // ───── Pedido con tarjeta ─────
-    // Carga limpia de la página: el carrito (y la sesión) sobreviven a recargar.
-    await page.goto(url.replace('&reset=1', ''));
-    await tab(/Carrito/).waitFor({ timeout: 45_000 });
-    if (!hasReorderUi) {
-      await tab(/Buscar/).click();
-      await page.getByTestId('search-input').fill('camaron');
-      await page.getByTestId('search-results').getByText('Camarón').first().click();
-      await page.getByRole('button', { name: '16/20' }).click();
-      await page.getByTestId('add-to-cart').click();
-      for (let i = 0; i < 6; i++) await page.getByRole('button', { name: 'Agregar' }).click();
-      await page.getByRole('button', { name: 'Ver carrito' }).click();
-    } else {
-      await tab(/Carrito/).click();
-    }
-    await page.getByTestId('go-checkout').click();
-    await page.getByText('Confirmar pedido').first().waitFor({ timeout: 20_000 });
-    await page
-      .getByRole('button')
-      .filter({ hasText: /\d:\d\d [ap]\. m\. – / })
-      .first()
-      .click();
-    await page.getByTestId('pay-card').click();
-    await shot(page, '16-checkout-tarjeta');
-    const pagesBefore = ctx.pages().length;
-    await page.getByTestId('place-order').click();
-    await page.getByTestId('order-status').waitFor({ timeout: 20_000 });
-    check(
-      (await orderStatusText(page)).includes(STATUS_LABELS.pending_payment) ||
-        (await orderStatusText(page)).includes(STATUS_LABELS.confirmed),
-      'el pedido con tarjeta empieza esperando el pago',
-    );
-    await page.getByText(STATUS_LABELS.confirmed).first().waitFor({ timeout: 20_000 });
-    await shot(page, '17-tarjeta-aprobada');
-    check(
-      ctx.pages().length === pagesBefore,
-      'el pago con tarjeta NO abre ninguna pasarela (ni pestaña nueva)',
-    );
-    check(
-      await page
-        .getByText('Pagado')
-        .first()
-        .isVisible()
-        .catch(() => false),
-      'el servidor de demostración aprueba el pago y el pedido queda Pagado',
-    );
-
-    // ───── Pedidos, perfil, favoritos y legales ─────
-    await page.goto(url.replace('&reset=1', ''));
-    await tab(/Pedidos/).click();
-    await page
-      .getByText(/^JF-\d{6}$/)
-      .first()
-      .waitFor({ timeout: 20_000 });
-    await shot(page, '18-pedidos');
-    check(
-      (await page.getByText(/^JF-\d{6}$/).count()) >= 2,
-      'Mis pedidos lista los dos pedidos hechos',
-    );
-    await tab(/Perfil/).click();
-    await page.getByText('Mis direcciones').waitFor();
-    await shot(page, '19-perfil');
-    const missing3 = await missingGlyphs(page);
-    check(
-      missing3.length === 0,
-      `todos los íconos del perfil tienen glifo${missing3.length ? `: ${missing3.join(', ')}` : ''}`,
-    );
-    const profileText = await page.locator('body').innerText();
-    soft(/Favoritos/i.test(profileText), 'el perfil tiene Favoritos', 'lo construye otro equipo');
-    soft(
-      /Términos|Privacidad/i.test(profileText),
-      'el perfil tiene los textos legales',
-      'lo construye otro equipo',
-    );
-
-    // ───── Recarga: todo persiste ─────
-    await page.reload();
-    await tab(/Perfil/).waitFor({ timeout: 45_000 });
-    await tab(/Pedidos/).click();
-    await page
-      .getByText(/^JF-\d{6}$/)
-      .first()
-      .waitFor({ timeout: 20_000 });
-    check(
-      (await page.getByText(/^JF-\d{6}$/).count()) >= 2,
-      'tras recargar la página, la sesión y los pedidos siguen ahí',
-    );
-    await shot(page, '20-despues-de-recargar');
-    void pathAtStart;
-
-    // ───── Reiniciar la demostración (botón de la cinta) ─────
-    page.once('dialog', (d) => void d.accept());
-    await page.locator('#jf-restart').click();
-    await tab(/Buscar/).waitFor({ timeout: 45_000 });
-    await page.waitForTimeout(500);
-    const afterReset = (await page.evaluate(
-      '({token: localStorage.getItem("jellyfish.token"), orders: window.JellyfishDemo.summary().orders, users: window.JellyfishDemo.summary().users})',
-    )) as { token: string | null; orders: number; users: number };
-    check(
-      afterReset.token === null && afterReset.orders === 0 && afterReset.users === 0,
-      'el botón Reiniciar de la cinta borra la sesión, el carrito y los pedidos de ejemplo',
-    );
-    await shot(page, '21-reiniciado');
-    return finish();
-  } catch (e) {
-    await page.screenshot({ path: `${OUT}/${currentLabel}-FALLO.png` }).catch(() => {});
-    console.error(
-      `Texto visible al fallar:\n${(
-        await page
-          .locator('body')
-          .innerText()
-          .catch(() => '')
-      ).slice(0, 700)}`,
-    );
-    console.error(`URL: ${page.url()}`);
-    if (consoleErrors.length)
-      console.error(`Errores del navegador:\n- ${consoleErrors.slice(0, 6).join('\n- ')}`);
-    throw e;
-  } finally {
-    await ctx.close();
-  }
-
-  function finish() {
-    // Con la página en "/artifact/abc" (sin barra) el arranque prueba primero la carpeta "/artifact/" y
-    // recibe un 404 esperado antes de acertar con "/artifact/abc/": el navegador lo anota en la consola.
-    if (o.mount === 'noslash') {
-      const expected = badResponses.filter((u) => u.endsWith('/artifact/jf-probe.json'));
-      for (const u of expected) badResponses.splice(badResponses.indexOf(u), 1);
-      let toDrop = expected.length;
-      for (let i = consoleErrors.length - 1; i >= 0 && toDrop > 0; i--) {
-        if (/Failed to load resource.*404/.test(consoleErrors[i]!)) {
-          consoleErrors.splice(i, 1);
-          toDrop--;
-        }
-      }
-      if (expected.length)
-        log(`  (${expected.length} sondeos de carpeta con 404 esperado en esta modalidad)`);
-    }
-    if (badResponses.length) log(`  respuestas locales con error: ${badResponses.join(' · ')}`);
-    check(
-      consoleErrors.length === 0,
-      `0 errores de consola${consoleErrors.length ? `: ${consoleErrors.slice(0, 3).join(' | ')}` : ''}`,
-    );
-    check(
-      badResponses.length === 0,
-      `ningún archivo local falló (404/500)${badResponses.length ? `: ${badResponses.slice(0, 3).join(' | ')}` : ''}`,
-    );
-    check(
-      net.external.length === 0,
-      `ninguna petición salió a internet salvo las fotos del CDN${net.external.length ? `: ${net.external.slice(0, 3).join(' | ')}` : ''}`,
-    );
-    log(
-      `  fotos del CDN pedidas: ${net.cdn} (${o.photos === 'black' ? 'respondidas con imagen negra' : 'cortadas a propósito'})`,
-    );
-  }
+interface Home {
+  categories: { slug: string; name: string }[];
 }
 
 /**
- * La vista previa dentro de un marco aislado (sandbox sin same-origin): sin localStorage, sin service
- * worker y con el origen "null". Así se vería si el alojamiento la mete en un iframe restringido.
+ * Inicio → fotos propias → categorías (incluida "Otros") → búsqueda → detalle → carrito → de vuelta al
+ * inicio → recarga. Es lo que corre cada ruta; el recorrido largo (más abajo) lo usa como primer tramo.
  */
-async function sandboxSmoke(
-  browser: Awaited<ReturnType<typeof chromium.launch>>,
-  device: DeviceCase,
-) {
-  currentLabel = `${device.name}-marco-aislado`;
-  const net: NetLog = { external: [], cdn: 0, failed: [] };
-  const ctx = await browser.newContext({
-    ...device.descriptor,
-    locale: 'es-DO',
-    timezoneId: 'America/Santo_Domingo',
+async function shortJourney(s: Session, url: string, opts: { reset?: boolean } = {}): Promise<Home> {
+  const { page, mount } = s;
+  await page.goto(`${s.host.origin}${url}`);
+  await page.locator('#jf-ribbon').waitFor();
+  await tab(page, /Buscar/).waitFor({ timeout: 45_000 });
+  await shot(page, '01-inicio');
+
+  // ── La página y su ruta ──
+  check((await page.title()) === 'JELLYFISH', 'el título de la página es JELLYFISH');
+  const env = (await page.evaluate(
+    '({ assets: window.__JF_ASSETS__ ?? null, router: window.__JF_BASE__ ?? null, noslash: window.__JF_NOSLASH__ ?? null, pathname: location.pathname, title: document.title })',
+  )) as PageEnvInfo;
+  const want = expectedEnv(mount);
+  check(
+    env.assets === want.assets && env.router === want.router && env.noslash === want.noslash,
+    `el arranque calculó la ruta de la página (archivos "${env.assets}", router "${env.router}", sin barra: ${String(env.noslash)})`,
+  );
+  check(
+    (await page.evaluate('document.querySelectorAll("base").length')) === 0,
+    'no usa <base> (no depende de que el alojamiento lo permita)',
+  );
+  check(
+    (await page.evaluate('navigator.serviceWorker ? navigator.serviceWorker.controller === null : true')) &&
+      (await page.evaluate('navigator.serviceWorker ? navigator.serviceWorker.getRegistrations().then(function (r) { return r.length; }) : 0')) === 0,
+    'ningún service worker registrado',
+  );
+  check(
+    (await page.locator('#jf-ribbon').innerText()).includes('123456'),
+    'la cinta dice VISTA PREVIA y el código de prueba 123456',
+  );
+  check(
+    !/Unmatched|No encontramos esta página/i.test(await page.locator('body').innerText()),
+    'el router reconoce la pantalla de inicio en esta ruta',
+  );
+  check(
+    (await page.evaluate('typeof window.JellyfishDemo === "object"')) === true,
+    'el servidor de demostración está instalado antes de que arranque la app',
+  );
+
+  // ── El reset de la plataforma no rompe la app ──
+  const layout = (await page.evaluate(`(function () {
+    var root = document.getElementById('root').getBoundingClientRect();
+    var ribbon = document.getElementById('jf-ribbon').getBoundingClientRect();
+    return {
+      rootLeft: root.left, rootRight: root.right, rootBottom: root.bottom, rootTop: root.top,
+      vw: window.innerWidth, vh: window.innerHeight, ribbonBottom: ribbon.bottom,
+      overflowX: document.documentElement.scrollWidth - window.innerWidth,
+      bodyBg: getComputedStyle(document.body).backgroundColor,
+      bodyMargin: getComputedStyle(document.body).margin,
+      colorScheme: getComputedStyle(document.documentElement).colorScheme,
+    };
+  })()`)) as Record<string, number | string>;
+  check(
+    layout.rootLeft === 0 &&
+      Math.abs((layout.rootRight as number) - (layout.vw as number)) <= 1 &&
+      Math.abs((layout.rootBottom as number) - (layout.vh as number)) <= 1 &&
+      Math.abs((layout.rootTop as number) - (layout.ribbonBottom as number)) <= 1,
+    `la app ocupa la pantalla completa bajo la cinta (el relleno de :root no la mueve): ${JSON.stringify({ top: layout.rootTop, bottom: layout.rootBottom, vh: layout.vh })}`,
+  );
+  check(layout.overflowX <= 0, 'sin desplazamiento horizontal');
+  check(
+    layout.bodyBg === 'rgb(5, 11, 31)' && layout.bodyMargin === '0px',
+    `el fondo del body es el de la marca, opaco (${String(layout.bodyBg)}), sin margen`,
+  );
+  const fontOk = await page.evaluate(
+    `(function () { var el = Array.from(document.querySelectorAll('div,span')).find(function (e) { return e.childNodes.length === 1 && e.firstChild.nodeType === 3 && e.firstChild.nodeValue === 'JELLYFISH' && e.closest('#root'); }); return el ? getComputedStyle(el).fontFamily : ''; })()`,
+  );
+  check(
+    /Sora|Jakarta/i.test(String(fontOk)),
+    `el texto de la app usa sus propias fuentes, no la base de 14 px del visor (${String(fontOk)})`,
+  );
+
+  // ── Fotos propias ──
+  await waitUntil(
+    page,
+    `Array.from(document.querySelectorAll('img')).filter(function (i) { return /\\/photos\\//.test(i.src) && i.complete && i.naturalWidth > 0; }).length >= 2`,
+    20_000,
+  );
+  const photos = await photosOnScreen(page);
+  const loaded = photos.filter((p) => p.state === 'ok').length;
+  check(
+    loaded >= 2 && photos.every((p) => p.state !== 'broken'),
+    `el inicio muestra fotos reales locales: ${loaded} cargadas de ${photos.length}, ninguna rota`,
+  );
+  check(
+    photos.every((p) => new URL(p.src).origin === s.host.origin && /\/photos\/JF-[A-Z]{3}-\d{3}\.thumb\.webp$/.test(p.src)),
+    'las fotos son archivos propios photos/<sku>.thumb.webp resueltos contra la carpeta de la página',
+  );
+  check(
+    photos.every((p) => new URL(p.src).pathname.startsWith(`${want.assets}/photos/`)),
+    `…y salen de la carpeta de la página (${want.assets}/photos/)`,
+  );
+  const missing0 = await missingGlyphs(page);
+  check(
+    missing0.length === 0,
+    `todos los íconos del inicio tienen su glifo${missing0.length ? `: ${missing0.join(', ')}` : ''}`,
+  );
+
+  // ── Categorías (incluida "Otros") ──
+  const categories = await demoApi<{ slug: string; name: string }[]>(page, '/v1/categories');
+  check(
+    categories.some((c) => c.name === 'Otros'),
+    `hay ${categories.length} categorías, incluida "Otros"`,
+  );
+  for (const c of categories) {
+    await tab(page, /Inicio/).click();
+    await page
+      .getByRole('button', { name: `Categoría ${c.name}` })
+      .first()
+      .click();
+    await page.getByTestId('search-results').waitFor({ timeout: 20_000 });
+    await page.getByText(/\d+ productos?/).first().waitFor({ timeout: 20_000 });
+    const total = Number(((await page.getByText(/\d+ productos?/).first().innerText()).match(/\d+/) ?? ['0'])[0]);
+    check(total > 0, `la categoría ${c.name} muestra ${total} producto(s)`);
+    if (c.name === 'Otros') await shot(page, '02-categoria-otros');
+  }
+
+  // ── Búsqueda sin acento y por sinónimo ──
+  await tab(page, /Buscar/).click();
+  await page.getByText('Todo', { exact: true }).first().click(); // quita el filtro de la última categoría
+  await page.getByTestId('search-input').fill('');
+  await page.getByTestId('search-input').fill('camaron');
+  await page.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
+  check(true, 'buscar "camaron" (sin tilde) encuentra Camarón');
+  await page.getByTestId('search-input').fill('gambas');
+  await page.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
+  await shot(page, '03-busqueda-sinonimo');
+  check(true, 'buscar "gambas" (sinónimo) encuentra Camarón');
+
+  // ── Detalle: foto por variante e "Imagen ilustrativa" ──
+  await page.getByTestId('search-results').getByText('Camarón').first().click();
+  await page.getByTestId('add-to-cart').waitFor({ timeout: 20_000 });
+  const product = await demoApi<{ product: { variants: { sku: string; variant: string }[] } }>(
+    page,
+    '/v1/products/camaron',
+  );
+  const seenHero = new Map<string, string>();
+  for (const v of product.product.variants.slice(0, 3)) {
+    await page.getByRole('button', { name: v.variant }).first().click();
+    await waitUntil(
+      page,
+      `Array.from(document.querySelectorAll('img')).some(function (i) { return i.src.indexOf(${JSON.stringify(`/photos/${v.sku}.thumb.webp`)}) !== -1 && i.complete && i.naturalWidth > 0; })`,
+    );
+    seenHero.set(v.variant, v.sku);
+  }
+  check(
+    seenHero.size >= 2,
+    `cada variante del Camarón muestra SU foto (${[...seenHero].map(([a, b]) => `${a}→${b}`).join(', ')})`,
+  );
+  await page.getByTestId('photo-illustrative').first().waitFor({ timeout: 10_000 });
+  check(
+    /Imagen ilustrativa/.test(await page.getByTestId('photo-illustrative').first().innerText()),
+    'el detalle rotula la foto con "Imagen ilustrativa"',
+  );
+  await shot(page, '04-producto');
+  await page.getByRole('button', { name: '16/20' }).first().click();
+  await page.getByTestId('add-to-cart').click();
+  for (let i = 0; i < 6; i++) await page.getByRole('button', { name: 'Agregar' }).click();
+  await shot(page, '05-producto-agregado');
+  void opts;
+  return { categories };
+}
+
+/** Vuelve a Inicio, comprueba que la URL es la de la página y recarga: el carrito (y la sesión) sobreviven. */
+async function reloadAtHome(s: Session): Promise<void> {
+  const { page, mount } = s;
+  if (/\/product\//.test(page.url())) {
+    await page.getByRole('button', { name: 'Volver' }).first().click(); // del detalle de producto a la lista
+  }
+  await tab(page, /Inicio/).click();
+  await page.waitForTimeout(400);
+  const here = new URL(page.url());
+  check(
+    here.pathname === mount.page,
+    `de vuelta en Inicio la dirección es la de la página (${here.pathname})`,
+  );
+  await page.reload();
+  await tab(page, /Buscar/).waitFor({ timeout: 45_000 });
+  check(
+    !/Unmatched|No encontramos esta página/i.test(await page.locator('body').innerText()),
+    'recargar la página la abre en el inicio, sin pantalla de error',
+  );
+  await tab(page, /Carrito/).click();
+  await page.getByTestId('go-checkout').waitFor({ timeout: 20_000 });
+  check(true, 'tras recargar, el carrito sigue ahí (localStorage)');
+  await tab(page, /Inicio/).click();
+}
+
+// ───────────────────────── 2. recorrido largo ─────────────────────────
+
+interface LongOptions {
+  /** `?speed=3` en la dirección, o `#rapido` (la forma que sí viaja en el enlace del visor). */
+  speedVia: 'query' | 'hash';
+}
+
+async function longJourney(s: Session, o: LongOptions) {
+  const { page, mount } = s;
+  const url = o.speedVia === 'query' ? `${mount.page}?speed=3&reset=1` : `${mount.page}#rapido`;
+  await shortJourney(s, url);
+
+  // Los tiempos: con #rapido la velocidad es 3; con ?speed=3 también.
+  const stages = (await page.evaluate('window.JellyfishDemo.handle.server.ctx.cfg.stageMs')) as Record<string, number>;
+  check(
+    Math.abs(stages.confirmed! - 25_000 / 3) < 1 && Math.abs(stages.out_for_delivery! - 10_000) < 1,
+    `la velocidad ${o.speedVia === 'hash' ? '#rapido' : '?speed=3'} acelera las etapas (${JSON.stringify(stages)})`,
+  );
+
+  // ── Favoritos ──
+  await page.getByTestId('fav-camaron').first().click();
+  check(true, 'se marca Camarón como favorito (corazón)');
+
+  // ── Carrito ──
+  await page.getByRole('button', { name: 'Ver carrito' }).click();
+  await page.getByTestId('go-checkout').waitFor({ timeout: 20_000 });
+  await shot(page, '06-carrito');
+  const goText = await page.getByTestId('go-checkout').innerText();
+  check(/RD\$/.test(goText), `el carrito calcula el total en pesos (${goText.replace(/\s+/g, ' ')})`);
+
+  // ── Login por OTP (123456) ──
+  await page.getByTestId('go-checkout').click();
+  const phone = `809555${String(Math.floor(1000 + Math.random() * 8999))}`;
+  await page.getByTestId('phone-input').fill(phone);
+  await shot(page, '07-login');
+  await page.getByTestId('send-code').click();
+  await page.getByTestId('otp-input').waitFor();
+  await page.getByTestId('otp-input').fill('123456');
+  await page.getByText('Confirmar pedido').first().waitFor({ timeout: 20_000 });
+  check(true, 'entró con el código de prueba 123456');
+  await shot(page, '08-checkout');
+
+  // ── Dirección con "Usar mi ubicación actual" (el doble de geolocalización) ──
+  await page.getByTestId('add-address').click();
+  const doubles = (await page.evaluate('window.JellyfishDemo.doubles')) as { geolocation: boolean; permissions: boolean };
+  check(
+    doubles.geolocation && doubles.permissions,
+    'la vista previa instaló el doble de navigator.geolocation y de permissions.query',
+  );
+  const permission = await page.evaluate(`navigator.permissions.query({ name: 'geolocation' }).then(function (p) { return p.state; })`);
+  check(permission === 'granted', 'navigator.permissions.query("geolocation") responde "granted"');
+  await page.getByTestId('use-location').click();
+  await page.getByTestId('location-explain').waitFor({ timeout: 10_000 });
+  await shot(page, '09-ubicacion-permiso');
+  await page.getByTestId('location-allow').click();
+  await page.getByTestId('location-saved').waitFor({ timeout: 15_000 });
+  const savedText = await page.getByTestId('location-saved').innerText();
+  check(
+    /18\.4861/.test(savedText) && /-69\.9312/.test(savedText),
+    `"Usar mi ubicación actual" guardó el punto de Santo Domingo (${savedText.replace(/\s+/g, ' ').slice(0, 60)})`,
+  );
+  await page.getByTestId('addr-line1').fill('Calle Max Henríquez Ureña #10');
+  await page.getByTestId('addr-sector').fill('Piantini');
+  await page.getByTestId('addr-reference').fill('Al lado del colmado Don Pepe, portón negro');
+  await page.getByText('¡Llegamos a tu sector!').waitFor();
+  await shot(page, '10-direccion');
+  await page.getByTestId('save-address').click();
+  await page.getByText('Piantini').first().waitFor();
+  const addresses = await demoApi<{ latitude: number | null; longitude: number | null }[]>(
+    page,
+    '/v1/me/addresses',
+    (await page.evaluate('localStorage.getItem("jellyfish.token")')) as string,
+  );
+  check(
+    addresses[0]?.latitude === 18.4861 && addresses[0]?.longitude === -69.9312,
+    'la dirección guardada lleva las coordenadas del punto de ejemplo',
+  );
+
+  // ── Checkout en efectivo ──
+  await page
+    .getByRole('button')
+    .filter({ hasText: /\d:\d\d [ap]\. m\. – / })
+    .first()
+    .click();
+  await page.getByTestId('checkout-name').fill('Andrés Prueba');
+  await shot(page, '11-checkout-listo');
+  const missing1 = await missingGlyphs(page);
+  check(missing1.length === 0, `todos los íconos del checkout tienen glifo${missing1.length ? `: ${missing1.join(', ')}` : ''}`);
+  check(await page.getByTestId('place-order').isEnabled(), 'con dirección, horario y pago el botón de confirmar se habilita');
+  await page.getByTestId('place-order').click();
+  await page.getByTestId('order-status').waitFor({ timeout: 20_000 });
+  await shot(page, '12-pedido-efectivo');
+  check((await orderStatusText(page)).includes(STATUS_LABELS.confirmed), 'el pedido en efectivo queda confirmado');
+
+  // ── PIN de entrega visible ──
+  const orderState = await page.evaluate<{ id: string; pin: string; code: string }>(
+    '(function(){var o=window.JellyfishDemo.handle.server.ctx.state.orders[0];return {id:o.id,pin:o.deliveryPin,code:"JF-"+String(o.number).padStart(6,"0")}})()',
+  );
+  check(/^\d{4}$/.test(orderState.pin), `el pedido trae un PIN de entrega de 4 dígitos (${orderState.pin})`);
+  const pinLabel = await page.getByLabel(/Tu PIN de entrega/).first().getAttribute('aria-label');
+  check(
+    pinLabel === `Tu PIN de entrega: ${orderState.pin.split('').join(' ')}`,
+    `la pantalla del pedido muestra el PIN al cliente (${String(pinLabel)})`,
+  );
+
+  // ── Etapas del pedido ──
+  await waitForStatus(page, STATUS_LABELS.picking);
+  await shot(page, '13-preparando');
+  await waitForStatus(page, STATUS_LABELS.packed);
+  await waitForStatus(page, STATUS_LABELS.out_for_delivery);
+  await page.getByTestId('tracking-card').waitFor({ timeout: 20_000 });
+  await shot(page, '14-en-camino');
+  const missing2 = await missingGlyphs(page);
+  check(missing2.length === 0, `todos los íconos del pedido en camino tienen glifo${missing2.length ? `: ${missing2.join(', ')}` : ''}`);
+  check(true, 'el pedido avanza solo: confirmado → preparando → empacado → en camino');
+
+  // ── Seguimiento y "Ver en el mapa" (window.open no existe: aviso claro) ──
+  await page.getByTestId('tracking-headline').waitFor({ timeout: 20_000 });
+  check(true, 'el seguimiento muestra la posición del repartidor simulado');
+  const pagesBefore = s.ctx.pages().length;
+  await page.getByTestId('tracking-map').click();
+  await page.locator('#jf-toast').waitFor({ state: 'visible', timeout: 5000 });
+  const toastText = await page.locator('#jf-toast').innerText();
+  check(
+    /Vista previa/.test(toastText) && /mapa/.test(toastText),
+    `"Ver en el mapa" muestra un aviso claro en vez de fallar en silencio: "${toastText.replace(/\s+/g, ' ').slice(0, 90)}"`,
+  );
+  const mapHref = await page.locator('#jf-toast a').first().getAttribute('href');
+  check(
+    !!mapHref && /^https:\/\//.test(mapHref) && /maps/.test(mapHref),
+    `el aviso trae un enlace de verdad al mapa (${String(mapHref).slice(0, 60)})`,
+  );
+  check(s.ctx.pages().length === pagesBefore && s.popups.length === 0, 'no se abrió ninguna pestaña');
+  await shot(page, '15-aviso-mapa');
+  await page.locator('#jf-toast button').click();
+  check(await page.locator('#jf-toast').isHidden(), 'el aviso se puede cerrar');
+
+  await waitForStatus(page, STATUS_LABELS.delivered);
+  await shot(page, '16-entregado');
+  check(true, 'el pedido llega a Entregado');
+  const delivered = await page.evaluate<{ pinVerifiedAt: string | null; payment: string }>(
+    '(function(){var o=window.JellyfishDemo.handle.server.ctx.state.orders[0];return {pinVerifiedAt:o.pinVerifiedAt,payment:o.payments[0].status}})()',
+  );
+  check(delivered.pinVerifiedAt !== null && delivered.payment === 'captured', 'al entregar, el PIN queda verificado y el efectivo cobrado');
+
+  // ── Pedir de nuevo ──
+  await page.getByRole('button', { name: /Pedir de nuevo/i }).first().click();
+  await page.getByTestId('reorder-sheet').waitFor({ timeout: 15_000 });
+  await shot(page, '17-pedir-de-nuevo');
+  await page.getByTestId('reorder-go-cart').click();
+  await page.getByTestId('go-checkout').waitFor({ timeout: 20_000 });
+  check(true, '"Pedir de nuevo" vuelve a llenar el carrito con el pedido entregado');
+
+  // ── Cupón y pedido con tarjeta simulada ──
+  await page.getByTestId('go-checkout').click();
+  await page.getByText('Confirmar pedido').first().waitFor({ timeout: 20_000 });
+  await page
+    .getByRole('button')
+    .filter({ hasText: /\d:\d\d [ap]\. m\. – / })
+    .first()
+    .click();
+  await page.getByTestId('coupon-open').click();
+  await page.getByTestId('coupon-input').fill('BIENVENIDO10');
+  await page.getByTestId('coupon-apply').click();
+  await page.getByTestId('coupon-applied').waitFor({ timeout: 15_000 });
+  await page.getByTestId('quote-discount').waitFor({ timeout: 15_000 });
+  await shot(page, '18-cupon');
+  check(true, 'el cupón BIENVENIDO10 se aplica y aparece el descuento en el total');
+  await page.getByTestId('pay-card').click();
+  await shot(page, '19-checkout-tarjeta');
+  const pagesBeforeCard = s.ctx.pages().length;
+  await page.getByTestId('place-order').click();
+  await page.getByTestId('order-status').waitFor({ timeout: 20_000 });
+  check(
+    (await orderStatusText(page)).includes(STATUS_LABELS.pending_payment) ||
+      (await orderStatusText(page)).includes(STATUS_LABELS.confirmed),
+    'el pedido con tarjeta empieza esperando el pago',
+  );
+  await page.getByText(STATUS_LABELS.confirmed).first().waitFor({ timeout: 25_000 });
+  await shot(page, '20-tarjeta-aprobada');
+  check(s.ctx.pages().length === pagesBeforeCard, 'el pago con tarjeta NO abre ninguna pasarela (ni pestaña nueva)');
+  check(
+    await page.getByText('Pagado').first().isVisible().catch(() => false),
+    'el servidor de demostración aprueba el pago y el pedido queda Pagado',
+  );
+
+  // ── Pedidos, favoritos y textos legales ──
+  await tab(page, /Pedidos/).click();
+  await page.getByText(/^JF-\d{6}$/).first().waitFor({ timeout: 20_000 });
+  await shot(page, '21-pedidos');
+  check((await page.getByText(/^JF-\d{6}$/).count()) >= 2, 'Mis pedidos lista los dos pedidos hechos');
+  await tab(page, /Perfil/).click();
+  await page.getByText('Mis direcciones').waitFor();
+  await shot(page, '22-perfil');
+  const missing3 = await missingGlyphs(page);
+  check(missing3.length === 0, `todos los íconos del perfil tienen glifo${missing3.length ? `: ${missing3.join(', ')}` : ''}`);
+  await page.getByTestId('profile-favorites').click();
+  await page.getByTestId('favorites-list').waitFor({ timeout: 15_000 });
+  check((await page.getByTestId('favorites-list').innerText()).includes('Camarón'), 'Favoritos lista el Camarón marcado');
+  await shot(page, '23-favoritos');
+  await page.goBack();
+  for (const id of ['terminos', 'privacidad', 'devoluciones', 'cadena-de-frio']) {
+    await page.getByTestId(`legal-row-${id}`).first().click();
+    await page.getByTestId('legal-title').waitFor({ timeout: 15_000 });
+    const title = (await page.getByTestId('legal-title').innerText()).trim();
+    check(title.length > 3, `el texto legal "${id}" abre (${title})`);
+    if (id === 'terminos') await shot(page, '24-legal');
+    await page.goBack();
+    await page.getByTestId(`legal-row-${id}`).first().waitFor({ timeout: 15_000 });
+  }
+
+  // ── Recarga: todo persiste ──
+  await tab(page, /Inicio/).click();
+  await page.waitForTimeout(300);
+  check(new URL(page.url()).pathname === mount.page, `de vuelta en Inicio la dirección es la de la página (${new URL(page.url()).pathname})`);
+  await page.reload();
+  await tab(page, /Pedidos/).waitFor({ timeout: 45_000 });
+  await tab(page, /Pedidos/).click();
+  await page.getByText(/^JF-\d{6}$/).first().waitFor({ timeout: 20_000 });
+  check((await page.getByText(/^JF-\d{6}$/).count()) >= 2, 'tras recargar la página, la sesión y los pedidos siguen ahí');
+  await shot(page, '25-despues-de-recargar');
+  await tab(page, /Perfil/).click();
+  await page.getByTestId('profile-favorites').waitFor();
+  check(
+    /1 guardado/.test(await page.getByTestId('profile-favorites').innerText()),
+    'tras recargar, el favorito sigue guardado',
+  );
+
+  // ── Reiniciar: confirmación DENTRO de la página (el visor no muestra confirm()) ──
+  await page.locator('#jf-restart').click();
+  await page.locator('#jf-confirm').waitFor({ state: 'visible', timeout: 5000 });
+  await shot(page, '26-confirmar-reinicio');
+  check(
+    /Reiniciar la demostración/.test(await page.locator('#jf-confirm').innerText()),
+    'Reiniciar pide confirmación con un cuadro de la página',
+  );
+  await page.locator('#jf-cancel').click();
+  check(await page.locator('#jf-confirm').isHidden(), 'Cancelar cierra el cuadro y no borra nada');
+  check(
+    ((await page.evaluate('window.JellyfishDemo.summary().orders')) as number) >= 2,
+    'los pedidos siguen ahí tras cancelar',
+  );
+  await page.locator('#jf-restart').click();
+  await page.locator('#jf-accept').click();
+  await tab(page, /Buscar/).waitFor({ timeout: 45_000 });
+  await page.waitForTimeout(500);
+  const afterReset = (await page.evaluate(
+    '({token: localStorage.getItem("jellyfish.token"), orders: window.JellyfishDemo.summary().orders, users: window.JellyfishDemo.summary().users})',
+  )) as { token: string | null; orders: number; users: number };
+  check(
+    afterReset.token === null && afterReset.orders === 0 && afterReset.users === 0,
+    'confirmar el reinicio borra la sesión, el carrito y los pedidos de ejemplo',
+  );
+  await shot(page, '27-reiniciado');
+  await finish(s);
+}
+
+// ───────────────────────── 3. recorrido corto por ruta ─────────────────────────
+
+async function routeJourney(s: Session) {
+  await shortJourney(s, `${s.mount.page}?reset=1`);
+  await reloadAtHome(s);
+  await finish(s);
+}
+
+// ───────────────────────── 4. extras ─────────────────────────
+
+/** replaceState/pushState lanzan SecurityError (marco con otro origen): el arranque lo tolera y la app abre. */
+async function historyThrows(browser: Browser, device: DeviceCase) {
+  const mount = MOUNTS.find((m) => m.name === 'xyz-artifact')!;
+  const s = await openSession(browser, {
+    device,
+    scheme: 'dark',
+    mount,
+    initScript: `(function () {
+      function deny() { throw new DOMException('Bloqueado por el marco', 'SecurityError'); }
+      History.prototype.replaceState = deny;
+      History.prototype.pushState = deny;
+    })();`,
   });
-  await lockNetwork(ctx, 'black', net);
-  const page = await ctx.newPage();
-  const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(m.text());
-  });
+  currentLabel = `${s.tag}-historial-bloqueado`;
   try {
-    await page.goto(`${ORIGIN}/host.html`);
-    const frame = page.frameLocator('#f');
+    await s.page.goto(`${s.host.origin}${mount.page}`);
+    await tab(s.page, /Buscar/).waitFor({ timeout: 45_000 });
+    await shot(s.page, '01-inicio');
+    check(
+      !/Unmatched|No encontramos esta página/i.test(await s.page.locator('body').innerText()),
+      'con replaceState y pushState que lanzan error, la app abre en el inicio (no queda en blanco)',
+    );
+    await tab(s.page, /Buscar/).click();
+    await s.page.getByTestId('search-input').fill('camaron');
+    await s.page.getByTestId('search-results').getByText('Camarón').first().click();
+    await s.page.getByTestId('add-to-cart').waitFor({ timeout: 20_000 });
+    await shot(s.page, '02-producto');
+    check(true, 'y la navegación interna sigue funcionando (buscar → detalle de producto)');
+    await finish(s);
+  } finally {
+    await closeSession(s);
+  }
+}
+
+/** localStorage bloqueado (modo privado): la página funciona en memoria. */
+async function noStorage(browser: Browser, device: DeviceCase) {
+  const mount = MOUNTS.find((m) => m.name === 'xyz')!;
+  const s = await openSession(browser, {
+    device,
+    scheme: 'light',
+    mount,
+    initScript: `(function () {
+      function deny() { throw new DOMException('El almacenamiento está bloqueado', 'SecurityError'); }
+      Object.defineProperty(window, 'localStorage', { get: deny, configurable: true });
+      Object.defineProperty(window, 'sessionStorage', { get: deny, configurable: true });
+    })();`,
+  });
+  currentLabel = `${s.tag}-sin-almacenamiento`;
+  try {
+    await s.page.goto(`${s.host.origin}${mount.page}?reset=1`);
+    await tab(s.page, /Buscar/).waitFor({ timeout: 45_000 });
+    await shot(s.page, '01-inicio');
+    check(true, 'sin localStorage la página abre igual (todo en memoria)');
+    await tab(s.page, /Buscar/).click();
+    await s.page.getByTestId('search-input').fill('camaron');
+    await s.page.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
+    check(true, 'y la búsqueda funciona');
+    await finish(s);
+  } finally {
+    await closeSession(s);
+  }
+}
+
+/** La página dentro de un marco aislado (sandbox sin same-origin): sin localStorage y con origen "null". */
+async function sandboxFrame(browser: Browser, device: DeviceCase) {
+  const mount = MOUNTS.find((m) => m.name === 'xyz')!;
+  const s = await openSession(browser, { device, scheme: 'dark', mount });
+  currentLabel = `${s.tag}-marco-aislado`;
+  try {
+    await s.page.goto(`${s.host.origin}/host.html`);
+    const frame = s.page.frameLocator('#f');
     await frame.getByRole('tab', { name: /Buscar/ }).waitFor({ timeout: 60_000 });
-    await shot(page, '01-inicio');
-    check(true, 'dentro de un marco aislado (sin localStorage ni service worker) la app abre');
+    await shot(s.page, '01-inicio');
+    check(true, 'dentro de un marco aislado (sin localStorage) la app abre');
     await frame.getByRole('tab', { name: /Buscar/ }).click();
     await frame.getByTestId('search-input').fill('camaron');
-    await frame
-      .getByTestId('search-results')
-      .getByText('Camarón')
-      .first()
-      .waitFor({ timeout: 20_000 });
-    await shot(page, '02-busqueda');
+    await frame.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
     check(true, 'la búsqueda funciona dentro del marco aislado');
-    check(
-      errors.length === 0,
-      `0 errores de consola en el marco aislado${errors.length ? `: ${errors.slice(0, 3).join(' | ')}` : ''}`,
-    );
-  } catch (e) {
-    await page.screenshot({ path: `${OUT}/${currentLabel}-FALLO.png` }).catch(() => {});
-    if (errors.length)
-      console.error(`Errores del navegador:\n- ${errors.slice(0, 6).join('\n- ')}`);
-    throw e;
+    await finish(s);
   } finally {
-    await ctx.close();
+    await closeSession(s);
+  }
+}
+
+/** Las fotos no llegan (archivo faltante): cada foto cae al degradado de su categoría, sin romper nada. */
+async function photosMissing(browser: Browser, device: DeviceCase) {
+  const mount = MOUNTS.find((m) => m.name === 'x')!;
+  const s = await openSession(browser, { device, scheme: 'dark', mount, abort: /\/photos\// });
+  currentLabel = `${s.tag}-sin-fotos`;
+  try {
+    await s.page.goto(`${s.host.origin}${mount.page}?reset=1`);
+    await tab(s.page, /Buscar/).waitFor({ timeout: 45_000 });
+    await s.page.getByRole('button', { name: /Categoría Mariscos/ }).first().click();
+    await s.page.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
+    await s.page.waitForTimeout(800);
+    await shot(s.page, '01-categoria-sin-fotos');
+    check(true, 'sin las fotos la app sigue mostrando los productos (degradado con el ícono de la categoría)');
+    await finish(s);
+  } finally {
+    await closeSession(s);
+  }
+}
+
+/** Alojamiento con "SPA fallback": recargar en una pantalla interna abre esa misma pantalla. */
+async function innerReload(browser: Browser, device: DeviceCase, mountName: string) {
+  const mount = MOUNTS.find((m) => m.name === mountName)!;
+  const s = await openSession(browser, {
+    device,
+    scheme: 'light',
+    mount,
+    fallback: true,
+    // Al recargar en /…/product/camaron los <script src> relativos no aciertan: el plan B busca la carpeta.
+    tolerate: [/Failed to load resource.*404/],
+  });
+  currentLabel = `${s.tag}-recarga-interna`;
+  try {
+    await s.page.goto(`${s.host.origin}${mount.page}?reset=1`);
+    await tab(s.page, /Buscar/).waitFor({ timeout: 45_000 });
+    await tab(s.page, /Buscar/).click();
+    await s.page.getByTestId('search-input').fill('camaron');
+    await s.page.getByTestId('search-results').getByText('Camarón').first().click();
+    await s.page.getByTestId('add-to-cart').waitFor({ timeout: 20_000 });
+    const innerPath = new URL(s.page.url()).pathname;
+    check(/\/product\/camaron/.test(innerPath), `el detalle del producto tiene su propia dirección (${innerPath})`);
+    s.badResponses.length = 0;
+    await s.page.reload();
+    await s.page.getByTestId('add-to-cart').waitFor({ timeout: 45_000 });
+    await shot(s.page, '01-recargado-en-producto');
+    check(
+      new URL(s.page.url()).pathname === innerPath,
+      'recargar en el detalle del producto (en un alojamiento que devuelve la página) lo vuelve a abrir',
+    );
+    await finish(s);
+  } finally {
+    await closeSession(s);
+  }
+}
+
+/** iPhone con muesca: zonas seguras de 47 px arriba y 34 abajo; la cinta las absorbe y la app no las suma dos veces. */
+async function safeAreas(browser: Browser) {
+  const mount = MOUNTS.find((m) => m.name === 'x-index')!;
+  const s = await openSession(browser, {
+    device: DEVICES.iphone,
+    scheme: 'dark',
+    mount,
+    safeArea: { top: 47, bottom: 34 },
+  });
+  currentLabel = `${s.tag}-zonas-seguras`;
+  try {
+    await s.page.goto(`${s.host.origin}${mount.page}?reset=1`);
+    await tab(s.page, /Buscar/).waitFor({ timeout: 45_000 });
+    await shot(s.page, '01-inicio');
+    const m = (await s.page.evaluate(`(function () {
+      var cs = getComputedStyle(document.documentElement);
+      var ribbon = document.getElementById('jf-ribbon').getBoundingClientRect();
+      var root = document.getElementById('root').getBoundingClientRect();
+      var hello = Array.from(document.querySelectorAll('div,span')).find(function (e) { return e.childNodes.length === 1 && e.firstChild.nodeType === 3 && /^Hola/.test(e.firstChild.nodeValue || ''); });
+      var tabbar = document.querySelector('[role="tablist"]');
+      return {
+        padTop: cs.paddingTop, padBottom: cs.paddingBottom,
+        ribbonH: ribbon.height, rootTop: root.top, vh: window.innerHeight, rootBottom: root.bottom,
+        helloTop: hello ? hello.getBoundingClientRect().top : -1,
+        tabBottom: tabbar ? tabbar.getBoundingClientRect().bottom : -1,
+        overflowY: document.documentElement.scrollHeight - window.innerHeight,
+      };
+    })()`)) as Record<string, number | string>;
+    check(m.padTop === '47px' && m.padBottom === '34px', `el visor padea :root con las zonas seguras (${String(m.padTop)} / ${String(m.padBottom)})`);
+    check((m.ribbonH as number) >= 47 + 20, `la cinta absorbe la zona segura de arriba (alto ${String(m.ribbonH)} px)`);
+    check(Math.abs((m.rootTop as number) - (m.ribbonH as number)) <= 1, 'la app empieza justo bajo la cinta');
+    check(
+      (m.helloTop as number) - (m.rootTop as number) < 70,
+      `la app no suma la zona segura de arriba otra vez (el saludo queda ${Math.round((m.helloTop as number) - (m.rootTop as number))} px bajo la cinta)`,
+    );
+    check(Math.abs((m.rootBottom as number) - (m.vh as number)) <= 1, 'la app llega hasta abajo (la barra de pestañas respeta su propia zona segura)');
+    await finish(s);
+  } finally {
+    await closeSession(s);
+  }
+}
+
+/** Atajos que SÍ viajan en un enlace del visor: `#reiniciar` y `#rapido`. */
+async function anchorShortcuts(browser: Browser, device: DeviceCase) {
+  const mount = MOUNTS.find((m) => m.name === 'raiz')!;
+  const s = await openSession(browser, { device, scheme: 'dark', mount });
+  currentLabel = `${s.tag}-atajos`;
+  try {
+    // Primera visita: se crea una cuenta de ejemplo.
+    await s.page.goto(`${s.host.origin}${mount.page}`);
+    await tab(s.page, /Buscar/).waitFor({ timeout: 45_000 });
+    await s.page.evaluate(
+      `fetch("https://demo.jellyfish.local/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+18095550101", code: "123456" }) }).then(function (r) { return r.json(); })`,
+    );
+    check(((await s.page.evaluate('window.JellyfishDemo.summary().users')) as number) === 1, 'hay una cuenta de ejemplo creada');
+    // Con #reiniciar se borra todo, una sola vez por sesión del navegador.
+    await s.page.goto(`${s.host.origin}${mount.page}#reiniciar`);
+    await s.page.reload();
+    await tab(s.page, /Buscar/).waitFor({ timeout: 45_000 });
+    check(((await s.page.evaluate('window.JellyfishDemo.summary().users')) as number) === 0, '#reiniciar borra la demostración al abrir el enlace');
+    await s.page.evaluate(
+      `fetch("https://demo.jellyfish.local/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+18095550102", code: "123456" }) }).then(function (r) { return r.json(); })`,
+    );
+    await s.page.reload();
+    await tab(s.page, /Buscar/).waitFor({ timeout: 45_000 });
+    check(
+      ((await s.page.evaluate('window.JellyfishDemo.summary().users')) as number) === 1,
+      'y NO vuelve a borrar en cada recarga (solo la primera vez de la sesión)',
+    );
+    await finish(s);
+  } finally {
+    await closeSession(s);
   }
 }
 
 // ───────────────────────── principal ─────────────────────────
 
+const LONG_RUNS: { device: DeviceCase['name']; scheme: Scheme; mount: string; speedVia: 'query' | 'hash'; safeArea?: boolean }[] = [
+  { device: 'iphone', scheme: 'dark', mount: 'xyz', speedVia: 'query' },
+  { device: 'pixel', scheme: 'light', mount: 'raiz', speedVia: 'hash' },
+  { device: 'iphone', scheme: 'light', mount: 'xyz-artifact', speedVia: 'query' },
+  { device: 'pixel', scheme: 'dark', mount: 'x-index', speedVia: 'query' },
+];
+
 async function main() {
-  if (!existsSync(`${DIST}/index.html`)) {
-    throw new Error(`No existe ${DIST}/index.html: corre primero  npm run preview:build`);
+  if (!existsSync(`${DIST}/artifact.html`) || !existsSync(`${DIST}/publish-files.json`)) {
+    throw new Error(`No existe ${DIST}/artifact.html: corre primero  npm run preview:build`);
   }
-  const server = startServer();
   if (args.serve) {
-    console.log(
-      `\nVista previa servida en:\n  ${ORIGIN}/            (raíz)\n  ${ORIGIN}${MOUNTS.subdir}   (subcarpeta)\n  ${ORIGIN}${MOUNTS.noslash}      (subcarpeta sin barra)\nCtrl+C para salir.\n`,
-    );
+    const wanted = args.mount ? MOUNTS.filter((m) => m.name === args.mount) : MOUNTS;
+    if (wanted.length === 0) throw new Error(`No hay una ruta "${args.mount}". Opciones: ${MOUNTS.map((m) => m.name).join(', ')}`);
+    console.log('\nVista previa servida (Ctrl+C para salir):');
+    let port = Number(args.port);
+    for (const m of wanted) {
+      const host = await startHost({ dist: DIST, port, mounts: [m], fallback: [m.name] });
+      port = host.port + 1;
+      console.log(`  ${host.origin}${m.page}   (${m.name}${m.mode === 'index' ? ', index.html completo' : ', fragmento envuelto como el visor'})`);
+    }
     await new Promise(() => {});
   }
-  const browser = await chromium.launch({
-    executablePath: CHROME,
-    headless: true,
-    args: ['--no-sandbox'],
-  });
-  const devs = CASES.filter((c) => args.device === 'all' || c.name === args.device);
-  const mounts = (Object.keys(MOUNTS) as MountName[]).filter(
-    (m) => args.mount === 'all' || m === args.mount,
-  );
+
+  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
   let failed = 0;
+  const run = async (name: string, fn: () => Promise<void>) => {
+    try {
+      await fn();
+    } catch (e) {
+      failed++;
+      console.error(`\n✖ ${name}: ${e instanceof Error ? e.message : e}\n`);
+    }
+  };
+  const failureShot = async (s: Session | null, err: unknown) => {
+    if (!s) return;
+    await s.page.screenshot({ path: `${OUT}/${s.tag}-FALLO.png` }).catch(() => {});
+    console.error(`Texto visible al fallar:\n${(await s.page.locator('body').innerText().catch(() => '')).slice(0, 600)}`);
+    console.error(`URL: ${s.page.url()}`);
+    if (s.consoleErrors.length) console.error(`Errores del navegador:\n- ${s.consoleErrors.slice(0, 6).join('\n- ')}`);
+    void err;
+  };
+
   try {
-    for (const device of args.only ? [] : devs) {
-      for (const mount of mounts) {
-        // Recorrido completo en la subcarpeta; en la raíz y sin barra, el recorrido rápido (la app es la misma).
-        const quick = args.quick || mount === 'noslash';
-        try {
-          await journey(browser, { device, mount, quick, photos: 'black' });
-        } catch (e) {
-          failed++;
-          console.error(`\n✖ ${currentLabel}: ${e instanceof Error ? e.message : e}\n`);
+    if (!args.only) {
+      // Recorridos largos: las cuatro combinaciones de teléfono y tema, en cuatro rutas distintas.
+      if (!args.quick) {
+        for (const r of LONG_RUNS) {
+          if (args.mount && args.mount !== r.mount) continue;
+          const mount = MOUNTS.find((m) => m.name === r.mount)!;
+          let s: Session | null = null;
+          await run(`recorrido largo ${r.device}-${r.scheme}-${r.mount}`, async () => {
+            s = await openSession(browser, { device: DEVICES[r.device], scheme: r.scheme, mount });
+            try {
+              await longJourney(s, { speedVia: r.speedVia });
+            } catch (e) {
+              await failureShot(s, e);
+              throw e;
+            } finally {
+              await closeSession(s);
+            }
+          });
         }
       }
+      // Recorridos cortos: cada ruta, alternando teléfono y tema.
+      let i = 0;
+      for (const mount of MOUNTS) {
+        if (args.mount && args.mount !== mount.name) continue;
+        const device = i % 2 === 0 ? DEVICES.iphone : DEVICES.pixel;
+        const scheme: Scheme = Math.floor(i / 2) % 2 === 0 ? 'dark' : 'light';
+        i++;
+        if (!args.quick && LONG_RUNS.some((r) => r.mount === mount.name)) continue; // ya tuvo su recorrido largo
+        let s: Session | null = null;
+        await run(`ruta ${mount.name}`, async () => {
+          s = await openSession(browser, { device, scheme, mount });
+          try {
+            await routeJourney(s);
+          } catch (e) {
+            await failureShot(s, e);
+            throw e;
+          } finally {
+            await closeSession(s);
+          }
+        });
+      }
     }
-    if ((!args.quick || args.only) && devs.length > 0) {
-      let extra: [string, () => Promise<void>][] = [
-        // Respaldo cuando las fotos no cargan.
-        [
-          'sin fotos',
-          () =>
-            journey(browser, { device: devs[0]!, mount: 'subdir', quick: true, photos: 'fail' }),
-        ],
-        // El navegador no deja usar localStorage (modo privado, datos bloqueados).
-        [
-          'sin almacenamiento',
-          () =>
-            journey(browser, {
-              device: devs[0]!,
-              mount: 'subdir',
-              quick: false,
-              photos: 'black',
-              storage: false,
-            }),
-        ],
-        // Dentro de un iframe aislado.
-        ['marco aislado', () => sandboxSmoke(browser, devs[0]!)],
+    if ((!args.quick || args.only) && !args.mount) {
+      const extras: [string, () => Promise<void>][] = [
+        ['historial-bloqueado', () => historyThrows(browser, DEVICES.iphone)],
+        ['sin-almacenamiento', () => noStorage(browser, DEVICES.pixel)],
+        ['marco-aislado', () => sandboxFrame(browser, DEVICES.iphone)],
+        ['sin-fotos', () => photosMissing(browser, DEVICES.pixel)],
+        ['recarga-interna', () => innerReload(browser, DEVICES.iphone, 'xyz')],
+        ['recarga-interna-archivo', () => innerReload(browser, DEVICES.pixel, 'xyz-artifact')],
+        ['zonas-seguras', () => safeAreas(browser)],
+        ['atajos', () => anchorShortcuts(browser, DEVICES.pixel)],
       ];
-      if (args.only) extra = extra.filter(([name]) => name === args.only);
-      for (const [name, fn] of extra) {
-        try {
-          await fn();
-        } catch (e) {
-          failed++;
-          console.error(`\n✖ ${name} (${currentLabel}): ${e instanceof Error ? e.message : e}\n`);
-        }
+      for (const [name, fn] of extras) {
+        if (args.only && args.only !== name) continue;
+        await run(`extra ${name}`, fn);
       }
     }
   } finally {
     await browser.close();
-    server.close();
   }
   writeFileSync(`${OUT}/report.json`, JSON.stringify(results, null, 2));
-  const hard = results.filter((r) => !r.soft);
-  const softMiss = results.filter((r) => r.soft && !r.ok);
+  const ok = results.filter((r) => r.ok).length;
   console.log(
-    `\n${failed === 0 ? '✔' : '✖'} ${hard.filter((r) => r.ok).length}/${hard.length} comprobaciones, ${softMiss.length} pendientes de otros equipos. Capturas y report.json en ${OUT}\n`,
+    `\n${failed === 0 ? '✔' : '✖'} ${ok}/${results.length} comprobaciones, ${failed} recorridos fallidos. Capturas y report.json en ${OUT}\n`,
   );
-  if (softMiss.length)
-    for (const s of softMiss) console.log(`  ⚠ ${s.name} (${s.note || 'pendiente'})`);
   if (failed > 0) process.exitCode = 1;
+  void readFileSync;
 }
 
 main()

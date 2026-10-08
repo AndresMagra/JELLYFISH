@@ -1,10 +1,14 @@
 /**
  * Piezas puras de la vista previa web (sin disco ni red, para poder probarlas):
  *  - parches al bundle de la app exportada por Expo,
- *  - el index.html con la cinta, el arranque y las metaetiquetas de "agregar a la pantalla de inicio",
- *  - el manifest PWA,
- *  - qué fuentes se usan de verdad (para no publicar las demás).
+ *  - el FRAGMENTO que se publica como página (artifact.html: sin <html>, <head> ni <body>; la plataforma
+ *    lo envuelve) y el index.html completo para probar en local o en otros alojamientos,
+ *  - el arranque que averigua en qué ruta quedó publicada la página,
+ *  - qué fuentes se usan de verdad (para no publicar las demás) y cómo se llaman al publicarlas.
  * Las usa scripts/build-preview.ts; las prueba packages/demo-backend/test/preview-shell.test.ts.
+ *
+ * Reglas del alojamiento (sin service workers, sin servidores externos, sin diálogos del navegador, sin
+ * `window.open` confiable) y por qué cada cosa está como está: docs/VISTA-PREVIA.md.
  */
 
 export const BRAND = {
@@ -13,29 +17,114 @@ export const BRAND = {
   cyan: '#22D3EE',
   ribbon: '#FBBF24',
   ribbonText: '#1A1200',
+  text: '#EAF2FF',
+  muted: '#93A4C3',
+  line: '#1B2A4F',
 } as const;
 
 export const DEMO_BASE_URL = 'https://demo.jellyfish.local';
 export const DEMO_OTP_HINT = '123456';
+/** Nombre corto y estable de la página (así se llama en el visor). */
+export const PAGE_TITLE = 'JELLYFISH';
 
 // ───────────────────────── dónde está publicada la página ─────────────────────────
 
 /**
- * Carpetas donde puede estar la página, de la más probable a la menos: la carpeta de la URL
- * ("/a/b/" para "/a/b/" o "/a/b/index.html") y, si la última parte no parece un archivo, la propia
- * URL como carpeta ("/a/b" → "/a/b/"). El arranque prueba cada una pidiendo `jf-probe.json`.
+ * Código del navegador que averigua dónde quedó publicada la página. Está como TEXTO a propósito: se
+ * copia tal cual dentro de la página y las pruebas lo ejecutan igual (`new Function`), sin que el
+ * transpilador le meta ayudantes que el navegador no tiene. ES5 con cuidado: corre en cualquier teléfono.
  *
- * Es JavaScript plano y sin dependencias: se copia tal cual (`toString()`) dentro del index.html.
+ *  - `jfCandidateBases(pathname)`: carpetas donde pueden estar los archivos, de la más probable a la
+ *    menos: la carpeta de la URL ("/a/b/" para "/a/b/", "/a/b/index.html" o "/a/b/artifact.html"), la
+ *    propia URL como carpeta si la última parte no parece un archivo ("/a/b" → "/a/b/") y todas las
+ *    carpetas superiores (por si el alojamiento sirvió la página en una pantalla interna).
+ *  - `jfEnv(pathname, dir)`: con la carpeta de archivos ya conocida, la base del router y si la pantalla
+ *    de inicio lleva barra final. La página SE QUEDA en la URL en que la abrieron (nunca se reescribe
+ *    para "limpiarla"): recargar siempre vuelve a pedir una URL que existe.
+ *  - `jfGuardHistory(history)`: pushState/replaceState nunca lanzan (un marco con otro origen los
+ *    rechaza con SecurityError y la app no debe quedar en blanco por eso).
  */
-export function candidateBases(pathname: string): string[] {
-  const out: string[] = [];
-  let dir = pathname.replace(/[^/]*$/, '');
+export const ENV_SOURCE = `
+var JF_ROUTES = ['search', 'cart', 'orders', 'profile', 'product', 'order', 'checkout', 'login', 'verify', 'address-new', 'favorites', 'legal'];
+
+function jfCandidateBases(pathname) {
+  var out = [];
+  var dir = pathname.replace(/[^/]*$/, '');
   if (!dir) dir = '/';
   out.push(dir);
-  const last = pathname.slice(dir.length);
+  var last = pathname.slice(dir.length);
   if (last && last.indexOf('.') === -1) out.push(pathname + '/');
+  var up = dir;
+  while (up.length > 1) {
+    up = up.replace(/[^/]+\\/$/, '');
+    out.push(up);
+  }
   return out;
 }
+
+function jfEnv(pathname, dir) {
+  var assets = dir.replace(/\\/+$/, '');
+  var router;
+  var noslash;
+  if (pathname === dir) {
+    router = assets;
+    noslash = false;
+  } else if (pathname + '/' === dir) {
+    router = pathname;
+    noslash = true;
+  } else if (pathname.indexOf(dir) === 0) {
+    var first = pathname.slice(dir.length).split('/')[0];
+    if (first.indexOf('.') === -1 && JF_ROUTES.indexOf(first) !== -1) {
+      router = assets;
+      noslash = false;
+    } else {
+      router = dir + first;
+      noslash = true;
+    }
+  } else {
+    router = pathname.replace(/\\/+$/, '');
+    noslash = pathname.charAt(pathname.length - 1) !== '/';
+  }
+  return { assets: assets, router: router, noslash: noslash };
+}
+
+function jfGuardHistory(history) {
+  var names = ['pushState', 'replaceState'];
+  for (var i = 0; i < names.length; i++) {
+    var orig = history[names[i]];
+    if (typeof orig !== 'function') continue;
+    try {
+      history[names[i]] = (function (fn) {
+        return function () {
+          try { return fn.apply(history, arguments); } catch (e) { return undefined; }
+        };
+      })(orig);
+    } catch (e) {}
+  }
+}
+`;
+
+export interface PageEnv {
+  /** Carpeta de los archivos, sin "/" final ("" en la raíz). */
+  assets: string;
+  /** Base del router de la app (sin "/" final). */
+  router: string;
+  /** true = la pantalla de inicio se escribe sin barra final (la página es un archivo o "/a/b"). */
+  noslash: boolean;
+}
+
+const envApi = new Function(
+  `${ENV_SOURCE}; return { jfCandidateBases: jfCandidateBases, jfEnv: jfEnv, jfGuardHistory: jfGuardHistory };`,
+)() as {
+  jfCandidateBases: (pathname: string) => string[];
+  jfEnv: (pathname: string, dir: string) => PageEnv;
+  jfGuardHistory: (history: object) => void;
+};
+
+/** Ver `ENV_SOURCE`. */
+export const candidateBases = envApi.jfCandidateBases;
+export const resolveEnv = envApi.jfEnv;
+export const guardHistory = envApi.jfGuardHistory;
 
 // ───────────────────────── parches al bundle de la app ─────────────────────────
 
@@ -48,22 +137,36 @@ export interface PatchReport {
 
 /** Texto con que se reemplaza el predeterminado `""` de la base del router (se lee al ejecutar). */
 export const RUNTIME_BASE_EXPR = 'globalThis.__JF_BASE__||""';
+/** Carpeta de archivos de la página, leída al ejecutar (antes de que cargue la app). */
+export const RUNTIME_ASSETS_EXPR = '(globalThis.__JF_ASSETS__||"")';
 
 /**
- * Hace que el bundle funcione en cualquier subcarpeta:
- *  1. las URLs absolutas de assets ("/assets/…") pasan a relativas ("assets/…"): se resuelven con
- *     el `<base>` que el arranque calcula al cargar la página;
- *  2. el router (expo-router) toma su carpeta base de `globalThis.__JF_BASE__` en vez de la que
- *     se fijó al compilar (""), así las rutas internas, el botón atrás y recargar funcionan.
+ * Hace que el bundle funcione en cualquier ruta, sin `<base>` y sin tocar la URL:
+ *  1. las URLs de assets ("/assets/…", fuentes e imágenes) se anteponen con la carpeta real de la
+ *     página, que el arranque guarda en `globalThis.__JF_ASSETS__`;
+ *  2. el router (expo-router) toma su base de `globalThis.__JF_BASE__` en vez de la fijada al compilar
+ *     (""), así las rutas internas, el botón atrás y recargar funcionan en cualquier subcarpeta;
+ *  3. la pantalla de inicio se escribe sin barra final cuando la página es un archivo (`…/artifact.html`):
+ *     si el router añadiera "/", recargar pediría una URL que no existe.
  * Falla en voz alta si algún patrón no aparece (una actualización de Expo puede cambiarlos).
  */
 export function patchAppBundle(js: string): { js: string; report: PatchReport } {
   const report: PatchReport = { assets: 0, stripBaseUrl: 0, concessions: 0, appendBaseUrl: 0 };
 
-  let out = js.replace(/"\/assets\//g, () => {
+  // m.exports="/assets/…"  (fuentes; el nombre del parámetro cambia: a.exports, m.exports…)   ·   uri:"/assets/…"  (imágenes)
+  let out = js.replace(/([\w$]+\.exports=|uri:)"\/assets\/([^"]*)"/g, (_m, head: string, rest: string) => {
     report.assets++;
-    return '"assets/';
+    return `${head}${RUNTIME_ASSETS_EXPR}+"/assets/${rest}"`;
   });
+  // Lo parcheado quedó como `+"/assets/…"`; cualquier otra ruta de assets es un contexto que no conocemos.
+  const leftover = /(?<!\+)["'`]\/assets\//.exec(out);
+  if (leftover) {
+    throw new Error(
+      `No se pudo parchear el bundle de la app (quedó una ruta de assets en un contexto desconocido: …${out
+        .slice(Math.max(0, leftover.index - 40), leftover.index + 60)
+        .replace(/\s+/g, ' ')}…). Probablemente cambió la versión de Expo: revisa patchAppBundle en scripts/preview-shell.ts.`,
+    );
+  }
 
   // function o(t,a=""){return a?t.replace(/^\/+/g,'/')…   (stripBaseUrl)
   out = out.replace(
@@ -83,10 +186,14 @@ export function patchAppBundle(js: string): { js: string; report: PatchReport } 
   );
   // appendBaseUrl=function(t,n=""){if(n)return…
   out = out.replace(
-    /(appendBaseUrl=function\([\w$]+,)([\w$]+)=""(\)\{if\(\2\)return)/g,
-    (_m, head: string, b: string, tail: string) => {
+    /(appendBaseUrl=function\()([\w$]+),([\w$]+)=""\)\{if\(\3\)return/g,
+    (_m, head: string, path: string, base: string) => {
       report.appendBaseUrl++;
-      return `${head}${b}=${RUNTIME_BASE_EXPR}${tail}`;
+      return (
+        `${head}${path},${base}=${RUNTIME_BASE_EXPR}){` +
+        `if(${base}&&${path}==="/"&&globalThis.__JF_NOSLASH__)return"/"+${base}.replace(/^\\/+/,"").replace(/\\/$/,"");` +
+        `if(${base})return`
+      );
     },
   );
 
@@ -210,7 +317,24 @@ export function iconFamilyOfFile(relPath: string): string | null {
   );
 }
 
-// ───────────────────────── index.html ─────────────────────────
+// ───────────────────────── nombres de los archivos publicados ─────────────────────────
+
+const FONT_EXT = /\.(ttf|otf|woff2?)$/i;
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif|svg|ico)$/i;
+
+/**
+ * Ruta con que se publica un archivo de assets de Expo. Las de Metro traen carpetas como
+ * `__node_modules/@expo-google-fonts/sora/600SemiBold/` (guiones bajos dobles y "@"), que no conviene
+ * dejar en una dirección web. Se conserva el nombre con su hash, que ya es único por contenido.
+ */
+export function publishedAssetPath(rel: string): string {
+  const file = (rel.slice(rel.lastIndexOf('/') + 1) || 'archivo').replace(/@/g, '-');
+  if (FONT_EXT.test(file)) return `assets/fonts/${file}`;
+  if (IMAGE_EXT.test(file)) return `assets/img/${file}`;
+  return `assets/other/${file}`;
+}
+
+// ───────────────────────── la página ─────────────────────────
 
 export interface ShellFiles {
   data: string;
@@ -221,34 +345,89 @@ export interface ShellFiles {
 export interface ShellOptions {
   buildId: string;
   files: ShellFiles;
-  title?: string;
 }
 
-const RESET_CSS = `
-      html, body { height: 100%; margin: 0; }
-      body { overflow: hidden; background: ${BRAND.abyss}; color-scheme: dark light; -webkit-text-size-adjust: 100%; }
-      :root { --jf-h: 34px; }
-      #jf-ribbon { position: fixed; top: 0; left: 0; right: 0; min-height: 30px; z-index: 2147483000; box-sizing: border-box;
-        display: flex; align-items: center; justify-content: center; gap: 8px; padding: 5px 8px;
-        background: ${BRAND.ribbon}; color: ${BRAND.ribbonText}; font: 600 10.5px/1.25 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        letter-spacing: .02em; text-align: center; }
+/**
+ * Estilos de la página. Una sola apariencia, a propósito (marca oscura con la cinta amarilla): la app
+ * dibuja encima su propio tema claro u oscuro. Tokens en :root y fondo explícito en body.
+ *
+ * El visor ya trae su propio reset (color-scheme claro, :root con relleno por las zonas seguras, fuente de
+ * 14 px, `img{max-width:100%}`): lo que sigue lo pisa donde hace falta y no depende de él. La app va en
+ * una capa fija a pantalla completa, así el relleno de :root no la mueve.
+ */
+export const SHELL_CSS = `
+      /* Cinta amarilla arriba, la app debajo a pantalla completa; avisos y confirmación encima de todo. */
+      :root {
+        --jf-abyss: ${BRAND.abyss};
+        --jf-deep: ${BRAND.deep};
+        --jf-cyan: ${BRAND.cyan};
+        --jf-ribbon: ${BRAND.ribbon};
+        --jf-ribbon-ink: ${BRAND.ribbonText};
+        --jf-text: ${BRAND.text};
+        --jf-muted: ${BRAND.muted};
+        --jf-line: ${BRAND.line};
+        --jf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        --jf-h: calc(34px + env(safe-area-inset-top, 0px));
+        color-scheme: dark;
+      }
+      html, body { height: 100%; }
+      body { margin: 0; overflow: hidden; background: var(--jf-abyss); color: var(--jf-text); font: 600 14px/1.4 var(--jf-sans); -webkit-text-size-adjust: 100%; }
+      #jf-ribbon { position: fixed; top: 0; left: 0; right: 0; z-index: 2147483000; box-sizing: border-box; min-height: 30px;
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        padding: calc(5px + env(safe-area-inset-top, 0px)) 8px 5px;
+        background: var(--jf-ribbon); color: var(--jf-ribbon-ink); font: 600 10.5px/1.25 var(--jf-sans); letter-spacing: .02em; text-align: center; }
       #jf-ribbon b { font-weight: 800; letter-spacing: .08em; }
       #jf-restart { flex: none; border: 1px solid rgba(26,18,0,.45); background: rgba(255,255,255,.35); color: inherit; border-radius: 999px;
-        font: 700 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 5px 8px; cursor: pointer; }
-      #root { position: fixed; top: var(--jf-h); left: 0; right: 0; bottom: 0; display: flex; }
-      #jf-boot { margin: auto; text-align: center; color: #EAF2FF; font: 600 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; }
-      #jf-boot small { display: block; margin-top: 6px; font-weight: 400; color: #93A4C3; }
-      #jf-boot button { margin-top: 16px; background: ${BRAND.cyan}; color: ${BRAND.abyss}; border: 0; border-radius: 999px; padding: 12px 22px; font: 700 15px/1 inherit; }
-      #jf-dot { width: 12px; height: 12px; border-radius: 50%; background: ${BRAND.cyan}; margin: 0 auto 14px; animation: jf-pulse 1.1s ease-in-out infinite; }
-      @keyframes jf-pulse { 0%,100% { transform: scale(.7); opacity: .5; } 50% { transform: scale(1.15); opacity: 1; } }`;
+        font: 700 10px/1 var(--jf-sans); padding: 5px 8px; cursor: pointer; }
+      #root { position: fixed; top: var(--jf-h); left: 0; right: 0; bottom: 0; display: flex; background: var(--jf-abyss); }
+      /* La cinta ya cubre la zona segura de arriba: la app no la suma otra vez. */
+      body > div[style*="safe-area-inset-top"] { padding-top: 0 !important; }
+      #jf-boot { margin: auto; text-align: center; color: var(--jf-text); font: 600 15px/1.4 var(--jf-sans); padding: 24px; }
+      #jf-boot small { display: block; margin-top: 6px; font-weight: 400; color: var(--jf-muted); }
+      #jf-boot button { margin-top: 16px; background: var(--jf-cyan); color: var(--jf-abyss); border: 0; border-radius: 999px; padding: 12px 22px; font: 700 15px/1 var(--jf-sans); cursor: pointer; }
+      #jf-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--jf-cyan); margin: 0 auto 14px; animation: jf-pulse 1.1s ease-in-out infinite; }
+      @keyframes jf-pulse { 0%,100% { transform: scale(.7); opacity: .5; } 50% { transform: scale(1.15); opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) { #jf-dot { animation: none; } }
+      #jf-toast { position: fixed; z-index: 2147483001; left: 12px; right: 12px; top: calc(var(--jf-h) + 8px); box-sizing: border-box; max-width: 460px; margin: 0 auto;
+        display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 10px 8px 10px 14px; border-radius: 14px;
+        background: var(--jf-deep); color: var(--jf-text); border: 1px solid var(--jf-line); box-shadow: 0 10px 30px rgba(0,0,0,.45);
+        font: 500 13px/1.4 var(--jf-sans); }
+      #jf-toast span { flex: 1 1 220px; min-width: 0; }
+      #jf-toast a { color: var(--jf-cyan); font-weight: 700; }
+      #jf-toast button { flex: none; margin-left: auto; width: 32px; height: 32px; border: 0; border-radius: 16px; background: transparent; color: var(--jf-muted); font: 400 22px/1 var(--jf-sans); cursor: pointer; }
+      #jf-confirm { position: fixed; z-index: 2147483002; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; background: rgba(5,11,31,.78); }
+      #jf-confirm > div { width: 100%; max-width: 340px; box-sizing: border-box; padding: 20px; border-radius: 18px; background: var(--jf-deep); border: 1px solid var(--jf-line); color: var(--jf-text); box-shadow: 0 18px 50px rgba(0,0,0,.5); }
+      #jf-confirm h2 { margin: 0 0 6px; font: 700 17px/1.3 var(--jf-sans); }
+      #jf-confirm p { margin: 0 0 16px; font: 400 14px/1.45 var(--jf-sans); color: var(--jf-muted); }
+      #jf-confirm .jf-actions { display: flex; gap: 10px; }
+      #jf-confirm button { flex: 1; min-height: 44px; border-radius: 999px; border: 1px solid var(--jf-line); background: transparent; color: var(--jf-text); font: 700 14px/1 var(--jf-sans); cursor: pointer; }
+      #jf-confirm button.jf-primary { background: var(--jf-cyan); border-color: var(--jf-cyan); color: var(--jf-abyss); }
+      #jf-ribbon button:focus-visible, #jf-toast button:focus-visible, #jf-toast a:focus-visible, #jf-confirm button:focus-visible, #jf-boot button:focus-visible { outline: 2px solid var(--jf-cyan); outline-offset: 2px; }`;
 
-/** El arranque: calcula la carpeta, ajusta el router y carga datos → simulador → app, en orden. */
-function bootstrapScript(opts: ShellOptions): string {
+const fileList = (files: ShellFiles) => [files.data, files.demo, files.app];
+
+/** Primer script: dónde está la página, qué base usa el router y que el historial nunca lance errores. */
+function envScript(): string {
+  return `
+${ENV_SOURCE}
+function jfApply(env) {
+  window.__JF_ASSETS__ = env.assets;
+  window.__JF_BASE__ = env.router;
+  window.__JF_NOSLASH__ = env.noslash;
+}
+var jfDir;
+try { jfDir = new URL('./', document.baseURI).pathname; } catch (e) { jfDir = jfCandidateBases(location.pathname)[0]; }
+window.__JF_TRIED__ = jfDir;
+jfApply(jfEnv(location.pathname, jfDir));
+try { jfGuardHistory(window.history); } catch (e) {}`;
+}
+
+/** Último script: la cinta, la confirmación de "Reiniciar" y el plan B si los archivos no están donde se esperaba. */
+function shellScript(opts: ShellOptions): string {
   return `
 (function () {
   var BUILD = ${JSON.stringify(opts.buildId)};
-  var FILES = ${JSON.stringify(opts.files)};
-  var candidateBases = ${candidateBases.toString()};
+  var FILES = ${JSON.stringify(fileList(opts.files))};
   var root = document.getElementById('root');
 
   // La cinta puede ocupar una o dos líneas según el ancho del teléfono: la app empieza justo debajo.
@@ -260,182 +439,151 @@ function bootstrapScript(opts: ShellOptions): string {
   window.addEventListener('resize', fit);
   window.addEventListener('orientationchange', fit);
 
+  // "Reiniciar": una confirmación dentro de la página (el visor no muestra confirm()).
+  var dialog = document.getElementById('jf-confirm');
+  var restart = document.getElementById('jf-restart');
+  var lastFocus = null;
+  function closeDialog() {
+    if (!dialog) return;
+    dialog.hidden = true;
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  function doRestart() {
+    if (window.JellyfishDemo) { window.JellyfishDemo.restart(); return; }
+    try {
+      for (var n = localStorage.length - 1; n >= 0; n--) { var key = localStorage.key(n); if (key && key.indexOf('jellyfish') === 0) localStorage.removeItem(key); }
+    } catch (e) {}
+    location.reload();
+  }
+  if (restart && dialog) {
+    restart.onclick = function () {
+      lastFocus = restart;
+      dialog.hidden = false;
+      var cancel = document.getElementById('jf-cancel');
+      if (cancel) cancel.focus();
+    };
+    document.getElementById('jf-cancel').onclick = closeDialog;
+    document.getElementById('jf-accept').onclick = doRestart;
+    dialog.addEventListener('click', function (e) { if (e.target === dialog) closeDialog(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !dialog.hidden) closeDialog(); });
+  }
+
   function fail(detail) {
     if (window.console && console.error) console.error('[JELLYFISH vista previa] ' + detail);
     root.innerHTML = '<div id="jf-boot">No pudimos abrir la vista previa<small>Revisa tu conexión y vuelve a intentarlo.</small><button type="button" id="jf-retry">Reintentar</button></div>';
     var b = document.getElementById('jf-retry');
     if (b) b.onclick = function () { location.reload(); };
   }
-
-  function probe(base) {
-    return fetch(base + 'jf-probe.json', { cache: 'no-store' })
+  function probe(dir) {
+    return fetch(dir + 'jf-probe.json', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) { return !!j && j.jf === BUILD; })
       .catch(function () { return false; });
   }
   function pick(list, i) {
-    if (i >= list.length) return Promise.resolve(list[0]);
+    if (i >= list.length) return Promise.resolve(null);
+    if (list[i] === window.__JF_TRIED__) return pick(list, i + 1);
     return probe(list[i]).then(function (ok) { return ok ? list[i] : pick(list, i + 1); });
   }
-  function el(tag, attrs) {
-    var e = document.createElement(tag);
-    for (var k in attrs) e.setAttribute(k, attrs[k]);
-    return e;
-  }
-  function load(base, src) {
+  function load(dir, src) {
     return new Promise(function (ok, bad) {
-      var s = el('script', { src: base + src });
+      var s = document.createElement('script');
+      s.async = false;
+      s.src = dir + src;
       s.onload = ok;
       s.onerror = function () { bad(new Error('No cargó ' + src)); };
       document.body.appendChild(s);
     });
   }
 
-  // ?reset=1 borra la sesión, el carrito y los pedidos de ejemplo de este navegador.
-  try {
-    if (/[?&]reset=1(&|$)/.test(location.search)) {
-      var keys = [];
-      for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf('jellyfish') === 0) keys.push(k); }
-      for (var j = 0; j < keys.length; j++) localStorage.removeItem(keys[j]);
-      history.replaceState(history.state, '', location.pathname + location.search.replace(/([?&])reset=1&?/, '$1').replace(/[?&]$/, '') + location.hash);
-    }
-  } catch (e) {}
-
-  var restart = document.getElementById('jf-restart');
-  if (restart) restart.onclick = function () {
-    if (!window.confirm('¿Reiniciar la demostración? Se borran la sesión, el carrito y los pedidos de ejemplo.')) return;
-    if (window.JellyfishDemo) { window.JellyfishDemo.restart(); return; }
-    try {
-      for (var n = localStorage.length - 1; n >= 0; n--) { var key = localStorage.key(n); if (key && key.indexOf('jellyfish') === 0) localStorage.removeItem(key); }
-    } catch (e) {}
-    location.reload();
-  };
-
-  // Si la página la sirvió el respaldo (service worker) para una pantalla interna, ya sabemos la carpeta.
-  var hinted = window.__JF_BASE_HINT__;
-  (hinted ? Promise.resolve(hinted) : pick(candidateBases(location.pathname), 0)).then(function (base) {
-    // 1) Todas las rutas relativas (fuentes, imágenes, scripts) se resuelven desde la carpeta real.
-    var baseTag = el('base', { href: base });
-    document.head.insertBefore(baseTag, document.head.firstChild);
-
-    // 2) expo-router recibe esa carpeta como su base y ve "/" como pantalla de inicio.
-    window.__JF_BASE__ = base.length > 1 ? base.replace(/\\/$/, '') : '';
-    var last = location.pathname.slice(location.pathname.lastIndexOf('/') + 1);
-    if (last.indexOf('.') !== -1) {
-      try { history.replaceState(history.state, '', base + location.search + location.hash); } catch (e) {}
-    }
-
-    // 3) Respaldo para recargar en una pantalla interna aunque el alojamiento no sepa de rutas de la app.
-    //    Es opcional: sin https, dentro de un marco aislado o sin soporte, la página funciona igual.
-    try {
-      if ('serviceWorker' in navigator) navigator.serviceWorker.register(base + 'sw.js', { scope: base }).catch(function () {});
-    } catch (e) {}
-
-    // 4) Íconos y manifest (se agregan aquí para que la ruta sea siempre la correcta).
-    var head = document.head;
-    head.appendChild(el('link', { rel: 'manifest', href: 'manifest.webmanifest' }));
-    head.appendChild(el('link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: 'icons/favicon-32.png' }));
-    head.appendChild(el('link', { rel: 'apple-touch-icon', sizes: '180x180', href: 'icons/apple-touch-icon.png' }));
-
-    // 5) Datos de ejemplo → servidor de demostración → app. En ese orden.
-    return load(base, FILES.data).then(function () { return load(base, FILES.demo); }).then(function () { return load(base, FILES.app); });
-  }).catch(function (e) { fail(e && e.message ? e.message : String(e)); });
+  // Plan A: los <script src> relativos de arriba ya cargaron (la carpeta de la URL es la de los archivos).
+  // Plan B: la página se abrió en otra ruta (una pantalla interna, "/a/b" sin barra…): se buscan los
+  // archivos subiendo por las carpetas, pidiendo jf-probe.json, y se cargan desde ahí.
+  document.addEventListener('DOMContentLoaded', function () {
+    if (window.__JF_DEMO_DATA__) return;
+    pick(jfCandidateBases(location.pathname), 0).then(function (dir) {
+      if (!dir) throw new Error('No se encontraron los archivos de la vista previa');
+      jfApply(jfEnv(location.pathname, dir));
+      return load(dir, FILES[0]).then(function () { return load(dir, FILES[1]); }).then(function () { return load(dir, FILES[2]); });
+    }).catch(function (e) { fail(e && e.message ? e.message : String(e)); });
+  });
 })();`;
 }
 
+/** El contenido de la página (sin <html>, <head> ni <body>): lo que se publica como artifact.html. */
+export function renderFragment(opts: ShellOptions): string {
+  const [data, demo, app] = fileList(opts.files);
+  return `<title>${PAGE_TITLE}</title>
+<style>${SHELL_CSS}
+</style>
+<meta name="theme-color" content="${BRAND.abyss}">
+<noscript>Necesitas activar JavaScript para ver la vista previa de JELLYFISH.</noscript>
+<div id="jf-ribbon" role="status">
+  <span>VISTA PREVIA · datos de ejemplo · código de prueba <b>${DEMO_OTP_HINT}</b></span>
+  <button id="jf-restart" type="button" aria-label="Reiniciar la demostración">Reiniciar</button>
+</div>
+<div id="root"><div id="jf-boot"><div id="jf-dot"></div>JELLYFISH<small>Abriendo la vista previa…</small></div></div>
+<div id="jf-toast" role="status" aria-live="polite" hidden></div>
+<div id="jf-confirm" role="alertdialog" aria-modal="true" aria-labelledby="jf-confirm-title" aria-describedby="jf-confirm-text" hidden>
+  <div>
+    <h2 id="jf-confirm-title">¿Reiniciar la demostración?</h2>
+    <p id="jf-confirm-text">Se borran la sesión, el carrito y los pedidos de ejemplo de este teléfono.</p>
+    <div class="jf-actions"><button id="jf-cancel" type="button">Cancelar</button><button id="jf-accept" type="button" class="jf-primary">Sí, reiniciar</button></div>
+  </div>
+</div>
+<script>${envScript()}
+</script>
+<script defer src="${data}"></script>
+<script defer src="${demo}"></script>
+<script defer src="${app}"></script>
+<script>${shellScript(opts)}
+</script>
+`;
+}
+
+/**
+ * La misma página como documento completo, para probarla en local o en un alojamiento que no la envuelva
+ * (`dist-preview/index.html`). Sin service worker y sin manifest: la vista previa no se instala.
+ */
 export function renderIndexHtml(opts: ShellOptions): string {
-  const title = opts.title ?? 'JELLYFISH · Vista previa';
   return `<!DOCTYPE html>
 <html lang="es-DO">
-  <head>
-    <meta charset="utf-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, shrink-to-fit=no" />
-    <meta name="theme-color" content="${BRAND.abyss}" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="application-name" content="JELLYFISH" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="JELLYFISH" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-    <meta name="format-detection" content="telephone=no" />
-    <meta name="robots" content="noindex, nofollow" />
-    <title>${title}</title>
-    <style id="jf-shell">${RESET_CSS}
-    </style>
-  </head>
-  <body>
-    <noscript>Necesitas activar JavaScript para ver la vista previa de JELLYFISH.</noscript>
-    <div id="jf-ribbon" role="status">
-      <span>VISTA PREVIA · datos de ejemplo · código de prueba <b>${DEMO_OTP_HINT}</b></span>
-      <button id="jf-restart" type="button" aria-label="Reiniciar la demostración">Reiniciar</button>
-    </div>
-    <div id="root"><div id="jf-boot"><div id="jf-dot"></div>JELLYFISH<small>Abriendo la vista previa…</small></div></div>
-    <script>${bootstrapScript(opts)}
-    </script>
-  </body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex, nofollow">
+<meta name="format-detection" content="telephone=no">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+</head>
+<body>
+${renderFragment(opts)}</body>
 </html>
 `;
 }
 
-// ───────────────────────── manifest PWA ─────────────────────────
-
-export function renderWebManifest(): string {
-  return `${JSON.stringify(
-    {
-      name: 'JELLYFISH (vista previa)',
-      short_name: 'JELLYFISH',
-      description: 'Vista previa de la app de JELLYFISH con datos de ejemplo.',
-      lang: 'es-DO',
-      start_url: './',
-      scope: './',
-      display: 'standalone',
-      orientation: 'portrait',
-      background_color: BRAND.abyss,
-      theme_color: BRAND.abyss,
-      icons: [
-        { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-        { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-        {
-          src: 'icons/icon-maskable-512.png',
-          sizes: '512x512',
-          type: 'image/png',
-          purpose: 'maskable',
-        },
-      ],
-    },
-    null,
-    2,
-  )}\n`;
-}
-
-// ───────────────────────── respaldo para recargar en pantallas internas ─────────────────────────
-
 /**
- * Service worker mínimo: NO guarda nada en caché (nunca sirve contenido viejo). Solo cuando una
- * navegación dentro de su carpeta recibe un error (p. ej. recargar en /carpeta/product/camaron en un
- * alojamiento estático que no conoce esa ruta), responde con el index.html de la vista previa, con la
- * carpeta ya indicada, para que el router de la app abra esa pantalla.
+ * El documento completo que el alojamiento arma alrededor del fragmento (para probarlo en local): doctype,
+ * meta viewport con `viewport-fit=cover` y su reset mínimo. Es la descripción de las reglas de la plataforma,
+ * no una copia de su código.
  */
-export function renderServiceWorker(): string {
-  return `/* JELLYFISH vista previa: respaldo de navegación (sin caché). */
-var SCOPE = self.registration.scope;
-self.addEventListener('install', function () { self.skipWaiting(); });
-self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim()); });
-function fallback() {
-  return fetch(SCOPE + 'index.html', { cache: 'no-store' }).then(function (res) {
-    return res.text().then(function (html) {
-      var hint = '<script>window.__JF_BASE_HINT__=' + JSON.stringify(new URL(SCOPE).pathname) + ';</scr' + 'ipt>';
-      return new Response(html.replace('<head>', '<head>' + hint), {
-        status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }
-      });
-    });
-  });
-}
-self.addEventListener('fetch', function (e) {
-  if (e.request.mode !== 'navigate') return;
-  e.respondWith(fetch(e.request).then(function (res) { return res.ok ? res : fallback(); }).catch(fallback));
-});
+export function wrapLikeHost(fragment: string): string {
+  return `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="data:,">
+<style>
+:root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #fafaf9; color: #1c1917; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+${fragment}</body>
+</html>
 `;
 }

@@ -1,6 +1,7 @@
 import { type CatalogItem, groupProducts, parseCatalogCsv } from '@jellyfish/catalog';
 import type { CategoryDTO, PricingUnit, ProductDTO, VariantDTO } from '@jellyfish/shared';
 import type { CategorySeed, DemoOptions, PhotoSeed, StockRec } from './types';
+import { resolvePhoto } from './photos';
 import { compareText, fnv1a, normalizeText, stableUuid } from './util';
 
 /** Un artículo vendible (una fila del CSV) con todo lo que el servidor necesita saber de él. */
@@ -19,6 +20,8 @@ export interface VariantRec {
   minCentilb: number | null;
   pieceCentilb: number | null;
   photo: string;
+  /** La foto como llegó (antes de resolverla contra la carpeta de la página): base de la huella del catálogo. */
+  photoSource: string;
   photoIllustrative: boolean;
   active: boolean;
   initialStock: StockRec;
@@ -100,8 +103,18 @@ export function buildCatalog(options: DemoOptions): DemoCatalog {
     const variants: VariantRec[] = group.variants.map((item) => {
       const manifest = photos.get(item.sku);
       // Una foto real del dueño (foto_ilustrativa = no) vale más que la ilustración generada.
-      const keepOwn = item.photo !== '' && item.photoIllustrative === false;
-      const photo = keepOwn ? item.photo : (manifest?.url ?? item.photo);
+      // En la vista previa publicada (`localPhotosOnly`) la columna `foto` del CSV no cuenta: ahí solo
+      // hay fotos propias, las del manifiesto que se copiaron junto a la página.
+      const keepOwn = !options.localPhotosOnly && item.photo !== '' && item.photoIllustrative === false;
+      const photoSource = options.localPhotosOnly
+        ? (manifest?.url ?? '')
+        : keepOwn
+          ? item.photo
+          : (manifest?.url ?? item.photo);
+      const photo = resolvePhoto(photoSource, {
+        photoBase: options.photoBase,
+        localOnly: options.localPhotosOnly,
+      });
       const illustrative = keepOwn
         ? false
         : (manifest?.illustrative ?? item.photoIllustrative ?? true);
@@ -120,6 +133,7 @@ export function buildCatalog(options: DemoOptions): DemoCatalog {
         minCentilb: item.minCentilb,
         pieceCentilb: item.pieceCentilb,
         photo,
+        photoSource,
         photoIllustrative: illustrative,
         active: item.active,
         initialStock: demoStockFor(item, options.stock),
@@ -155,7 +169,8 @@ export function buildCatalog(options: DemoOptions): DemoCatalog {
   const signature = String(
     fnv1a(
       JSON.stringify([
-        products.map((p) => [p.group, p.name, p.variants.map((v) => [v.sku, v.price, v.photo])]),
+        // La foto va sin resolver: si la página cambia de carpeta, el estado guardado no debe perderse.
+        products.map((p) => [p.group, p.name, p.variants.map((v) => [v.sku, v.price, v.photoSource])]),
         categories,
       ]),
     ),
