@@ -43,7 +43,11 @@ const log = (m: string) => console.log(`• ${m}`);
 /** SKU con miniatura propia en lo que se publica: el recorrido solo exige foto donde la hay (el resto cae al degradado). */
 const HAS_PHOTO = (() => {
   try {
-    const files = (JSON.parse(readFileSync(`${DIST}/publish-files.json`, 'utf8')) as { files: Record<string, string> }).files;
+    const files = (
+      JSON.parse(readFileSync(`${DIST}/publish-files.json`, 'utf8')) as {
+        files: Record<string, string>;
+      }
+    ).files;
     return new Set(
       Object.keys(files).flatMap((f) => {
         const m = /^photos\/(JF-[A-Z]{3}-\d{3})\.thumb\.webp$/.exec(f);
@@ -151,7 +155,10 @@ async function openSession(browser: Browser, o: SessionOptions): Promise<Session
     tag: `${o.device.name}-${o.scheme}-${o.mount.name}`,
   };
   // En las rutas donde los <script src> relativos fallan a propósito, el navegador anota esos 404 en la consola.
-  const tolerate = [...(o.tolerate ?? []), ...(o.mount.expected404?.length ? [/Failed to load resource.*404/] : [])];
+  const tolerate = [
+    ...(o.tolerate ?? []),
+    ...(o.mount.expected404?.length ? [/Failed to load resource.*404/] : []),
+  ];
   // Red hacia internet bloqueada: cualquier cosa que no sea el alojamiento de prueba (o data:/blob:) se corta y se anota.
   await ctx.route('**/*', (route) => {
     const url = route.request().url();
@@ -193,9 +200,12 @@ async function openSession(browser: Browser, o: SessionOptions): Promise<Session
   });
   if (o.safeArea) {
     const cdp = await ctx.newCDPSession(page);
-    await cdp.send('Emulation.setSafeAreaInsetsOverride' as never, {
-      insets: { top: o.safeArea.top, bottom: o.safeArea.bottom, left: 0, right: 0 },
-    } as never);
+    await cdp.send(
+      'Emulation.setSafeAreaInsetsOverride' as never,
+      {
+        insets: { top: o.safeArea.top, bottom: o.safeArea.bottom, left: 0, right: 0 },
+      } as never,
+    );
   }
   currentLabel = s.tag;
   return s;
@@ -250,6 +260,8 @@ async function orderStatusText(page: Page): Promise<string> {
   return (
     await page
       .getByTestId('order-status')
+      .filter({ visible: true })
+      .first()
       .innerText()
       .catch(() => '')
   ).trim();
@@ -275,7 +287,8 @@ async function waitUntil(page: Page, expression: string, timeoutMs = 15_000): Pr
   const t0 = Date.now();
   for (;;) {
     if ((await page.evaluate(expression)) === true) return;
-    if (Date.now() - t0 > timeoutMs) throw new Error(`✖ No se cumplió a tiempo: ${expression.slice(0, 120)}`);
+    if (Date.now() - t0 > timeoutMs)
+      throw new Error(`✖ No se cumplió a tiempo: ${expression.slice(0, 120)}`);
     await sleep(150);
   }
 }
@@ -315,7 +328,9 @@ async function demoApi<T>(page: Page, path: string, token?: string | null): Prom
 }
 
 /** Fotos de producto que hay en el documento: cargada, rota o pendiente (las de más abajo se piden al llegar). */
-async function photosOnScreen(page: Page): Promise<{ src: string; state: 'ok' | 'broken' | 'pending' }[]> {
+async function photosOnScreen(
+  page: Page,
+): Promise<{ src: string; state: 'ok' | 'broken' | 'pending' }[]> {
   return page.evaluate(
     `Array.from(document.querySelectorAll('img')).filter(function (i) { return /\\/photos\\//.test(i.src); }).map(function (i) { return { src: i.src, state: i.complete ? (i.naturalWidth > 0 ? 'ok' : 'broken') : 'pending' }; })`,
   ) as Promise<{ src: string; state: 'ok' | 'broken' | 'pending' }[]>;
@@ -354,7 +369,11 @@ interface Home {
  * Inicio → fotos propias → categorías (incluida "Otros") → búsqueda → detalle → carrito → de vuelta al
  * inicio → recarga. Es lo que corre cada ruta; el recorrido largo (más abajo) lo usa como primer tramo.
  */
-async function shortJourney(s: Session, url: string, opts: { reset?: boolean } = {}): Promise<Home> {
+async function shortJourney(
+  s: Session,
+  url: string,
+  opts: { reset?: boolean } = {},
+): Promise<Home> {
   const { page, mount } = s;
   await page.goto(`${s.host.origin}${url}`);
   await page.locator('#jf-ribbon').waitFor();
@@ -376,8 +395,12 @@ async function shortJourney(s: Session, url: string, opts: { reset?: boolean } =
     'no usa <base> (no depende de que el alojamiento lo permita)',
   );
   check(
-    (await page.evaluate('navigator.serviceWorker ? navigator.serviceWorker.controller === null : true')) &&
-      (await page.evaluate('navigator.serviceWorker ? navigator.serviceWorker.getRegistrations().then(function (r) { return r.length; }) : 0')) === 0,
+    (await page.evaluate(
+      'navigator.serviceWorker ? navigator.serviceWorker.controller === null : true',
+    )) &&
+      (await page.evaluate(
+        'navigator.serviceWorker ? navigator.serviceWorker.getRegistrations().then(function (r) { return r.length; }) : 0',
+      )) === 0,
     'ningún service worker registrado',
   );
   check(
@@ -439,7 +462,11 @@ async function shortJourney(s: Session, url: string, opts: { reset?: boolean } =
     `el inicio muestra fotos reales locales: ${loaded} cargadas de ${photos.length}, ninguna rota`,
   );
   check(
-    photos.every((p) => new URL(p.src).origin === s.host.origin && /\/photos\/JF-[A-Z]{3}-\d{3}\.thumb\.webp$/.test(p.src)),
+    photos.every(
+      (p) =>
+        new URL(p.src).origin === s.host.origin &&
+        /\/photos\/JF-[A-Z]{3}-\d{3}\.thumb\.webp$/.test(p.src),
+    ),
     'las fotos son archivos propios photos/<sku>.thumb.webp resueltos contra la carpeta de la página',
   );
   check(
@@ -465,8 +492,18 @@ async function shortJourney(s: Session, url: string, opts: { reset?: boolean } =
       .first()
       .click();
     await page.getByTestId('search-results').waitFor({ timeout: 20_000 });
-    await page.getByText(/\d+ productos?/).first().waitFor({ timeout: 20_000 });
-    const total = Number(((await page.getByText(/\d+ productos?/).first().innerText()).match(/\d+/) ?? ['0'])[0]);
+    await page
+      .getByText(/\d+ productos?/)
+      .first()
+      .waitFor({ timeout: 20_000 });
+    const total = Number(
+      ((
+        await page
+          .getByText(/\d+ productos?/)
+          .first()
+          .innerText()
+      ).match(/\d+/) ?? ['0'])[0],
+    );
     check(total > 0, `la categoría ${c.name} muestra ${total} producto(s)`);
     if (c.name === 'Otros') await shot(page, '02-categoria-otros');
   }
@@ -476,10 +513,18 @@ async function shortJourney(s: Session, url: string, opts: { reset?: boolean } =
   await page.getByText('Todo', { exact: true }).first().click(); // quita el filtro de la última categoría
   await page.getByTestId('search-input').fill('');
   await page.getByTestId('search-input').fill('camaron');
-  await page.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
+  await page
+    .getByTestId('search-results')
+    .getByText('Camarón')
+    .first()
+    .waitFor({ timeout: 20_000 });
   check(true, 'buscar "camaron" (sin tilde) encuentra Camarón');
   await page.getByTestId('search-input').fill('gambas');
-  await page.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
+  await page
+    .getByTestId('search-results')
+    .getByText('Camarón')
+    .first()
+    .waitFor({ timeout: 20_000 });
   await shot(page, '03-busqueda-sinonimo');
   check(true, 'buscar "gambas" (sinónimo) encuentra Camarón');
 
@@ -511,7 +556,9 @@ async function shortJourney(s: Session, url: string, opts: { reset?: boolean } =
     await page.waitForTimeout(500);
     check(
       (await photosOnScreen(page)).every((p) => p.state !== 'broken') &&
-        !(await page.evaluate(`Array.from(document.querySelectorAll('img')).some(function (i) { return i.src.indexOf(${JSON.stringify(`/photos/${withoutPhoto[0]!.sku}.thumb.webp`)}) !== -1; })`)),
+        !(await page.evaluate(
+          `Array.from(document.querySelectorAll('img')).some(function (i) { return i.src.indexOf(${JSON.stringify(`/photos/${withoutPhoto[0]!.sku}.thumb.webp`)}) !== -1; })`,
+        )),
       `la variante ${withoutPhoto[0]!.variant} (sin foto en este build) no pide ninguna imagen y no se ve rota`,
     );
     await page.getByRole('button', { name: withPhoto[0]!.variant }).first().click();
@@ -568,7 +615,9 @@ async function longJourney(s: Session, o: LongOptions) {
   await shortJourney(s, url);
 
   // Los tiempos: con #rapido la velocidad es 3; con ?speed=3 también.
-  const stages = (await page.evaluate('window.JellyfishDemo.handle.server.ctx.cfg.stageMs')) as Record<string, number>;
+  const stages = (await page.evaluate(
+    'window.JellyfishDemo.handle.server.ctx.cfg.stageMs',
+  )) as Record<string, number>;
   check(
     Math.abs(stages.confirmed! - 25_000 / 3) < 1 && Math.abs(stages.out_for_delivery! - 10_000) < 1,
     `la velocidad ${o.speedVia === 'hash' ? '#rapido' : '?speed=3'} acelera las etapas (${JSON.stringify(stages)})`,
@@ -584,7 +633,10 @@ async function longJourney(s: Session, o: LongOptions) {
   await page.getByTestId('go-checkout').waitFor({ timeout: 20_000 });
   await shot(page, '06-carrito');
   const goText = await page.getByTestId('go-checkout').innerText();
-  check(/RD\$/.test(goText), `el carrito calcula el total en pesos (${goText.replace(/\s+/g, ' ')})`);
+  check(
+    /RD\$/.test(goText),
+    `el carrito calcula el total en pesos (${goText.replace(/\s+/g, ' ')})`,
+  );
 
   // ── Login por OTP (123456) ──
   await page.getByTestId('go-checkout').click();
@@ -600,12 +652,17 @@ async function longJourney(s: Session, o: LongOptions) {
 
   // ── Dirección con "Usar mi ubicación actual" (el doble de geolocalización) ──
   await page.getByTestId('add-address').click();
-  const doubles = (await page.evaluate('window.JellyfishDemo.doubles')) as { geolocation: boolean; permissions: boolean };
+  const doubles = (await page.evaluate('window.JellyfishDemo.doubles')) as {
+    geolocation: boolean;
+    permissions: boolean;
+  };
   check(
     doubles.geolocation && doubles.permissions,
     'la vista previa instaló el doble de navigator.geolocation y de permissions.query',
   );
-  const permission = await page.evaluate(`navigator.permissions.query({ name: 'geolocation' }).then(function (p) { return p.state; })`);
+  const permission = await page.evaluate(
+    `navigator.permissions.query({ name: 'geolocation' }).then(function (p) { return p.state; })`,
+  );
   check(
     permission === 'prompt',
     'navigator.permissions.query("geolocation") responde "prompt" al principio (como un navegador nuevo: la app explica antes de pedir)',
@@ -616,7 +673,9 @@ async function longJourney(s: Session, o: LongOptions) {
   await page.getByTestId('location-allow').click();
   await page.getByTestId('location-saved').waitFor({ timeout: 15_000 });
   check(
-    (await page.evaluate(`navigator.permissions.query({ name: 'geolocation' }).then(function (p) { return p.state; })`)) === 'granted',
+    (await page.evaluate(
+      `navigator.permissions.query({ name: 'geolocation' }).then(function (p) { return p.state; })`,
+    )) === 'granted',
     'tras dar la posición, el permiso pasa a "granted"',
   );
   const savedText = await page.getByTestId('location-saved').innerText();
@@ -650,19 +709,38 @@ async function longJourney(s: Session, o: LongOptions) {
   await page.getByTestId('checkout-name').fill('Andrés Prueba');
   await shot(page, '11-checkout-listo');
   const missing1 = await missingGlyphs(page);
-  check(missing1.length === 0, `todos los íconos del checkout tienen glifo${missing1.length ? `: ${missing1.join(', ')}` : ''}`);
-  check(await page.getByTestId('place-order').isEnabled(), 'con dirección, horario y pago el botón de confirmar se habilita');
+  check(
+    missing1.length === 0,
+    `todos los íconos del checkout tienen glifo${missing1.length ? `: ${missing1.join(', ')}` : ''}`,
+  );
+  check(
+    await page.getByTestId('place-order').isEnabled(),
+    'con dirección, horario y pago el botón de confirmar se habilita',
+  );
   await page.getByTestId('place-order').click();
-  await page.getByTestId('order-status').waitFor({ timeout: 20_000 });
+  await page
+    .getByTestId('order-status')
+    .filter({ visible: true })
+    .first()
+    .waitFor({ timeout: 20_000 });
   await shot(page, '12-pedido-efectivo');
-  check((await orderStatusText(page)).includes(STATUS_LABELS.confirmed), 'el pedido en efectivo queda confirmado');
+  check(
+    (await orderStatusText(page)).includes(STATUS_LABELS.confirmed),
+    'el pedido en efectivo queda confirmado',
+  );
 
   // ── PIN de entrega visible ──
   const orderState = await page.evaluate<{ id: string; pin: string; code: string }>(
     '(function(){var o=window.JellyfishDemo.handle.server.ctx.state.orders[0];return {id:o.id,pin:o.deliveryPin,code:"JF-"+String(o.number).padStart(6,"0")}})()',
   );
-  check(/^\d{4}$/.test(orderState.pin), `el pedido trae un PIN de entrega de 4 dígitos (${orderState.pin})`);
-  const pinLabel = await page.getByLabel(/Tu PIN de entrega/).first().getAttribute('aria-label');
+  check(
+    /^\d{4}$/.test(orderState.pin),
+    `el pedido trae un PIN de entrega de 4 dígitos (${orderState.pin})`,
+  );
+  const pinLabel = await page
+    .getByLabel(/Tu PIN de entrega/)
+    .first()
+    .getAttribute('aria-label');
   check(
     pinLabel === `Tu PIN de entrega: ${orderState.pin.split('').join(' ')}`,
     `la pantalla del pedido muestra el PIN al cliente (${String(pinLabel)})`,
@@ -676,7 +754,10 @@ async function longJourney(s: Session, o: LongOptions) {
   await page.getByTestId('tracking-card').waitFor({ timeout: 20_000 });
   await shot(page, '14-en-camino');
   const missing2 = await missingGlyphs(page);
-  check(missing2.length === 0, `todos los íconos del pedido en camino tienen glifo${missing2.length ? `: ${missing2.join(', ')}` : ''}`);
+  check(
+    missing2.length === 0,
+    `todos los íconos del pedido en camino tienen glifo${missing2.length ? `: ${missing2.join(', ')}` : ''}`,
+  );
   check(true, 'el pedido avanza solo: confirmado → preparando → empacado → en camino');
 
   // ── Seguimiento y "Ver en el mapa" (window.open no existe: aviso claro) ──
@@ -695,7 +776,10 @@ async function longJourney(s: Session, o: LongOptions) {
     !!mapHref && /^https:\/\//.test(mapHref) && /maps/.test(mapHref),
     `el aviso trae un enlace de verdad al mapa (${String(mapHref).slice(0, 60)})`,
   );
-  check(s.ctx.pages().length === pagesBefore && s.popups.length === 0, 'no se abrió ninguna pestaña');
+  check(
+    s.ctx.pages().length === pagesBefore && s.popups.length === 0,
+    'no se abrió ninguna pestaña',
+  );
   await shot(page, '15-aviso-mapa');
   await page.locator('#jf-toast button').click();
   check(await page.locator('#jf-toast').isHidden(), 'el aviso se puede cerrar');
@@ -706,10 +790,16 @@ async function longJourney(s: Session, o: LongOptions) {
   const delivered = await page.evaluate<{ pinVerifiedAt: string | null; payment: string }>(
     '(function(){var o=window.JellyfishDemo.handle.server.ctx.state.orders[0];return {pinVerifiedAt:o.pinVerifiedAt,payment:o.payments[0].status}})()',
   );
-  check(delivered.pinVerifiedAt !== null && delivered.payment === 'captured', 'al entregar, el PIN queda verificado y el efectivo cobrado');
+  check(
+    delivered.pinVerifiedAt !== null && delivered.payment === 'captured',
+    'al entregar, el PIN queda verificado y el efectivo cobrado',
+  );
 
   // ── Pedir de nuevo ──
-  await page.getByRole('button', { name: /Pedir de nuevo/i }).first().click();
+  await page
+    .getByRole('button', { name: /Pedir de nuevo/i })
+    .first()
+    .click();
   await page.getByTestId('reorder-sheet').waitFor({ timeout: 15_000 });
   await shot(page, '17-pedir-de-nuevo');
   await page.getByTestId('reorder-go-cart').click();
@@ -735,7 +825,11 @@ async function longJourney(s: Session, o: LongOptions) {
   await shot(page, '19-checkout-tarjeta');
   const pagesBeforeCard = s.ctx.pages().length;
   await page.getByTestId('place-order').click();
-  await page.getByTestId('order-status').waitFor({ timeout: 20_000 });
+  await page
+    .getByTestId('order-status')
+    .filter({ visible: true })
+    .first()
+    .waitFor({ timeout: 20_000 });
   check(
     (await orderStatusText(page)).includes(STATUS_LABELS.pending_payment) ||
       (await orderStatusText(page)).includes(STATUS_LABELS.confirmed),
@@ -743,25 +837,44 @@ async function longJourney(s: Session, o: LongOptions) {
   );
   await page.getByText(STATUS_LABELS.confirmed).first().waitFor({ timeout: 25_000 });
   await shot(page, '20-tarjeta-aprobada');
-  check(s.ctx.pages().length === pagesBeforeCard, 'el pago con tarjeta NO abre ninguna pasarela (ni pestaña nueva)');
   check(
-    await page.getByText('Pagado').first().isVisible().catch(() => false),
+    s.ctx.pages().length === pagesBeforeCard,
+    'el pago con tarjeta NO abre ninguna pasarela (ni pestaña nueva)',
+  );
+  check(
+    await page
+      .getByText('Pagado')
+      .first()
+      .isVisible()
+      .catch(() => false),
     'el servidor de demostración aprueba el pago y el pedido queda Pagado',
   );
 
   // ── Pedidos, favoritos y textos legales ──
   await tab(page, /Pedidos/).click();
-  await page.getByText(/^JF-\d{6}$/).first().waitFor({ timeout: 20_000 });
+  await page
+    .getByText(/^JF-\d{6}$/)
+    .first()
+    .waitFor({ timeout: 20_000 });
   await shot(page, '21-pedidos');
-  check((await page.getByText(/^JF-\d{6}$/).count()) >= 2, 'Mis pedidos lista los dos pedidos hechos');
+  check(
+    (await page.getByText(/^JF-\d{6}$/).count()) >= 2,
+    'Mis pedidos lista los dos pedidos hechos',
+  );
   await tab(page, /Perfil/).click();
   await page.getByText('Mis direcciones').waitFor();
   await shot(page, '22-perfil');
   const missing3 = await missingGlyphs(page);
-  check(missing3.length === 0, `todos los íconos del perfil tienen glifo${missing3.length ? `: ${missing3.join(', ')}` : ''}`);
+  check(
+    missing3.length === 0,
+    `todos los íconos del perfil tienen glifo${missing3.length ? `: ${missing3.join(', ')}` : ''}`,
+  );
   await page.getByTestId('profile-favorites').click();
   await page.getByTestId('favorites-list').waitFor({ timeout: 15_000 });
-  check((await page.getByTestId('favorites-list').innerText()).includes('Camarón'), 'Favoritos lista el Camarón marcado');
+  check(
+    (await page.getByTestId('favorites-list').innerText()).includes('Camarón'),
+    'Favoritos lista el Camarón marcado',
+  );
   await shot(page, '23-favoritos');
   await page.goBack();
   for (const id of ['terminos', 'privacidad', 'devoluciones', 'cadena-de-frio']) {
@@ -777,12 +890,21 @@ async function longJourney(s: Session, o: LongOptions) {
   // ── Recarga: todo persiste ──
   await tab(page, /Inicio/).click();
   await page.waitForTimeout(300);
-  check(new URL(page.url()).pathname === pagePath(mount), `de vuelta en Inicio la dirección es la de la página (${new URL(page.url()).pathname})`);
+  check(
+    new URL(page.url()).pathname === pagePath(mount),
+    `de vuelta en Inicio la dirección es la de la página (${new URL(page.url()).pathname})`,
+  );
   await page.reload();
   await tab(page, /Pedidos/).waitFor({ timeout: 45_000 });
   await tab(page, /Pedidos/).click();
-  await page.getByText(/^JF-\d{6}$/).first().waitFor({ timeout: 20_000 });
-  check((await page.getByText(/^JF-\d{6}$/).count()) >= 2, 'tras recargar la página, la sesión y los pedidos siguen ahí');
+  await page
+    .getByText(/^JF-\d{6}$/)
+    .first()
+    .waitFor({ timeout: 20_000 });
+  check(
+    (await page.getByText(/^JF-\d{6}$/).count()) >= 2,
+    'tras recargar la página, la sesión y los pedidos siguen ahí',
+  );
   await shot(page, '25-despues-de-recargar');
   await tab(page, /Perfil/).click();
   await page.getByTestId('profile-favorites').waitFor();
@@ -885,7 +1007,11 @@ async function noStorage(browser: Browser, device: DeviceCase) {
     check(true, 'sin localStorage la página abre igual (todo en memoria)');
     await tab(s.page, /Buscar/).click();
     await s.page.getByTestId('search-input').fill('camaron');
-    await s.page.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
+    await s.page
+      .getByTestId('search-results')
+      .getByText('Camarón')
+      .first()
+      .waitFor({ timeout: 20_000 });
     check(true, 'y la búsqueda funciona');
     await finish(s);
   } finally {
@@ -906,7 +1032,11 @@ async function sandboxFrame(browser: Browser, device: DeviceCase) {
     check(true, 'dentro de un marco aislado (sin localStorage) la app abre');
     await frame.getByRole('tab', { name: /Buscar/ }).click();
     await frame.getByTestId('search-input').fill('camaron');
-    await frame.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
+    await frame
+      .getByTestId('search-results')
+      .getByText('Camarón')
+      .first()
+      .waitFor({ timeout: 20_000 });
     check(true, 'la búsqueda funciona dentro del marco aislado');
     await finish(s);
   } finally {
@@ -922,11 +1052,21 @@ async function photosMissing(browser: Browser, device: DeviceCase) {
   try {
     await s.page.goto(`${s.host.origin}${mount.page}?reset=1`);
     await tab(s.page, /Buscar/).waitFor({ timeout: 45_000 });
-    await s.page.getByRole('button', { name: /Categoría Mariscos/ }).first().click();
-    await s.page.getByTestId('search-results').getByText('Camarón').first().waitFor({ timeout: 20_000 });
+    await s.page
+      .getByRole('button', { name: /Categoría Mariscos/ })
+      .first()
+      .click();
+    await s.page
+      .getByTestId('search-results')
+      .getByText('Camarón')
+      .first()
+      .waitFor({ timeout: 20_000 });
     await s.page.waitForTimeout(800);
     await shot(s.page, '01-categoria-sin-fotos');
-    check(true, 'sin las fotos la app sigue mostrando los productos (degradado con el ícono de la categoría)');
+    check(
+      true,
+      'sin las fotos la app sigue mostrando los productos (degradado con el ícono de la categoría)',
+    );
     await finish(s);
   } finally {
     await closeSession(s);
@@ -953,7 +1093,10 @@ async function innerReload(browser: Browser, device: DeviceCase, mountName: stri
     await s.page.getByTestId('search-results').getByText('Camarón').first().click();
     await s.page.getByTestId('add-to-cart').waitFor({ timeout: 20_000 });
     const innerPath = new URL(s.page.url()).pathname;
-    check(/\/product\/camaron/.test(innerPath), `el detalle del producto tiene su propia dirección (${innerPath})`);
+    check(
+      /\/product\/camaron/.test(innerPath),
+      `el detalle del producto tiene su propia dirección (${innerPath})`,
+    );
     s.badResponses.length = 0;
     await s.page.reload();
     await s.page.getByTestId('add-to-cart').waitFor({ timeout: 45_000 });
@@ -996,14 +1139,26 @@ async function safeAreas(browser: Browser) {
         overflowY: document.documentElement.scrollHeight - window.innerHeight,
       };
     })()`)) as Record<string, number | string>;
-    check(m.padTop === '47px' && m.padBottom === '34px', `el visor padea :root con las zonas seguras (${String(m.padTop)} / ${String(m.padBottom)})`);
-    check((m.ribbonH as number) >= 47 + 20, `la cinta absorbe la zona segura de arriba (alto ${String(m.ribbonH)} px)`);
-    check(Math.abs((m.rootTop as number) - (m.ribbonH as number)) <= 1, 'la app empieza justo bajo la cinta');
+    check(
+      m.padTop === '47px' && m.padBottom === '34px',
+      `el visor padea :root con las zonas seguras (${String(m.padTop)} / ${String(m.padBottom)})`,
+    );
+    check(
+      (m.ribbonH as number) >= 47 + 20,
+      `la cinta absorbe la zona segura de arriba (alto ${String(m.ribbonH)} px)`,
+    );
+    check(
+      Math.abs((m.rootTop as number) - (m.ribbonH as number)) <= 1,
+      'la app empieza justo bajo la cinta',
+    );
     check(
       (m.helloTop as number) - (m.rootTop as number) < 70,
       `la app no suma la zona segura de arriba otra vez (el saludo queda ${Math.round((m.helloTop as number) - (m.rootTop as number))} px bajo la cinta)`,
     );
-    check(Math.abs((m.rootBottom as number) - (m.vh as number)) <= 1, 'la app llega hasta abajo (la barra de pestañas respeta su propia zona segura)');
+    check(
+      Math.abs((m.rootBottom as number) - (m.vh as number)) <= 1,
+      'la app llega hasta abajo (la barra de pestañas respeta su propia zona segura)',
+    );
     await finish(s);
   } finally {
     await closeSession(s);
@@ -1022,12 +1177,18 @@ async function anchorShortcuts(browser: Browser, device: DeviceCase) {
     await s.page.evaluate(
       `fetch("https://demo.jellyfish.local/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+18095550101", code: "123456" }) }).then(function (r) { return r.json(); })`,
     );
-    check(((await s.page.evaluate('window.JellyfishDemo.summary().users')) as number) === 1, 'hay una cuenta de ejemplo creada');
+    check(
+      ((await s.page.evaluate('window.JellyfishDemo.summary().users')) as number) === 1,
+      'hay una cuenta de ejemplo creada',
+    );
     // Con #reiniciar se borra todo, una sola vez por sesión del navegador.
     await s.page.goto(`${s.host.origin}${mount.page}#reiniciar`);
     await s.page.reload();
     await tab(s.page, /Buscar/).waitFor({ timeout: 45_000 });
-    check(((await s.page.evaluate('window.JellyfishDemo.summary().users')) as number) === 0, '#reiniciar borra la demostración al abrir el enlace');
+    check(
+      ((await s.page.evaluate('window.JellyfishDemo.summary().users')) as number) === 0,
+      '#reiniciar borra la demostración al abrir el enlace',
+    );
     await s.page.evaluate(
       `fetch("https://demo.jellyfish.local/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+18095550102", code: "123456" }) }).then(function (r) { return r.json(); })`,
     );
@@ -1045,7 +1206,13 @@ async function anchorShortcuts(browser: Browser, device: DeviceCase) {
 
 // ───────────────────────── principal ─────────────────────────
 
-const LONG_RUNS: { device: DeviceCase['name']; scheme: Scheme; mount: string; speedVia: 'query' | 'hash'; safeArea?: boolean }[] = [
+const LONG_RUNS: {
+  device: DeviceCase['name'];
+  scheme: Scheme;
+  mount: string;
+  speedVia: 'query' | 'hash';
+  safeArea?: boolean;
+}[] = [
   { device: 'iphone', scheme: 'dark', mount: 'xyz', speedVia: 'query' },
   { device: 'pixel', scheme: 'light', mount: 'raiz', speedVia: 'hash' },
   { device: 'iphone', scheme: 'light', mount: 'xyz-artifact', speedVia: 'query' },
@@ -1058,18 +1225,27 @@ async function main() {
   }
   if (args.serve) {
     const wanted = args.mount ? MOUNTS.filter((m) => m.name === args.mount) : MOUNTS;
-    if (wanted.length === 0) throw new Error(`No hay una ruta "${args.mount}". Opciones: ${MOUNTS.map((m) => m.name).join(', ')}`);
+    if (wanted.length === 0)
+      throw new Error(
+        `No hay una ruta "${args.mount}". Opciones: ${MOUNTS.map((m) => m.name).join(', ')}`,
+      );
     console.log('\nVista previa servida (Ctrl+C para salir):');
     let port = Number(args.port);
     for (const m of wanted) {
       const host = await startHost({ dist: DIST, port, mounts: [m], fallback: [m.name] });
       port = host.port + 1;
-      console.log(`  ${host.origin}${m.page}   (${m.name}${m.mode === 'index' ? ', index.html completo' : ', fragmento envuelto como el visor'})`);
+      console.log(
+        `  ${host.origin}${m.page}   (${m.name}${m.mode === 'index' ? ', index.html completo' : ', fragmento envuelto como el visor'})`,
+      );
     }
     await new Promise(() => {});
   }
 
-  const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
+  const browser = await chromium.launch({
+    executablePath: CHROME,
+    headless: true,
+    args: ['--no-sandbox'],
+  });
   let failed = 0;
   const run = async (name: string, fn: () => Promise<void>) => {
     try {
@@ -1082,9 +1258,17 @@ async function main() {
   const failureShot = async (s: Session | null, err: unknown) => {
     if (!s) return;
     await s.page.screenshot({ path: `${OUT}/${s.tag}-FALLO.png` }).catch(() => {});
-    console.error(`Texto visible al fallar:\n${(await s.page.locator('body').innerText().catch(() => '')).slice(0, 600)}`);
+    console.error(
+      `Texto visible al fallar:\n${(
+        await s.page
+          .locator('body')
+          .innerText()
+          .catch(() => '')
+      ).slice(0, 600)}`,
+    );
     console.error(`URL: ${s.page.url()}`);
-    if (s.consoleErrors.length) console.error(`Errores del navegador:\n- ${s.consoleErrors.slice(0, 6).join('\n- ')}`);
+    if (s.consoleErrors.length)
+      console.error(`Errores del navegador:\n- ${s.consoleErrors.slice(0, 6).join('\n- ')}`);
     void err;
   };
 
