@@ -6,6 +6,7 @@ import {
   type ReorderDTO,
   type ReorderLineDTO,
   type TrackingDTO,
+  absolutePhotoUrl,
   formatLb,
   isInDominicanRepublic,
 } from '@jellyfish/shared';
@@ -417,12 +418,14 @@ export function reorderLine(
   variant: VariantRow,
   product: Pick<ProductRow, 'name' | 'active'>,
   limits: ReorderLimits,
+  photoBaseUrl?: string,
 ): ReorderLineDTO {
   const base = {
     variantId: variant.id,
     name: product.name,
     variant: variant.variant,
-    photo: variant.photo,
+    // Las fotos locales (`/photos/…`) se vuelven absolutas: la app móvil no tiene "mismo origen".
+    photo: photoBaseUrl ? absolutePhotoUrl(variant.photo, photoBaseUrl) : variant.photo,
     photoIllustrative: variant.photoIllustrative,
     pricingUnit: variant.pricingUnit,
     unitPrice: variant.price,
@@ -504,6 +507,8 @@ export async function buildReorder(
     orderId: order.id,
     code: formatOrderNumber(order.number),
     demo: ctx.config.demo,
-    lines: rows.map((r) => reorderLine(r.order_items, r.variants, r.products, limits)),
+    lines: rows.map((r) =>
+      reorderLine(r.order_items, r.variants, r.products, limits, ctx.config.payments.publicBaseUrl),
+    ),
   };
 }

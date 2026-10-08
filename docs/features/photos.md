@@ -115,15 +115,15 @@ conocidos, páginas HTML, 404, 503 y archivos corruptos.
 
 ## Límites conocidos
 
-- **No se probó contra el CDN real**: desde el entorno de desarrollo el proxy bloquea
-  `cloudfront.net`. `photos:fetch` solo se ejecutó contra el servidor local de pruebas.
-- `photoThumb` deja iguales las rutas locales (así se pidió): las miniaturas `<sku>.thumb.webp` se
-  generan y se sirven, pero ninguna app las usa todavía hasta que `photoThumb` las conozca.
+- **No se probó contra el CDN real**: desde el entorno de desarrollo en la nube el proxy bloquea
+  `cloudfront.net`. `photos:fetch` solo se ejecutó contra el servidor local de pruebas. El paso a una
+  computadora normal está en `docs/LOCAL.md`.
+- `photoThumb` ya conoce las fotos locales: `/photos/<sku>.webp` (con o sin servidor delante, con o sin `?v=`)
+  pasa a `/photos/<sku>.thumb.webp`, que `photos:fetch` genera y el API sirve. Si esa miniatura no existe, las apps
+  caen a la foto completa.
 - Los nombres locales `<sku>.webp` no llevan hash: se revalidan a diario con ETag en vez de ser
   inmutables. Delante de un CDN real conviene nombrarlos con hash.
 - `OrderItemDTO` (ítems de un pedido ya hecho) no lleva foto: `order_items` no guarda foto y el
   esquema está congelado. La foto viaja en la cotización y en pedir de nuevo.
-- `ReorderLineDTO.photo` (`services/delivery.ts`) sigue saliendo sin absolutizar; falta pasarla por
-  `absolutePhotoUrl(variant.photo, config.payments.publicBaseUrl)`.
 - `photos:apply` reescribe el CSV en el formato canónico (coma, columnas en orden); un CSV de Excel con
   `;` queda convertido a coma.

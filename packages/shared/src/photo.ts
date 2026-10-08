@@ -14,9 +14,15 @@ export function isRemotePhoto(url: string): boolean {
   return /^https?:\/\//i.test(url.trim());
 }
 
+/** `/photos/<sku>.webp`: el nombre solo lleva letras, números, guion y guion bajo (así la `.thumb.webp` no vuelve a convertirse). */
+const LOCAL_PHOTO_NAME = /^(.*\/photos\/[A-Za-z0-9_-]+)\.webp$/;
+const LOCAL_PHOTO_PATH = /^(\/photos\/[A-Za-z0-9_-]+)\.webp([?#].*)?$/;
+
 /**
  * Variante liviana para listas y tarjetas. Para las URLs del CDN de generación
- * (`…/hf_xxx.png`) devuelve `…/hf_xxx_min.webp`; cualquier otra URL o ruta local se devuelve igual.
+ * (`…/hf_xxx.png`) devuelve `…/hf_xxx_min.webp`; para las fotos locales `/photos/<sku>.webp` (con o sin
+ * servidor delante) devuelve `/photos/<sku>.thumb.webp`, que `photos:fetch` genera junto a la grande;
+ * cualquier otra URL se devuelve igual.
  * Es idempotente: pasar una miniatura ya convertida no la cambia.
  */
 export function photoThumb(url: string): string {
@@ -24,13 +30,26 @@ export function photoThumb(url: string): string {
   try {
     parsed = new URL(url);
   } catch {
-    return url;
+    // Ruta local sin servidor (`/photos/JF-RES-001.webp`): conserva lo que venga después (?v=…).
+    const local = LOCAL_PHOTO_PATH.exec(url);
+    return local ? `${local[1]}.thumb.webp${local[2] ?? ''}` : url;
   }
-  if (parsed.protocol !== 'https:' || parsed.hostname !== GENERATION_CDN_HOST) return url;
-  const m = /^(.*\/hf_[^/]*?)\.png$/i.exec(parsed.pathname);
-  if (!m) return url;
-  parsed.pathname = `${m[1]}_min.webp`;
-  return parsed.toString();
+  if (parsed.protocol === 'https:' && parsed.hostname === GENERATION_CDN_HOST) {
+    const m = /^(.*\/hf_[^/]*?)\.png$/i.exec(parsed.pathname);
+    if (!m) return url;
+    parsed.pathname = `${m[1]}_min.webp`;
+    return parsed.toString();
+  }
+  // La misma foto local ya vuelta absoluta por el API (`https://api…/photos/JF-RES-001.webp`).
+  // Si esa miniatura no existiera, la app cae a la foto completa.
+  if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+    const m = LOCAL_PHOTO_NAME.exec(parsed.pathname);
+    if (m) {
+      parsed.pathname = `${m[1]}.thumb.webp`;
+      return parsed.toString();
+    }
+  }
+  return url;
 }
 
 /**

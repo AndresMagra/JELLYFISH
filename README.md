@@ -71,7 +71,7 @@ JELLYFISH_DEMO=1 JELLYFISH_SEED=1 PORT=3000 npm run start -w @jellyfish/api
 - **AZUL:** requiere afiliación del comercio y credenciales de pruebas (ver abajo).
 - **Teléfonos reales:** el código móvil se probó como web, con la vista previa en iPhone/Pixel simulados y en las pruebas; no se ha instalado en un iPhone o Android físico (navegador seguro de pago, Keychain/Keystore, GPS, notificaciones push, EAS).
 - **Envío de códigos OTP:** los remitentes de Twilio (SMS) y de WhatsApp Cloud están escritos y probados contra un servidor HTTP local, no contra los proveedores reales.
-- **Fotos:** son imágenes ilustrativas generadas; las de alta calidad en resolución completa no están en el repositorio porque el servidor de fotos no es accesible desde el entorno de desarrollo en la nube (ver `docs/features/photos.md`).
+- **Fotos:** son imágenes ilustrativas generadas; las de alta calidad en resolución completa no están en el repositorio porque el servidor de fotos no es accesible desde el entorno de desarrollo en la nube. Se descargan desde una computadora normal: `docs/LOCAL.md` (detalles en `docs/features/photos.md`).
 - **Reembolsos con AZUL y e-CF (DGII):** no integrados.
 
 ## Cobro (cómo funciona)

@@ -1287,6 +1287,20 @@ describe('pedir de nuevo', () => {
     expect(byId(body, pol.id).reason).toBeUndefined();
   });
 
+  it('la foto local de una línea sale absoluta, como en el catálogo (la app móvil no tiene "mismo origen")', async () => {
+    const { order, cam } = await threeLineOrder();
+    await e.w.handle.db
+      .update(variants)
+      .set({ photo: '/photos/CAM-1.webp' })
+      .where(eq(variants.sku, 'CAM-1'));
+    try {
+      const line = byId(json(await reorder(order.id)), cam.id) as unknown as { photo: string };
+      expect(line.photo).toMatch(/^https?:\/\/[^/]+\/photos\/CAM-1\.webp$/);
+    } finally {
+      await e.w.handle.db.update(variants).set({ photo: '' }).where(eq(variants.sku, 'CAM-1'));
+    }
+  });
+
   it('producto agotado: no disponible, cantidad 0 y motivo', async () => {
     const { order, cam } = await threeLineOrder();
     await setStock('CAM-1', 0);

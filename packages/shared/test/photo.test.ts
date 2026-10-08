@@ -41,12 +41,33 @@ describe('photoThumb', () => {
       `http://d8j0ntlcm91z4.cloudfront.net/u/hf_abc.png`, // sin https
       `${CDN}/u/foto-real.png`, // el CDN pero no es una generación (no empieza con hf_)
       `${CDN}/u/hf_abc.jpg`, // otra extensión
-      '/photos/JF-RES-001.webp',
       'fotos/pechuga.jpg',
+      '/photos/JF-RES-001.thumb.webp', // ya es la miniatura
       'https://example.com/x.webp',
       '',
     ]) {
       expect(photoThumb(same)).toBe(same);
+    }
+  });
+
+  it('las fotos locales /photos/<sku>.webp pasan a su .thumb.webp, con o sin servidor delante', () => {
+    expect(photoThumb('/photos/JF-RES-001.webp')).toBe('/photos/JF-RES-001.thumb.webp');
+    expect(photoThumb('/photos/JF-RES-001.webp?v=3')).toBe('/photos/JF-RES-001.thumb.webp?v=3');
+    expect(photoThumb('https://api.jellyfish.do/photos/JF-RES-001.webp')).toBe(
+      'https://api.jellyfish.do/photos/JF-RES-001.thumb.webp',
+    );
+    expect(photoThumb('http://localhost:3000/photos/JF-MAR-004.webp?v=1')).toBe(
+      'http://localhost:3000/photos/JF-MAR-004.thumb.webp?v=1',
+    );
+    // Idempotente y sin tocar lo que no es de la carpeta de fotos.
+    for (const same of [
+      '/photos/JF-RES-001.thumb.webp',
+      'https://api.jellyfish.do/photos/JF-RES-001.thumb.webp',
+      '/otra/JF-RES-001.webp',
+      '/photos/sub/JF-RES-001.webp',
+      '/photos/JF-RES-001.png',
+    ]) {
+      expect(photoThumb(same), same).toBe(same);
     }
   });
 
