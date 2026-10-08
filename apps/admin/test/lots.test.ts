@@ -24,6 +24,7 @@ import {
   expiryDateLabel,
   isCalendarDate,
   LOTS_LIMIT,
+  lotsQuery,
   MATCH_LIMIT,
   lotsLimitNote,
   matchVariants,
@@ -268,6 +269,8 @@ describe('la lista se corta y se avisa', () => {
     const max = /limit:\s*z\.coerce\.number\(\)\.int\(\)\.min\(1\)\.max\((\d+)\)/.exec(route)?.[1];
     expect(max, 'no se encontró el límite en routes/lots.ts').toBeDefined();
     expect(LOTS_LIMIT).toBe(Number(max));
+    expect(lotsQuery(false)).toEqual({ includeEmpty: 0, limit: LOTS_LIMIT });
+    expect(lotsQuery(true)).toEqual({ includeEmpty: 1, limit: LOTS_LIMIT });
     expect(lotsLimitNote(LOTS_LIMIT - 1)).toBe('');
     expect(lotsLimitNote(LOTS_LIMIT)).toMatch(/solo los 500 lotes/);
     expect(lotsLimitNote(0)).toBe('');

@@ -1,37 +1,37 @@
 # Lista para salir a producción
 
-Lo construido hasta ahora funciona de punta a punta en pruebas, pero **todavía no está listo para clientes reales**. Esta es la lista honesta de lo que falta, en orden.
+Lo construido funciona de punta a punta en pruebas (API contra PostgreSQL real, recorridos en navegador de las tres apps y la vista previa en teléfonos simulados), pero **todavía no está listo para clientes reales**. Esta es la lista honesta de lo que falta, en orden.
 
 ## 1. Cosas que solo tú puedes conseguir
 
-| Qué                                                | Por qué                                                                                  | Cómo                                                                                                                                            |
-| -------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Afiliación a AZUL** y credenciales de pruebas    | Sin ellas no se puede cobrar con tarjeta                                                 | Solicitar "comercio electrónico" a AZUL (Banco Popular). Con las credenciales de pruebas se valida el hash; ver `packages/payments/src/azul.ts` |
-| **Datos bancarios** para transferencias            | Se muestran al cliente                                                                   | Variables `TRANSFER_*`                                                                                                                          |
-| **Contador**: ITBIS por producto y **e-CF (DGII)** | Obligación fiscal; el sistema deja el ITBIS "por confirmar" a propósito                  | Confirmar con el contador. Según la búsqueda, el plazo para pequeñas empresas es el **15-nov-2026** (verificar)                                 |
-| **Permisos sanitarios** y cadena de frío           | Vender y transportar perecederos                                                         | Consultar Ministerio de Salud Pública                                                                                                           |
-| **Abogado**: términos, privacidad, devoluciones    | Ley 358-05 (consumidor) y Ley 172-13 (datos); Apple/Google exigen política de privacidad | Redactar y publicar las URLs                                                                                                                    |
-| Cuentas de tiendas                                 | Publicar las apps                                                                        | Apple Developer (US$ 99/año) y Google Play (US$ 25 único)                                                                                       |
-| Tu **inventario y precios reales**                 | Reemplazan los 99 estimados                                                              | Panel → Catálogo → Importar CSV                                                                                                                 |
+| Qué                                                | Por qué                                                                                                                          | Cómo                                                                                                                                            |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Afiliación a AZUL** y credenciales de pruebas    | Sin ellas no se puede cobrar con tarjeta                                                                                         | Solicitar "comercio electrónico" a AZUL (Banco Popular). Con las credenciales de pruebas se valida el hash; ver `packages/payments/src/azul.ts` |
+| **Datos bancarios** para transferencias            | Se muestran al cliente                                                                                                           | Variables `TRANSFER_*`                                                                                                                          |
+| **Contador**: ITBIS por producto y **e-CF (DGII)** | Obligación fiscal; el sistema deja el ITBIS "por confirmar" a propósito                                                          | Confirmar con el contador. Según la búsqueda, el plazo para pequeñas empresas es el **15-nov-2026** (verificar)                                 |
+| **Permisos sanitarios** y cadena de frío           | Vender y transportar perecederos                                                                                                 | Consultar Ministerio de Salud Pública                                                                                                           |
+| **Abogado**: términos, privacidad, devoluciones    | Ley 358-05 (consumidor) y Ley 172-13 (datos); Apple/Google exigen política de privacidad                                         | Redactar y publicar las URLs                                                                                                                    |
+| Cuentas de tiendas                                 | Publicar las apps                                                                                                                | Apple Developer (US$ 99/año) y Google Play (US$ 25 único)                                                                                       |
+| **Confirmar el ITBIS** del listado                 | El catálogo ya usa tus precios +15 %; **se asumió que el listado NO incluye ITBIS** y que los artículos con asterisco suman 18 % | Si tu listado ya lo incluía: `npm run catalog:from-xlsx -- --itbis incluido`, o confirmarlo con el contador                                     |
 
 ## 2. Lo que falta construir / conectar
 
-- [ ] **Envío real de códigos OTP** (SMS o WhatsApp). Hoy solo existe el canal de consola y el API **se niega a arrancar en producción** sin uno (`apps/api/src/server.ts`). Implementar `OtpSender` con un proveedor (p. ej. Twilio Verify o la API de WhatsApp de Meta).
-- [ ] **Postgres gestionado.** El adaptador `createPostgresDb` existe pero **nunca se ejecutó contra un servidor real** (en desarrollo no había Postgres ni Docker). Probar en staging primero.
+Ya hecho y probado: remitentes de OTP por SMS (Twilio) y WhatsApp (Meta), notificaciones push (Expo), PostgreSQL real (`npm run test:pg` y el trabajo `postgres` de CI), prueba de entrega con **PIN**, **ubicación** del repartidor, "pedir de nuevo", cupones, favoritos, lotes con vencimiento (FEFO), bitácora de auditoría, `helmet`, Sentry opcional y `TRUST_PROXY`.
+
+- [ ] **Probar los remitentes de OTP con el proveedor real.** Existen y se probaron contra un servidor HTTP local; falta una prueba con una cuenta real (Twilio solo entrega a números verificados en cuenta de prueba). Con `OTP_SENDER=twilio|whatsapp` y sus variables; el API se niega a arrancar en producción sin un remitente real.
+- [ ] **Postgres gestionado.** Ya se validó contra PostgreSQL 16; falta elegir proveedor, configurar `DATABASE_URL` y **copias de seguridad** de la base.
 - [ ] **Reembolsos automáticos con AZUL.** Hoy se registran a mano desde el panel después de hacerlos en el portal de AZUL.
 - [ ] **Reconciliación de pagos perdidos** (consultar a AZUL pagos pendientes). Hoy el panel permite "Confirmar que el pago llegó" a mano.
-- [ ] **Fotos reales de los productos** (ver `data/catalog/README.md`).
-- [ ] **Notificaciones push** y avisos por WhatsApp (estado del pedido).
-- [ ] **Prueba de entrega** (foto + código PIN) y **ubicación en vivo** del repartidor.
-- [ ] **Mapa con pin** en la dirección del cliente (hoy solo texto + referencia).
-- [ ] Cupones, reseñas, favoritos, "pedir de nuevo", programa de puntos.
-- [ ] Lotes y vencimientos de inventario (FEFO).
+- [ ] **Fotos de alta calidad en resolución completa** en el repositorio (hoy hay miniaturas de 480×360). Se hace desde una computadora con acceso al servidor de fotos (`npm run photos:fetch -- --rewrite`; ver `docs/features/photos.md`).
+- [ ] **Pantalla de ganancias o historial del día** en la app del repartidor.
+- [ ] **Datos del negocio y revisión legal** de los textos (`packages/shared/src/business.ts`, `docs/features/app-cliente.md`).
 - [ ] Facturación electrónica e-CF (proveedor certificado por la DGII).
-- [ ] Sentry/analítica, copias de seguridad de la base de datos, `@fastify/helmet`.
+- [ ] Reseñas y programa de puntos (fase posterior).
+- [ ] Hacer **privado** el repositorio de GitHub (hoy es público; el listado de costos del dueño nunca se versiona, pero conviene igual).
 
 ## 3. Lo que no se ha probado en dispositivos
 
-Todo el código móvil se ejecutó como **web** en Chromium (los mismos componentes y el mismo API). **No se ha probado en iPhone ni Android reales**: navegador seguro de pago (`expo-web-browser`), almacenamiento seguro, teclado/autocompletado de SMS, enlaces profundos `jellyfish://`, builds de EAS ni las tiendas. Reserva tiempo para una ronda de pruebas en teléfonos antes de publicar.
+Todo el código móvil se ejecutó como **web** en Chromium (los mismos componentes y el mismo API) y la vista previa se recorrió en un iPhone y un Pixel **simulados**. **No se ha probado en iPhone ni Android reales**: navegador seguro de pago (`expo-web-browser`), almacenamiento seguro, GPS y permisos de ubicación, teclado/autocompletado de SMS, notificaciones push, enlaces profundos `jellyfish://`, builds de EAS ni las tiendas. Reserva tiempo para una ronda de pruebas en teléfonos antes de publicar.
 
 ## 4. Variables de entorno del API
 

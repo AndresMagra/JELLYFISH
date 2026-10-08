@@ -152,9 +152,23 @@ a:hover {
   .sidebar {
     position: static;
     height: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px;
+  }
+  /* El menú se desliza en una sola fila; el usuario y «Cerrar sesión» quedan siempre a la vista. */
+  .sidebar .nav.stack {
     flex-direction: row;
     overflow-x: auto;
-    padding: 10px;
+    padding-bottom: 4px;
+  }
+  .sidebar .nav a {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .sidebar .grow {
+    display: none;
   }
   .brand {
     padding: 0 10px;

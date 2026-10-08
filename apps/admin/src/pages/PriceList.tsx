@@ -340,7 +340,7 @@ export function PriceList() {
           <ErrorBox error={catalog.error} onRetry={() => void catalog.refetch()} />
         ) : catalog.data && catalog.data.errors.length > 0 ? (
           <IssueBox
-            title="El catálogo actual tiene filas que no se pueden leer, así que no es seguro actualizarlo desde aquí."
+            title={`El catálogo actual tiene filas que no se pueden leer, así que no es seguro actualizarlo desde aquí.${catalog.data.errors.some((e) => e.field === 'foto') ? ' Si es una foto, corrígela en Catálogo con «Editar foto».' : ''}`}
             issues={catalog.data.errors.map((e) => ({ ...e, where: `Fila ${e.line}` }))}
           />
         ) : null}

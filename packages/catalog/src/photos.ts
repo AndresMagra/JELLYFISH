@@ -1,3 +1,4 @@
+import { photoRefError } from '@jellyfish/shared';
 import { z } from 'zod';
 import { catalogToCsv, parseCatalogCsv } from './import';
 import type { CatalogItem, RowIssue } from './types';
@@ -33,7 +34,10 @@ export interface PhotoManifest {
 const httpUrl = z
   .string()
   .trim()
-  .refine((u) => /^https?:\/\/\S+$/i.test(u), 'debe ser una URL http(s)');
+  .refine(
+    (u) => /^https?:\/\/\S+$/i.test(u) && photoRefError(u) === null,
+    'debe ser una URL http(s) de hasta 300 caracteres',
+  );
 
 const manifestSchema = z.object({
   generatedWith: z.string(),

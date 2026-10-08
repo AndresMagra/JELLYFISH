@@ -77,6 +77,13 @@ describe('parsePhotoManifest', () => {
     }
     expect(parsePhotoManifest('no es un objeto').ok).toBe(false);
   });
+
+  it('rechaza URLs de más de 300 caracteres: el importador las rechazaría después', () => {
+    const long = entry('A-1', { rawUrl: `${CDN}/hf_${'x'.repeat(300)}.png` });
+    const r = parsePhotoManifest(manifestOf(long));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join('\n')).toMatch(/items\.0\.rawUrl/);
+  });
 });
 
 describe('applyPhotoManifest', () => {

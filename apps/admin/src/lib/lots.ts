@@ -12,6 +12,12 @@ const COST_MAX_CENTAVOS = 100_000_000;
 /** Lo más que devuelve GET /v1/admin/inventory/lots (sin pedir otro tope el API manda 200). */
 export const LOTS_LIMIT = 500;
 
+/** Parámetros de GET /v1/admin/inventory/lots: sin `limit` el API corta en 200 sin avisar. */
+export const lotsQuery = (includeEmpty: boolean) => ({
+  includeEmpty: includeEmpty ? 1 : 0,
+  limit: LOTS_LIMIT,
+});
+
 /** Aviso cuando la lista llegó al tope: el API los ordena por vencimiento, así que faltan los más lejanos. */
 export const lotsLimitNote = (count: number) =>
   count >= LOTS_LIMIT

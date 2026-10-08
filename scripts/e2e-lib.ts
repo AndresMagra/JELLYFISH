@@ -25,6 +25,21 @@ export const ISOLATED_API_ENV = {
   DEMO_OTP_CODE: undefined,
   SENTRY_DSN: undefined,
   PHOTOS_DIR: undefined,
+  // Pagos y avisos: con credenciales de AZUL en la shell, la tarjeta iría a la pasarela real.
+  AZUL_MERCHANT_ID: undefined,
+  AZUL_MERCHANT_NAME: undefined,
+  AZUL_MERCHANT_TYPE: undefined,
+  AZUL_AUTH_KEY: undefined,
+  AZUL_TERMINAL_ID: undefined,
+  AZUL_ENV: undefined,
+  AZUL_HASH_ENCODING: undefined,
+  TRANSFER_BANK: undefined,
+  TRANSFER_ACCOUNT_TYPE: undefined,
+  TRANSFER_ACCOUNT_NUMBER: undefined,
+  TRANSFER_HOLDER: undefined,
+  TRANSFER_RNC: undefined,
+  EXPO_ACCESS_TOKEN: undefined,
+  PUSH_ENABLED: undefined,
 } satisfies Record<string, undefined>;
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

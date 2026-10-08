@@ -22,7 +22,7 @@ import { dateTime, lbToCentilb, qtyLabel } from '../lib/format';
 import {
   EXPIRING_WINDOWS,
   LOT_CODE_MAX,
-  LOTS_LIMIT,
+  lotsQuery,
   LOT_NOTE_MAX,
   LOT_STATUS,
   checkLotForm,
@@ -313,9 +313,7 @@ function Lots() {
   const lots = useQuery({
     queryKey: ['admin', 'lots', includeEmpty],
     queryFn: () =>
-      api<StockLotDTO[]>('/v1/admin/inventory/lots', {
-        query: { includeEmpty: includeEmpty ? 1 : 0, limit: LOTS_LIMIT },
-      }),
+      api<StockLotDTO[]>('/v1/admin/inventory/lots', { query: lotsQuery(includeEmpty) }),
   });
   const expiring = useQuery({
     queryKey: ['admin', 'expiring', days],

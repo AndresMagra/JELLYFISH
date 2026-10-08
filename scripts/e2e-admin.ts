@@ -1558,6 +1558,12 @@ async function main() {
                 .slice(-6)
                 .map((el) => `${el.tagName.toLowerCase()}.${el.className}`),
             );
+      // «Cerrar sesión» es lo último de la barra: si queda fuera de la pantalla, el menú móvil está roto.
+      const logout = await p.getByRole('button', { name: 'Cerrar sesión' }).boundingBox();
+      check(
+        logout !== null && logout.x >= 0 && logout.x + logout.width <= client + 1,
+        `a 390 px ${what} deja «Cerrar sesión» a la vista`,
+      );
       check(
         scroll <= client,
         `a 390 px ${what} no se desborda a los lados (${scroll} px de contenido en ${client})${wide.length ? `: ${wide.join(' | ')}` : ''}`,

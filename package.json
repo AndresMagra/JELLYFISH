@@ -11,6 +11,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:pg": "tsx scripts/pg-local.ts test",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck -w @jellyfish/mobile-core && npm run typecheck -w @jellyfish/customer && npm run typecheck -w @jellyfish/driver && npm run typecheck -w @jellyfish/admin",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

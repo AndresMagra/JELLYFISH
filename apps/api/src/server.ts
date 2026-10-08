@@ -49,6 +49,12 @@ async function main() {
   await syncCategories(db, categories);
   if (process.env.JELLYFISH_SEED === '1') {
     const result = await importCatalog(db, readFileSync(`${catalogDir}/products.seed.csv`, 'utf8'));
+    if (!result.ok) {
+      const first = result.errors[0];
+      throw new Error(
+        `El catálogo semilla no es válido (${result.errors.length} errores). Primero: fila ${first?.line}, ${first?.field}: ${first?.message}`,
+      );
+    }
     console.log(
       `Catálogo semilla: ${result.variantsCreated} artículos nuevos, ${result.variantsUpdated} actualizados`,
     );
