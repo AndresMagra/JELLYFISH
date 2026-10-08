@@ -855,6 +855,18 @@ async function longJourney(s: Session, o: LongOptions) {
   );
 
   // ── Pedidos, favoritos y textos legales ──
+  // La pantalla del pedido no tiene barra de pestañas: se vuelve con la flecha hasta verla.
+  for (
+    let i = 0;
+    i < 4 &&
+    !(await tab(page, /Pedidos/)
+      .isVisible()
+      .catch(() => false));
+    i++
+  ) {
+    await page.getByRole('button', { name: 'Volver' }).filter({ visible: true }).first().click();
+    await sleep(500);
+  }
   await tab(page, /Pedidos/).click();
   await page
     .getByText(/^JF-\d{6}$/)
