@@ -240,6 +240,17 @@ interface Managed {
 
 const managed: Managed[] = [];
 
+const isWindows = platform() === 'win32';
+
+/** Apaga un proceso y sus hijos. Windows no tiene grupos de procesos: ahí se usa `taskkill /T`. */
+function killTree(pid: number, signal: 'SIGTERM' | 'SIGKILL'): void {
+  if (isWindows) {
+    spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    return;
+  }
+  process.kill(-pid, signal);
+}
+
 /** Arranca un proceso en su propio grupo (así se apaga con todos sus hijos) y reenvía su salida. */
 function launch(
   name: string,
@@ -249,12 +260,12 @@ function launch(
   env: NodeJS.ProcessEnv,
   opts: { prefix?: string; highlight?: RegExp } = {},
 ): Managed {
-  const child = spawn(cmd, args, {
-    cwd,
-    env: { ...process.env, ...env },
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const spawnEnv = { ...process.env, ...env };
+  const stdio: ['ignore', 'pipe', 'pipe'] = ['ignore', 'pipe', 'pipe'];
+  // En Windows `npx` es un .cmd: sin shell no se encuentra (ENOENT). Los argumentos son fijos y sin espacios.
+  const child = isWindows
+    ? spawn([cmd, ...args].join(' '), { cwd, env: spawnEnv, shell: true, stdio })
+    : spawn(cmd, args, { cwd, env: spawnEnv, detached: true, stdio });
   const m: Managed = { name, child, output: { text: '' } };
   const forward = (data: Buffer) => {
     const text = data.toString();
@@ -282,7 +293,7 @@ export async function shutdown(code = 0): Promise<void> {
   );
   for (const m of alive) {
     try {
-      process.kill(-m.child.pid!, 'SIGTERM');
+      killTree(m.child.pid!, 'SIGTERM');
     } catch {
       /* ya terminó */
     }
@@ -296,7 +307,7 @@ export async function shutdown(code = 0): Promise<void> {
   for (const m of alive) {
     if (m.child.exitCode === null && m.child.signalCode === null) {
       try {
-        process.kill(-m.child.pid!, 'SIGKILL');
+        killTree(m.child.pid!, 'SIGKILL');
       } catch {
         /* nada */
       }
@@ -587,7 +598,7 @@ process.on('exit', () => {
   // Último recurso: si el proceso termina por otra vía, no dejar hijos vivos.
   for (const m of managed) {
     try {
-      if (m.child.pid && m.child.exitCode === null) process.kill(-m.child.pid, 'SIGTERM');
+      if (m.child.pid && m.child.exitCode === null) killTree(m.child.pid, 'SIGTERM');
     } catch {
       /* ya terminó */
     }

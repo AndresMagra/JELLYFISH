@@ -23,6 +23,10 @@ import {
 } from '@jellyfish/catalog';
 import sharp from 'sharp';
 
+// En Windows la caché de archivos de sharp deja abierto el .webp leído y `rename` sobre él falla con EPERM
+// (al repetir con --force o al rehacer una descarga truncada).
+sharp.cache(false);
+
 const root = resolve(import.meta.dirname, '..');
 
 export const FULL_MAX_WIDTH = 1168;
