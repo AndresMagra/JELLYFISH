@@ -57,7 +57,7 @@ JELLYFISH_DEMO=1 JELLYFISH_SEED=1 PORT=3000 npm run start -w @jellyfish/api
 ## Decisiones clave
 
 - **Dinero** en enteros de centavos y **peso** en centilibras: cero errores de coma flotante.
-- **Precios con ITBIS incluido** (como en góndola). El precio de venta sale del listado del dueño: `precio × 1.15 (beneficio) × 1.18 (si lleva asterisco)`, con un único redondeo (`consumerPrice` en `packages/catalog`). El ITBIS es por artículo y debe confirmarlo un contador. Si el listado ya incluyera el ITBIS, `npm run catalog:from-xlsx -- --itbis incluido` lo regenera con un solo comando.
+- **Precios con ITBIS incluido** (como en góndola). El precio de venta sale del listado del dueño: `precio × 1.15 (beneficio) × 1.18 (si lleva asterisco)`, con un único redondeo (`consumerPrice` en `packages/catalog`). El ITBIS es por artículo y debe confirmarlo un contador. El dueño confirmó que el listado no incluye ITBIS y que a los artículos con asterisco se les suma; si algún día llega un listado que ya lo incluya, `npm run catalog:from-xlsx -- --itbis incluido` lo regenera con un solo comando.
 - **El servidor recalcula todo** (precios, ITBIS, envío, descuento): la app nunca dicta un total.
 - **Peso variable:** se pre-autoriza el estimado + 10 % y se cobra el peso real empacado.
 - **Stock con reservas atómicas** (`on_hand − reserved ≥ cantidad` en un solo `UPDATE`), lotes con vencimiento (FEFO) y bitácora de movimientos.

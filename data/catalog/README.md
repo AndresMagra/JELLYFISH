@@ -30,7 +30,7 @@ npm run catalog:from-xlsx -- --xlsx … --margen 15 --itbis incluido   # si el l
 
 El script no escribe nada si hay errores y **no guarda el costo** en el CSV (`--con-costo` lo guarda; es un dato interno: no lo subas a Git).
 
-> **Pendiente de confirmar con el dueño y su contador:** se asumió que el listado **no incluye** ITBIS (por eso se suma 18 % a los artículos con asterisco). Si ya lo incluía, el modo `--itbis incluido` regenera todo con un comando. Afecta a 23 de los 38 artículos.
+> **Confirmado por el dueño (oct. 2026):** el listado **no incluye** ITBIS; a los artículos con asterisco se les suma el 18 % (23 de los 38). Los otros 15 no pagan ITBIS. El modo `--itbis incluido` queda solo por si algún día llega un listado que ya lo traiga incluido. El contador debe validar igualmente el ITBIS de cada producto.
 
 ### Qué es "publicable"
 
